@@ -1,0 +1,8 @@
+protocol: openai
+model: deepseek-v4-flash
+base_url: https://api.deepseek.com
+api_key: your-deepseek-api-key
+
+thinking:
+  enabled: false
+  effort: high

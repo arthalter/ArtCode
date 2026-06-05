@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import pytest
+
+from artcode.config import ArtCodeConfig, load_config, parse_config
+from artcode.errors import ConfigError
+
+
+def valid_raw() -> dict:
+    return {
+        "protocol": "openai",
+        "model": "deepseek-v4-flash",
+        "base_url": "https://api.deepseek.com",
+        "api_key": "sk-test-secret-value",
+        "thinking": {"enabled": True, "effort": "high"},
+    }
+
+
+def test_parse_valid_config() -> None:
+    config = parse_config(valid_raw())
+
+    assert isinstance(config, ArtCodeConfig)
+    assert config.protocol == "openai"
+    assert config.thinking.enabled is True
+    assert config.thinking.effort == "high"
+
+
+def test_load_missing_file(tmp_path) -> None:
+    with pytest.raises(ConfigError, match="找不到配置文件"):
+        load_config(tmp_path / "artcode.yaml")
+
+
+def test_load_invalid_yaml(tmp_path) -> None:
+    path = tmp_path / "artcode.yaml"
+    path.write_text("protocol: [\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="不是合法 YAML"):
+        load_config(path)
+
+
+def test_top_level_must_be_map() -> None:
+    with pytest.raises(ConfigError, match="顶层必须是对象"):
+        parse_config(["not", "a", "map"])
+
+
+@pytest.mark.parametrize("field", ["protocol", "model", "base_url", "api_key"])
+def test_missing_required_fields(field: str) -> None:
+    raw = valid_raw()
+    raw.pop(field)
+
+    with pytest.raises(ConfigError, match=f"配置缺少字段：{field}"):
+        parse_config(raw)
+
+
+@pytest.mark.parametrize("field", ["model", "base_url", "api_key"])
+def test_empty_required_string_fields(field: str) -> None:
+    raw = valid_raw()
+    raw[field] = "   "
+
+    with pytest.raises(ConfigError, match=f"配置字段 {field} 不能为空"):
+        parse_config(raw)
+
+
+def test_unsupported_protocol() -> None:
+    raw = valid_raw()
+    raw["protocol"] = "anthropic"
+
+    with pytest.raises(ConfigError, match="当前不支持"):
+        parse_config(raw)
+
+
+def test_thinking_is_optional_and_defaults_to_off() -> None:
+    raw = valid_raw()
+    raw.pop("thinking")
+
+    config = parse_config(raw)
+
+    assert config.thinking.enabled is False
+    assert config.thinking.effort == "high"
+
+
+def test_thinking_enabled_must_be_bool() -> None:
+    raw = valid_raw()
+    raw["thinking"]["enabled"] = "true"
+
+    with pytest.raises(ConfigError, match="thinking.enabled 必须是布尔值"):
+        parse_config(raw)
+
+
+def test_thinking_effort_must_be_allowed_value() -> None:
+    raw = valid_raw()
+    raw["thinking"]["effort"] = "max"
+
+    with pytest.raises(ConfigError, match="thinking.effort"):
+        parse_config(raw)
+
+
+def test_safe_status_masks_api_key() -> None:
+    config = parse_config(valid_raw())
+    status = config.safe_status()
+
+    assert status.masked_api_key != config.api_key
+    assert config.api_key not in status.masked_api_key

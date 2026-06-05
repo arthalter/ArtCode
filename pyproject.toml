@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "artcode"
+version = "0.2.0"
+description = "A local CLI coding agent learning project."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PyYAML>=6.0.1",
+  "httpx>=0.27.0",
+  "prompt_toolkit>=3.0.43",
+  "rich>=13.7.0",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+artcode = "artcode.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["artcode*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
