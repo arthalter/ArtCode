@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 from prompt_toolkit import PromptSession
 
+from artcode.tools import ToolPreview, ToolResult
+
 from .keybindings import create_input_keybindings
 from .render import TuiRenderer
 
@@ -55,3 +57,18 @@ class PromptToolkitTui:
 
     def finish_assistant_message(self) -> None:
         self.renderer.finish_assistant_message()
+
+    def show_tool_preview(self, preview: ToolPreview) -> None:
+        self.renderer.show_tool_preview(preview)
+
+    async def confirm_tool_execution(self, preview: ToolPreview) -> bool:
+        while True:
+            answer = await self._session.prompt_async("执行这个工具？(yes/no)> ")
+            normalized = answer.strip().lower()
+            if normalized in {"yes", "y"}:
+                return True
+            if normalized in {"no", "n"}:
+                return False
+
+    def show_tool_result_summary(self, result: ToolResult) -> None:
+        self.renderer.show_tool_result_summary(result)

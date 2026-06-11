@@ -6,3 +6,7 @@ api_key: your-deepseek-api-key
 thinking:
   enabled: false
   effort: high
+
+tools:
+  allowed_dirs:
+    - /Users/arthalter/Work/ArtCode/实验场

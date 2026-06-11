@@ -17,8 +17,9 @@ from artcode.errors import (
     scrub_secrets,
 )
 
-from .events import content_delta_event, done_event
+from .events import content_delta_event, done_event, tool_calls_event
 from .sse import SSEDecoder
+from .tool_calls import ToolCallAccumulator
 
 
 CONNECT_TIMEOUT_SECONDS = 10.0
@@ -30,8 +31,12 @@ class OpenAICompatibleProvider:
         self.config = config
         self._transport = transport
 
-    async def stream_chat(self, messages: Sequence[dict[str, str]]) -> AsyncIterator[dict[str, str]]:
-        payload = build_request_payload(self.config, messages)
+    async def stream_chat(
+        self,
+        messages: Sequence[dict[str, Any]],
+        tools: Sequence[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        payload = build_request_payload(self.config, messages, tools)
         headers = {
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json",
@@ -65,25 +70,30 @@ class OpenAICompatibleProvider:
         except (httpx.RemoteProtocolError, httpx.ReadError, httpx.DecodingError) as exc:
             raise StreamInterruptedError("流式响应中途断开。", "本轮回复没有写入上下文，请稍后重试。") from exc
 
-    async def _iter_stream_events(self, response: httpx.Response) -> AsyncIterator[dict[str, str]]:
+    async def _iter_stream_events(self, response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
         decoder = SSEDecoder()
+        tool_calls = ToolCallAccumulator()
         seen_done = False
 
         async for line in response.aiter_lines():
             for sse_event in decoder.feed(line):
                 if sse_event.done:
                     seen_done = True
+                    if tool_calls.has_calls():
+                        yield tool_calls_event(tool_calls.finish())
                     yield done_event()
                     return
-                for event in _events_from_sse_data(sse_event.data):
+                for event in _events_from_sse_data(sse_event.data, tool_calls):
                     yield event
 
         for sse_event in decoder.close():
             if sse_event.done:
                 seen_done = True
+                if tool_calls.has_calls():
+                    yield tool_calls_event(tool_calls.finish())
                 yield done_event()
                 return
-            for event in _events_from_sse_data(sse_event.data):
+            for event in _events_from_sse_data(sse_event.data, tool_calls):
                 yield event
 
         if not seen_done:
@@ -104,12 +114,19 @@ def provider_timeout() -> httpx.Timeout:
     )
 
 
-def build_request_payload(config: ArtCodeConfig, messages: Sequence[dict[str, str]]) -> dict[str, Any]:
+def build_request_payload(
+    config: ArtCodeConfig,
+    messages: Sequence[dict[str, Any]],
+    tools: Sequence[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": config.model,
         "messages": list(messages),
         "stream": True,
     }
+    if tools is not None:
+        payload["tools"] = list(tools)
+        payload["tool_choice"] = "auto"
     if config.thinking.enabled:
         payload["thinking"] = {"type": "enabled"}
         payload["reasoning_effort"] = map_reasoning_effort(config.thinking.effort)
@@ -136,7 +153,7 @@ def map_http_error(status_code: int, response_body: str, secrets: Sequence[str])
     return ModelError("DeepSeek API 返回错误。", f"HTTP {status_code}：{safe_body}")
 
 
-def _events_from_sse_data(data: str) -> Iterator[dict[str, str]]:
+def _events_from_sse_data(data: str, tool_calls: ToolCallAccumulator) -> Iterator[dict[str, Any]]:
     try:
         payload = json.loads(data)
     except json.JSONDecodeError as exc:
@@ -155,6 +172,9 @@ def _events_from_sse_data(data: str) -> Iterator[dict[str, str]]:
         content = delta.get("content")
         if isinstance(content, str) and content:
             yield content_delta_event(content)
+        delta_tool_calls = delta.get("tool_calls")
+        if isinstance(delta_tool_calls, list):
+            tool_calls.add_delta(delta_tool_calls)
 
 
 def _looks_like_thinking_error(response_body: str) -> bool:

@@ -4,8 +4,10 @@ import pytest
 
 from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.errors import AuthenticationError, ModelError, ThinkingModeUnsupportedError
+from artcode.providers.events import DONE, TOOL_CALLS
 from artcode.providers.openai_compatible import (
     CONNECT_TIMEOUT_SECONDS,
+    OpenAICompatibleProvider,
     READ_TIMEOUT_SECONDS,
     build_request_payload,
     chat_completions_url,
@@ -43,6 +45,22 @@ def test_payload_with_thinking_maps_effort() -> None:
     assert payload["reasoning_effort"] == "high"
 
 
+def test_payload_with_tools_adds_tool_choice() -> None:
+    tools = [{"type": "function", "function": {"name": "read_file", "description": "read", "parameters": {}}}]
+
+    payload = build_request_payload(config(False), [{"role": "user", "content": "hi"}], tools)
+
+    assert payload["tools"] == tools
+    assert payload["tool_choice"] == "auto"
+
+
+def test_payload_without_tools_omits_tool_fields() -> None:
+    payload = build_request_payload(config(False), [{"role": "user", "content": "hi"}], None)
+
+    assert "tools" not in payload
+    assert "tool_choice" not in payload
+
+
 def test_provider_timeout_values() -> None:
     timeout = provider_timeout()
 
@@ -66,3 +84,31 @@ def test_thinking_errors_are_mapped() -> None:
     error = map_http_error(400, "unsupported reasoning_effort", [])
 
     assert isinstance(error, ThinkingModeUnsupportedError)
+
+
+class FakeStreamResponse:
+    def __init__(self, lines: list[str]) -> None:
+        self._lines = lines
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+
+async def test_provider_stream_parses_tool_calls() -> None:
+    provider = OpenAICompatibleProvider(config(False))
+    lines = [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read_file","arguments":"{\\"pa"}}]}}]}',
+        "",
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\\":\\"a.txt\\"}"}}]}}]}',
+        "",
+        "data: [DONE]",
+        "",
+    ]
+
+    events = [event async for event in provider._iter_stream_events(FakeStreamResponse(lines))]
+
+    assert events[0]["type"] == TOOL_CALLS
+    assert events[0]["tool_calls"][0].name == "read_file"
+    assert events[0]["tool_calls"][0].arguments_json == '{"path":"a.txt"}'
+    assert events[-1]["type"] == DONE

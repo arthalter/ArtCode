@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from artcode.conversation import ConversationContext
+from artcode.providers.tool_calls import ToolCall
+from artcode.tools.results import error_result, success_result
 
 
 def test_context_starts_with_system_prompt() -> None:
@@ -8,10 +10,10 @@ def test_context_starts_with_system_prompt() -> None:
     messages = context.export_messages()
 
     assert messages[0]["role"] == "system"
-    assert "只支持纯对话" in messages[0]["content"]
-    assert "不会执行工具" in messages[0]["content"]
-    assert "不会读取文件" in messages[0]["content"]
-    assert "不会编辑代码" in messages[0]["content"]
+    assert "ch03" in messages[0]["content"]
+    assert "可以根据需要请求" in messages[0]["content"]
+    assert "最多调用一个本地工具" in messages[0]["content"]
+    assert "允许目录限制" in messages[0]["content"]
 
 
 def test_append_user_and_assistant_messages() -> None:
@@ -41,3 +43,46 @@ def test_cancelled_reply_is_not_added_when_not_appended() -> None:
 
     assert messages[-1]["role"] == "user"
     assert all(message["role"] != "assistant" for message in messages[1:])
+
+
+def test_append_assistant_tool_call_message() -> None:
+    context = ConversationContext()
+    call = ToolCall("call_1", "read_file", '{"path":"a.txt"}')
+
+    context.append_assistant_tool_call([call])
+
+    message = context.export_messages()[-1]
+    assert message["role"] == "assistant"
+    assert message["tool_calls"][0]["id"] == "call_1"
+    assert message["tool_calls"][0]["function"]["name"] == "read_file"
+    assert message["tool_calls"][0]["function"]["arguments"] == '{"path":"a.txt"}'
+
+
+def test_append_tool_result_message() -> None:
+    context = ConversationContext()
+    call = ToolCall("call_1", "read_file", '{"path":"a.txt"}')
+    result = success_result("read_file", "读取成功。", "hello")
+
+    context.append_tool_result(call, result)
+
+    message = context.export_messages()[-1]
+    assert message["role"] == "tool"
+    assert message["tool_call_id"] == "call_1"
+    assert message["name"] == "read_file"
+    assert "hello" in message["content"]
+
+
+def test_multiple_tool_calls_can_each_receive_error_result() -> None:
+    context = ConversationContext()
+    calls = [
+        ToolCall("call_1", "read_file", "{}"),
+        ToolCall("call_2", "write_file", "{}"),
+    ]
+
+    context.append_assistant_tool_call(calls)
+    for call in calls:
+        context.append_tool_result(call, error_result(call.name, "too_many_tool_calls", "只允许一个工具。"))
+
+    messages = context.export_messages()
+    assert messages[-2]["tool_call_id"] == "call_1"
+    assert messages[-1]["tool_call_id"] == "call_2"

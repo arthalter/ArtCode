@@ -10,15 +10,21 @@ from .errors import ConfigError, mask_secret
 
 
 CONFIG_FILENAME = "artcode.yaml"
-CHAPTER_NAME = "ch02：让AI说话"
+CHAPTER_NAME = "ch03：工具系统"
 SUPPORTED_PROTOCOL = "openai"
 SUPPORTED_THINKING_EFFORTS = {"low", "medium", "high"}
+DEFAULT_ALLOWED_DIR = Path("/Users/arthalter/Work/ArtCode/实验场")
 
 
 @dataclass(frozen=True)
 class ThinkingConfig:
     enabled: bool = False
     effort: str = "high"
+
+
+@dataclass(frozen=True)
+class ToolConfig:
+    allowed_dirs: tuple[Path, ...] = (DEFAULT_ALLOWED_DIR,)
 
 
 @dataclass(frozen=True)
@@ -31,6 +37,7 @@ class SafeConfigStatus:
     thinking_enabled: bool
     thinking_effort: str
     masked_api_key: str
+    allowed_dirs: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -40,6 +47,7 @@ class ArtCodeConfig:
     base_url: str
     api_key: str
     thinking: ThinkingConfig
+    tools: ToolConfig = ToolConfig()
 
     def safe_status(self) -> SafeConfigStatus:
         return SafeConfigStatus(
@@ -51,6 +59,7 @@ class ArtCodeConfig:
             thinking_enabled=self.thinking.enabled,
             thinking_effort=self.thinking.effort,
             masked_api_key=mask_secret(self.api_key),
+            allowed_dirs=tuple(str(path) for path in self.tools.allowed_dirs),
         )
 
 
@@ -89,12 +98,14 @@ def parse_config(raw: Any) -> ArtCodeConfig:
         )
 
     thinking = _parse_thinking(raw.get("thinking"))
+    tools = _parse_tools(raw.get("tools"))
     return ArtCodeConfig(
         protocol=protocol,
         model=model,
         base_url=base_url,
         api_key=api_key,
         thinking=thinking,
+        tools=tools,
     )
 
 
@@ -128,3 +139,43 @@ def _parse_thinking(raw: Any) -> ThinkingConfig:
         raise ConfigError(f"配置字段 thinking.effort 只能是 {allowed} 之一。")
 
     return ThinkingConfig(enabled=enabled, effort=effort)
+
+
+def _parse_tools(raw: Any) -> ToolConfig:
+    if raw is None:
+        return _tool_config_from_allowed_dirs([DEFAULT_ALLOWED_DIR])
+    if not isinstance(raw, dict):
+        raise ConfigError("配置字段 tools 必须是对象/map。")
+
+    allowed_dirs = raw.get("allowed_dirs")
+    if allowed_dirs is None:
+        return _tool_config_from_allowed_dirs([DEFAULT_ALLOWED_DIR])
+    if not isinstance(allowed_dirs, list):
+        raise ConfigError("配置字段 tools.allowed_dirs 必须是列表。")
+    if not allowed_dirs:
+        raise ConfigError("配置字段 tools.allowed_dirs 不能为空列表。")
+
+    return _tool_config_from_allowed_dirs(allowed_dirs)
+
+
+def _tool_config_from_allowed_dirs(raw_dirs: list[Any]) -> ToolConfig:
+    parsed: list[Path] = []
+    for value in raw_dirs:
+        if not isinstance(value, (str, Path)):
+            raise ConfigError("配置字段 tools.allowed_dirs 的每一项都必须是绝对路径字符串。")
+        path_text = str(value).strip()
+        if not path_text:
+            raise ConfigError("配置字段 tools.allowed_dirs 不能包含空路径。")
+        path = Path(path_text).expanduser()
+        if not path.is_absolute():
+            raise ConfigError("配置字段 tools.allowed_dirs 只支持绝对路径。")
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ConfigError(
+                f"无法创建允许目录：{path}。",
+                "请检查目录路径是否正确，以及当前用户是否有权限创建该目录。",
+            ) from exc
+        parsed.append(path.resolve())
+
+    return ToolConfig(allowed_dirs=tuple(parsed))

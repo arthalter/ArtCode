@@ -8,6 +8,7 @@ from rich.text import Text
 
 from artcode.config import SafeConfigStatus
 from artcode.errors import ArtCodeError
+from artcode.tools import ToolPreview, ToolResult
 
 
 class _PrintableError(Protocol):
@@ -31,6 +32,8 @@ class TuiRenderer:
                 "streaming: on",
                 f"thinking: {thinking}",
                 f"api_key: {status.masked_api_key}",
+                "allowed_dirs:",
+                *[f"  - {path}" for path in status.allowed_dirs],
                 "input: Enter 发送，Ctrl+Enter 或 Esc Enter 换行",
             ]
         )
@@ -65,3 +68,15 @@ class TuiRenderer:
 
     def show_exit(self) -> None:
         self.console.print("已退出 ArtCode。", style="cyan")
+
+    def show_tool_preview(self, preview: ToolPreview) -> None:
+        self.console.print(f"准备调用工具：{preview.tool_name}", style="bold yellow")
+        self.console.print(f"摘要：{preview.summary}", style="yellow")
+        self.console.print(f"影响目标：{preview.target}", style="yellow")
+
+    def show_tool_result_summary(self, result: ToolResult) -> None:
+        status = "成功" if result.ok else "失败"
+        truncated = "，已截断" if result.truncated else ""
+        detail = f"工具执行{status}：{result.message}（返回 {result.bytes_returned} bytes{truncated}）"
+        style = "green" if result.ok else "red"
+        self.console.print(detail, style=style)
