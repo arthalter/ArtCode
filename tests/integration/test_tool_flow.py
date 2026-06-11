@@ -15,6 +15,7 @@ class FakeTui:
         self.output: list[str] = []
         self.inputs = [user_input, "/exit"]
         self.confirmations = confirmations or []
+        self.confirmations_requested = 0
 
     def show_startup(self, status) -> None:
         self.output.append("startup")
@@ -50,10 +51,26 @@ class FakeTui:
         self.output.append(preview.tool_name)
 
     async def confirm_tool_execution(self, preview) -> bool:
+        self.confirmations_requested += 1
         return self.confirmations.pop(0)
 
     def show_tool_result_summary(self, result) -> None:
         self.output.append(f"{result.status}:{result.error_code}")
+
+    def show_agent_iteration(self, current: int, maximum: int) -> None:
+        self.output.append(f"iteration:{current}/{maximum}")
+
+    def show_tool_calls_received(self, count: int) -> None:
+        self.output.append(f"tool_calls:{count}")
+
+    def show_tool_batch_started(self, batch_index: int, safety: str, count: int) -> None:
+        self.output.append(f"batch:{batch_index}:{safety}:{count}")
+
+    def show_token_usage(self, prompt_tokens=None, completion_tokens=None, total_tokens=None) -> None:
+        self.output.append(f"usage:{total_tokens}")
+
+    def show_agent_stopped(self, reason: str, message: str = "") -> None:
+        self.output.append(f"stopped:{reason}")
 
 
 class FakeProvider:
@@ -110,21 +127,21 @@ async def run_flow(tmp_path, user_input: str, tool_calls: list[ToolCall], final_
 
     await runtime.run()
 
-    return allowed_dir, provider, context
+    return allowed_dir, provider, context, tui
 
 
-async def test_tool_write_flow_with_confirmation_and_summary(tmp_path) -> None:
-    allowed_dir, provider, context = await run_flow(
+async def test_tool_write_flow_auto_executes_and_summarizes(tmp_path) -> None:
+    allowed_dir, provider, context, tui = await run_flow(
         tmp_path,
         "请写入 note.txt",
         [ToolCall("call_1", "write_file", '{"path":"note.txt","content":"hello from tool"}')],
         "文件已写入。",
-        confirmations=[True],
     )
 
     assert (allowed_dir / "note.txt").read_text(encoding="utf-8") == "hello from tool"
+    assert tui.confirmations_requested == 0
     assert provider.tools_seen[0] is not None
-    assert provider.tools_seen[1] is None
+    assert provider.tools_seen[1] is not None
     assert context.export_messages()[-1] == {"role": "assistant", "content": "文件已写入。"}
 
 
@@ -132,7 +149,7 @@ async def test_outside_read_flow_returns_boundary_error_and_summary(tmp_path) ->
     outside = tmp_path / "outside.txt"
     outside.write_text("secret", encoding="utf-8")
 
-    _, _, context = await run_flow(
+    _, _, context, _ = await run_flow(
         tmp_path,
         "读取外部文件",
         [ToolCall("call_1", "read_file", json.dumps({"path": str(outside)}))],
@@ -144,36 +161,37 @@ async def test_outside_read_flow_returns_boundary_error_and_summary(tmp_path) ->
     assert context.export_messages()[-1]["content"] == "无法读取，路径越界。"
 
 
-async def test_user_denies_write_flow_and_file_is_not_created(tmp_path) -> None:
-    allowed_dir, _, context = await run_flow(
+async def test_side_effect_tool_does_not_request_confirmation(tmp_path) -> None:
+    allowed_dir, _, context, tui = await run_flow(
         tmp_path,
         "请写入 note.txt",
         [ToolCall("call_1", "write_file", '{"path":"note.txt","content":"hello"}')],
-        "操作已被用户拒绝。",
-        confirmations=[False],
+        "已自动执行。",
     )
 
-    assert not (allowed_dir / "note.txt").exists()
-    assert tool_payloads(context)[0]["error_code"] == "user_denied"
-    assert context.export_messages()[-1]["content"] == "操作已被用户拒绝。"
+    assert (allowed_dir / "note.txt").read_text(encoding="utf-8") == "hello"
+    assert tui.confirmations_requested == 0
+    assert tool_payloads(context)[0]["ok"] is True
+    assert context.export_messages()[-1]["content"] == "已自动执行。"
 
 
-async def test_multiple_tool_calls_flow_executes_none_and_summarizes(tmp_path) -> None:
-    allowed_dir, _, context = await run_flow(
+async def test_multiple_tool_calls_flow_executes_all_and_summarizes(tmp_path) -> None:
+    allowed_dir, _, context, tui = await run_flow(
         tmp_path,
         "多个工具",
         [
             ToolCall("call_1", "write_file", '{"path":"a.txt","content":"a"}'),
             ToolCall("call_2", "write_file", '{"path":"b.txt","content":"b"}'),
         ],
-        "本章只支持单工具调用。",
+        "两个文件都写好了。",
     )
 
-    assert not (allowed_dir / "a.txt").exists()
-    assert not (allowed_dir / "b.txt").exists()
+    assert (allowed_dir / "a.txt").read_text(encoding="utf-8") == "a"
+    assert (allowed_dir / "b.txt").read_text(encoding="utf-8") == "b"
     payloads = tool_payloads(context)
-    assert [payload["error_code"] for payload in payloads] == ["too_many_tool_calls", "too_many_tool_calls"]
-    assert context.export_messages()[-1]["content"] == "本章只支持单工具调用。"
+    assert [payload["ok"] for payload in payloads] == [True, True]
+    assert "tool_calls:2" in tui.output
+    assert context.export_messages()[-1]["content"] == "两个文件都写好了。"
 
 
 async def test_command_timeout_flow_returns_error_and_summary(tmp_path) -> None:
@@ -184,12 +202,11 @@ async def test_command_timeout_flow_returns_error_and_summary(tmp_path) -> None:
         command_timeout_seconds=0.05,
         default_cwd=allowed_dir,
     )
-    _, _, context = await run_flow(
+    _, _, context, _ = await run_flow(
         tmp_path,
         "执行慢命令",
         [ToolCall("call_1", "run_command", '{"command":"sleep 1"}')],
         "命令执行超时。",
-        confirmations=[True],
         tool_context=tool_context,
     )
 

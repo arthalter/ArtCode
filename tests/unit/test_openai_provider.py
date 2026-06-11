@@ -4,7 +4,7 @@ import pytest
 
 from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.errors import AuthenticationError, ModelError, ThinkingModeUnsupportedError
-from artcode.providers.events import DONE, TOOL_CALLS
+from artcode.providers.events import DONE, TOKEN_USAGE, TOOL_CALLS
 from artcode.providers.openai_compatible import (
     CONNECT_TIMEOUT_SECONDS,
     OpenAICompatibleProvider,
@@ -111,4 +111,20 @@ async def test_provider_stream_parses_tool_calls() -> None:
     assert events[0]["type"] == TOOL_CALLS
     assert events[0]["tool_calls"][0].name == "read_file"
     assert events[0]["tool_calls"][0].arguments_json == '{"path":"a.txt"}'
+    assert events[-1]["type"] == DONE
+
+
+async def test_provider_stream_parses_usage_event() -> None:
+    provider = OpenAICompatibleProvider(config(False))
+    lines = [
+        'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":4,"total_tokens":7}}',
+        "",
+        "data: [DONE]",
+        "",
+    ]
+
+    events = [event async for event in provider._iter_stream_events(FakeStreamResponse(lines))]
+
+    assert events[0]["type"] == TOKEN_USAGE
+    assert events[0]["total_tokens"] == 7
     assert events[-1]["type"] == DONE

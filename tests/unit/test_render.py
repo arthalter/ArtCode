@@ -16,7 +16,7 @@ def capture_renderer() -> tuple[TuiRenderer, Console]:
 def test_startup_status_contains_non_sensitive_fields() -> None:
     renderer, console = capture_renderer()
     status = SafeConfigStatus(
-        chapter="ch03：工具系统",
+        chapter="ch04：动手实现 Agent Loop",
         protocol="openai",
         model="deepseek-v4-flash",
         base_url="https://api.deepseek.com",
@@ -31,7 +31,7 @@ def test_startup_status_contains_non_sensitive_fields() -> None:
     output = console.export_text()
 
     assert "ArtCode" in output
-    assert "ch03：工具系统" in output
+    assert "ch04：动手实现 Agent Loop" in output
     assert "protocol: openai" in output
     assert "model: deepseek-v4-flash" in output
     assert "base_url: https://api.deepseek.com" in output
@@ -41,12 +41,14 @@ def test_startup_status_contains_non_sensitive_fields() -> None:
     assert "sk-test-secret-value" not in output
 
 
-def test_help_only_displays_three_commands() -> None:
+def test_help_displays_commands() -> None:
     renderer, console = capture_renderer()
 
-    renderer.show_help("/exit\n/quit\n/help")
+    renderer.show_help("/exit\n/quit\n/help\n/plan 任务描述\n/do [附加说明]")
 
-    assert console.export_text().strip().splitlines() == ["/exit", "/quit", "/help"]
+    output = console.export_text()
+    assert "/plan 任务描述" in output
+    assert "/do [附加说明]" in output
 
 
 def test_stream_delta_outputs_raw_text() -> None:
@@ -79,3 +81,20 @@ def test_tool_result_summary_does_not_print_full_content() -> None:
     output = console.export_text()
     assert "读取成功" in output
     assert "SECRET_FULL_CONTENT" not in output
+
+
+def test_agent_progress_rendering() -> None:
+    renderer, console = capture_renderer()
+
+    renderer.show_agent_iteration(2, 12)
+    renderer.show_tool_calls_received(3)
+    renderer.show_tool_batch_started(1, "read_only", 2)
+    renderer.show_token_usage(10, 20, 30)
+    renderer.show_agent_stopped("iteration_limit", "达到上限")
+
+    output = console.export_text()
+    assert "第 2/12 轮" in output
+    assert "3 个工具调用" in output
+    assert "read_only" in output
+    assert "total=30" in output
+    assert "iteration_limit" in output

@@ -39,3 +39,20 @@ async def test_confirm_tool_execution_reprompts_invalid_answer() -> None:
     preview = ToolPreview("write_file", "写入", "note.txt", True)
 
     assert await tui_with_answers(["maybe", "y"]).confirm_tool_execution(preview) is True
+
+
+def test_agent_progress_methods_forward_to_renderer() -> None:
+    tui = PromptToolkitTui(TuiRenderer(Console(record=True)))
+
+    tui.show_agent_iteration(1, 12)
+    tui.show_tool_calls_received(2)
+    tui.show_tool_batch_started(1, "side_effect", 1)
+    tui.show_token_usage(1, 2, 3)
+    tui.show_agent_stopped("natural")
+
+    output = tui.renderer.console.export_text()
+    assert "第 1/12 轮" in output
+    assert "2 个工具调用" in output
+    assert "side_effect" in output
+    assert "total=3" in output
+    assert "natural" in output

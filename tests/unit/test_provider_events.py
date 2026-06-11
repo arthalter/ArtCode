@@ -2,7 +2,17 @@ from __future__ import annotations
 
 import pytest
 
-from artcode.providers.events import CONTENT_DELTA, DONE, TOOL_CALLS, content_delta_event, done_event, tool_calls_event, validate_event
+from artcode.providers.events import (
+    CONTENT_DELTA,
+    DONE,
+    TOKEN_USAGE,
+    TOOL_CALLS,
+    content_delta_event,
+    done_event,
+    token_usage_event,
+    tool_calls_event,
+    validate_event,
+)
 from artcode.providers.tool_calls import ToolCall
 
 
@@ -33,3 +43,17 @@ def test_content_delta_requires_text() -> None:
 def test_tool_calls_requires_tool_call_list() -> None:
     with pytest.raises(ValueError, match="must include a list"):
         validate_event({"type": TOOL_CALLS, "tool_calls": ["not-a-call"]})
+
+
+def test_token_usage_event_contains_real_usage() -> None:
+    assert token_usage_event(1, 2, 3) == {
+        "type": TOKEN_USAGE,
+        "prompt_tokens": 1,
+        "completion_tokens": 2,
+        "total_tokens": 3,
+    }
+
+
+def test_token_usage_requires_ints_or_none() -> None:
+    with pytest.raises(ValueError, match="integers or None"):
+        validate_event({"type": TOKEN_USAGE, "prompt_tokens": "1", "completion_tokens": None, "total_tokens": None})

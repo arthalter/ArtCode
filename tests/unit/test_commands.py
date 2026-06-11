@@ -15,7 +15,7 @@ def test_help_command_returns_minimal_help() -> None:
     registry = create_default_registry()
     result = registry.handle("/help")
 
-    assert result == CommandResult(action="help", message="/exit\n/quit\n/help")
+    assert result == CommandResult(action="help", message="/exit\n/quit\n/help\n/plan 任务描述\n/do [附加说明]")
 
 
 def test_slash_word_inside_normal_text_does_not_trigger() -> None:
@@ -30,3 +30,28 @@ def test_registry_can_be_extended() -> None:
     registry.register("/clear", lambda command: CommandResult(action="clear", message=command))
 
     assert registry.handle("/clear") == CommandResult(action="clear", message="/clear")
+
+
+def test_plan_command_requires_argument() -> None:
+    registry = create_default_registry()
+
+    result = registry.handle("/plan")
+
+    assert result.action == "help"
+    assert "任务描述" in result.message
+
+
+def test_plan_command_captures_argument() -> None:
+    registry = create_default_registry()
+
+    assert registry.handle("/plan 给项目加 Agent Loop") == CommandResult(
+        action="plan",
+        argument="给项目加 Agent Loop",
+    )
+
+
+def test_do_command_accepts_optional_argument() -> None:
+    registry = create_default_registry()
+
+    assert registry.handle("/do") == CommandResult(action="do")
+    assert registry.handle("/do 不要运行测试") == CommandResult(action="do", argument="不要运行测试")

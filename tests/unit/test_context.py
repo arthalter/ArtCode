@@ -10,9 +10,9 @@ def test_context_starts_with_system_prompt() -> None:
     messages = context.export_messages()
 
     assert messages[0]["role"] == "system"
-    assert "ch03" in messages[0]["content"]
-    assert "可以根据需要请求" in messages[0]["content"]
-    assert "最多调用一个本地工具" in messages[0]["content"]
+    assert "ch04" in messages[0]["content"]
+    assert "Agent Loop" in messages[0]["content"]
+    assert "同一轮请求多个工具" in messages[0]["content"]
     assert "允许目录限制" in messages[0]["content"]
 
 

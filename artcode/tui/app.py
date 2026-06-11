@@ -72,3 +72,23 @@ class PromptToolkitTui:
 
     def show_tool_result_summary(self, result: ToolResult) -> None:
         self.renderer.show_tool_result_summary(result)
+
+    def show_agent_iteration(self, current: int, maximum: int) -> None:
+        self.renderer.show_agent_iteration(current, maximum)
+
+    def show_tool_calls_received(self, count: int) -> None:
+        self.renderer.show_tool_calls_received(count)
+
+    def show_tool_batch_started(self, batch_index: int, safety: str, count: int) -> None:
+        self.renderer.show_tool_batch_started(batch_index, safety, count)
+
+    def show_token_usage(
+        self,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
+    ) -> None:
+        self.renderer.show_token_usage(prompt_tokens, completion_tokens, total_tokens)
+
+    def show_agent_stopped(self, reason: str, message: str = "") -> None:
+        self.renderer.show_agent_stopped(reason, message)

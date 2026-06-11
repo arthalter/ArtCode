@@ -11,6 +11,7 @@ CommandHandler = Callable[[str], "CommandResult"]
 class CommandResult:
     action: str
     message: str = ""
+    argument: str = ""
 
     @property
     def should_exit(self) -> bool:
@@ -31,7 +32,13 @@ class CommandRegistry:
         command = user_input.strip()
         if "\n" in command:
             return None
-        handler = self._handlers.get(command)
+        if not command.startswith("/"):
+            return None
+        name, _, argument = command.partition(" ")
+        handler = self._handlers.get(name)
         if handler is None:
             return None
-        return handler(command)
+        result = handler(command)
+        if result.argument:
+            return result
+        return CommandResult(result.action, result.message, argument.strip())

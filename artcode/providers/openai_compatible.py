@@ -17,7 +17,7 @@ from artcode.errors import (
     scrub_secrets,
 )
 
-from .events import content_delta_event, done_event, tool_calls_event
+from .events import content_delta_event, done_event, token_usage_event, tool_calls_event
 from .sse import SSEDecoder
 from .tool_calls import ToolCallAccumulator
 
@@ -159,8 +159,18 @@ def _events_from_sse_data(data: str, tool_calls: ToolCallAccumulator) -> Iterato
     except json.JSONDecodeError as exc:
         raise StreamInterruptedError("流式响应格式无法解析。", "DeepSeek 返回了非 JSON 的 SSE data。") from exc
 
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        yield token_usage_event(
+            _int_or_none(usage.get("prompt_tokens")),
+            _int_or_none(usage.get("completion_tokens")),
+            _int_or_none(usage.get("total_tokens")),
+        )
+
     choices = payload.get("choices")
     if not isinstance(choices, list):
+        if isinstance(usage, dict):
+            return
         raise StreamInterruptedError("流式响应结构异常。", "SSE data 中缺少 choices。")
 
     for choice in choices:
@@ -175,6 +185,14 @@ def _events_from_sse_data(data: str, tool_calls: ToolCallAccumulator) -> Iterato
         delta_tool_calls = delta.get("tool_calls")
         if isinstance(delta_tool_calls, list):
             tool_calls.add_delta(delta_tool_calls)
+
+
+def _int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
 
 
 def _looks_like_thinking_error(response_body: str) -> bool:

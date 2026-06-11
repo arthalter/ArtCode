@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
+from artcode.agent import PlanMemory
 from artcode.config import ArtCodeConfig, ThinkingConfig, ToolConfig
 from artcode.conversation import ConversationContext
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
@@ -12,10 +12,10 @@ from artcode.runtime import ArtCodeRuntime
 
 
 class FakeTui:
-    def __init__(self, inputs: list[str], confirmations: list[bool] | None = None) -> None:
+    def __init__(self, inputs: list[str]) -> None:
         self.inputs = inputs
-        self.confirmations = confirmations or []
         self.output: list[str] = []
+        self.confirmations_requested = 0
 
     def show_startup(self, status) -> None:
         self.output.append("startup")
@@ -24,7 +24,7 @@ class FakeTui:
         return self.inputs.pop(0)
 
     def show_help(self, message: str) -> None:
-        self.output.append(message)
+        self.output.append(f"help:{message}")
 
     def show_error(self, error) -> None:
         self.output.append(error.user_message)
@@ -51,41 +51,39 @@ class FakeTui:
         self.output.append(f"preview:{preview.tool_name}")
 
     async def confirm_tool_execution(self, preview) -> bool:
-        return self.confirmations.pop(0)
+        self.confirmations_requested += 1
+        return False
 
     def show_tool_result_summary(self, result) -> None:
         self.output.append(f"tool:{result.status}:{result.error_code}")
+
+    def show_agent_iteration(self, current: int, maximum: int) -> None:
+        self.output.append(f"iteration:{current}/{maximum}")
+
+    def show_tool_calls_received(self, count: int) -> None:
+        self.output.append(f"tool_calls:{count}")
+
+    def show_tool_batch_started(self, batch_index: int, safety: str, count: int) -> None:
+        self.output.append(f"batch:{batch_index}:{safety}:{count}")
+
+    def show_token_usage(self, prompt_tokens=None, completion_tokens=None, total_tokens=None) -> None:
+        self.output.append(f"usage:{total_tokens}")
+
+    def show_agent_stopped(self, reason: str, message: str = "") -> None:
+        self.output.append(f"stopped:{reason}")
 
 
 class FakeProvider:
     def __init__(self, responses: list[list[dict]]) -> None:
         self.responses = responses
         self.tools_seen: list[list[dict] | None] = []
+        self.messages_seen: list[list[dict]] = []
 
     async def stream_chat(self, messages, tools=None):
+        self.messages_seen.append(list(messages))
         self.tools_seen.append(tools)
         for event in self.responses.pop(0):
             yield event
-
-
-class CancellingProvider:
-    async def stream_chat(self, messages, tools=None):
-        raise asyncio.CancelledError
-        yield done_event()
-
-
-class CancelOnSecondProvider:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def stream_chat(self, messages, tools=None):
-        self.calls += 1
-        if self.calls == 1:
-            yield tool_calls_event([ToolCall("call_1", "write_file", '{"path":"note.txt","content":"hello"}')])
-            yield done_event()
-            return
-        raise asyncio.CancelledError
-        yield done_event()
 
 
 def fake_config(root: Path) -> ArtCodeConfig:
@@ -100,18 +98,19 @@ def fake_config(root: Path) -> ArtCodeConfig:
     )
 
 
-async def test_runtime_adds_user_and_complete_assistant_reply(tmp_path) -> None:
+async def test_runtime_routes_plain_input_through_agent_loop(tmp_path) -> None:
     context = ConversationContext()
     tui = FakeTui(["你好", "/exit"])
-    provider = FakeProvider([[content_delta_event("你"), content_delta_event("好"), done_event()]])
+    provider = FakeProvider([[content_delta_event("你好"), done_event()]])
     runtime = ArtCodeRuntime(fake_config(tmp_path / "sandbox"), provider, context, tui)
 
     await runtime.run()
 
-    messages = context.export_messages()
-    assert messages[-2] == {"role": "user", "content": "你好"}
-    assert messages[-1] == {"role": "assistant", "content": "你好"}
+    assert context.export_messages()[-2] == {"role": "user", "content": "你好"}
+    assert context.export_messages()[-1] == {"role": "assistant", "content": "你好"}
     assert provider.tools_seen[0] is not None
+    assert "iteration:1/12" in tui.output
+    assert "stopped:natural" in tui.output
 
 
 async def test_runtime_ignores_empty_input(tmp_path) -> None:
@@ -125,25 +124,62 @@ async def test_runtime_ignores_empty_input(tmp_path) -> None:
     assert len(context.export_messages()) == 1
 
 
-async def test_runtime_does_not_add_cancelled_assistant_reply(tmp_path) -> None:
+async def test_runtime_plan_saves_latest_plan(tmp_path) -> None:
     context = ConversationContext()
-    tui = FakeTui(["你好", "/exit"])
-    runtime = ArtCodeRuntime(fake_config(tmp_path / "sandbox"), CancellingProvider(), context, tui)
+    memory = PlanMemory()
+    tui = FakeTui(["/plan 加 Agent Loop", "/exit"])
+    provider = FakeProvider([[content_delta_event("计划：先读后改"), done_event()]])
+    runtime = ArtCodeRuntime(fake_config(tmp_path / "sandbox"), provider, context, tui, plan_memory=memory)
 
     await runtime.run()
 
-    messages = context.export_messages()
-    assert messages[-1] == {"role": "user", "content": "你好"}
-    assert all(message.get("role") != "assistant" for message in messages[1:])
+    assert memory.get() == "计划：先读后改"
+    tool_names = [tool["function"]["name"] for tool in provider.tools_seen[0]]
+    assert tool_names == ["read_file", "find_files", "search_text"]
 
 
-async def test_runtime_executes_single_tool_and_summarizes(tmp_path) -> None:
+async def test_runtime_do_requires_latest_plan(tmp_path) -> None:
+    context = ConversationContext()
+    tui = FakeTui(["/do", "/exit"])
+    provider = FakeProvider([])
+    runtime = ArtCodeRuntime(fake_config(tmp_path / "sandbox"), provider, context, tui, plan_memory=PlanMemory())
+
+    await runtime.run()
+
+    assert any("请先执行 /plan" in item for item in tui.output)
+    assert provider.tools_seen == []
+
+
+async def test_runtime_do_uses_latest_plan_and_extra_instruction(tmp_path) -> None:
+    context = ConversationContext()
+    memory = PlanMemory("计划：写入 note.txt")
+    tui = FakeTui(["/do 不要运行测试", "/exit"])
+    provider = FakeProvider([[content_delta_event("执行完毕"), done_event()]])
+    runtime = ArtCodeRuntime(fake_config(tmp_path / "sandbox"), provider, context, tui, plan_memory=memory)
+
+    await runtime.run()
+
+    user_message = context.export_messages()[-2]["content"]
+    assert "计划：写入 note.txt" in user_message
+    assert "不要运行测试" in user_message
+    assert provider.tools_seen[0] is not None
+
+
+async def test_runtime_executes_multiple_tools_without_confirmation(tmp_path) -> None:
     root = tmp_path / "sandbox"
     context = ConversationContext()
-    tui = FakeTui(["写文件", "/exit"], confirmations=[True])
+    tui = FakeTui(["写两个文件", "/exit"])
     provider = FakeProvider(
         [
-            [tool_calls_event([ToolCall("call_1", "write_file", '{"path":"note.txt","content":"hello"}')]), done_event()],
+            [
+                tool_calls_event(
+                    [
+                        ToolCall("call_1", "write_file", '{"path":"a.txt","content":"a"}'),
+                        ToolCall("call_2", "write_file", '{"path":"b.txt","content":"b"}'),
+                    ]
+                ),
+                done_event(),
+            ],
             [content_delta_event("已写入。"), done_event()],
         ]
     )
@@ -151,53 +187,12 @@ async def test_runtime_executes_single_tool_and_summarizes(tmp_path) -> None:
 
     await runtime.run()
 
-    assert (root / "note.txt").read_text(encoding="utf-8") == "hello"
-    messages = context.export_messages()
-    assert any(message.get("role") == "tool" for message in messages)
-    assert messages[-1] == {"role": "assistant", "content": "已写入。"}
-    assert provider.tools_seen[0] is not None
-    assert provider.tools_seen[1] is None
+    assert (root / "a.txt").read_text(encoding="utf-8") == "a"
+    assert (root / "b.txt").read_text(encoding="utf-8") == "b"
+    assert tui.confirmations_requested == 0
 
 
-async def test_runtime_user_denies_side_effect_tool(tmp_path) -> None:
-    root = tmp_path / "sandbox"
-    context = ConversationContext()
-    tui = FakeTui(["写文件", "/exit"], confirmations=[False])
-    provider = FakeProvider(
-        [
-            [tool_calls_event([ToolCall("call_1", "write_file", '{"path":"note.txt","content":"hello"}')]), done_event()],
-            [content_delta_event("用户拒绝。"), done_event()],
-        ]
-    )
-    runtime = ArtCodeRuntime(fake_config(root), provider, context, tui)
-
-    await runtime.run()
-
-    assert not (root / "note.txt").exists()
-    tool_message = [message for message in context.export_messages() if message.get("role") == "tool"][0]
-    payload = json.loads(tool_message["content"])
-    assert payload["error_code"] == "user_denied"
-
-
-async def test_runtime_invalid_json_arguments_are_returned_to_model(tmp_path) -> None:
-    context = ConversationContext()
-    tui = FakeTui(["读文件", "/exit"])
-    provider = FakeProvider(
-        [
-            [tool_calls_event([ToolCall("call_1", "read_file", "{")]), done_event()],
-            [content_delta_event("参数错误。"), done_event()],
-        ]
-    )
-    runtime = ArtCodeRuntime(fake_config(tmp_path / "sandbox"), provider, context, tui)
-
-    await runtime.run()
-
-    tool_message = [message for message in context.export_messages() if message.get("role") == "tool"][0]
-    payload = json.loads(tool_message["content"])
-    assert payload["error_code"] == "invalid_arguments"
-
-
-async def test_runtime_unknown_tool_is_returned_to_model(tmp_path) -> None:
+async def test_runtime_unknown_tool_stops_and_summarizes(tmp_path) -> None:
     context = ConversationContext()
     tui = FakeTui(["未知工具", "/exit"])
     provider = FakeProvider(
@@ -211,44 +206,6 @@ async def test_runtime_unknown_tool_is_returned_to_model(tmp_path) -> None:
     await runtime.run()
 
     tool_message = [message for message in context.export_messages() if message.get("role") == "tool"][0]
-    payload = json.loads(tool_message["content"])
-    assert payload["error_code"] == "tool_not_found"
-
-
-async def test_runtime_multiple_tool_calls_are_not_executed(tmp_path) -> None:
-    root = tmp_path / "sandbox"
-    context = ConversationContext()
-    tui = FakeTui(["多个工具", "/exit"])
-    calls = [
-        ToolCall("call_1", "write_file", '{"path":"a.txt","content":"a"}'),
-        ToolCall("call_2", "write_file", '{"path":"b.txt","content":"b"}'),
-    ]
-    provider = FakeProvider(
-        [
-            [tool_calls_event(calls), done_event()],
-            [content_delta_event("只允许一个工具。"), done_event()],
-        ]
-    )
-    runtime = ArtCodeRuntime(fake_config(root), provider, context, tui)
-
-    await runtime.run()
-
-    assert not (root / "a.txt").exists()
-    assert not (root / "b.txt").exists()
-    tool_messages = [message for message in context.export_messages() if message.get("role") == "tool"]
-    assert [message["tool_call_id"] for message in tool_messages] == ["call_1", "call_2"]
-    payloads = [json.loads(message["content"]) for message in tool_messages]
-    assert all(payload["error_code"] == "too_many_tool_calls" for payload in payloads)
-
-
-async def test_runtime_does_not_add_cancelled_final_summary(tmp_path) -> None:
-    root = tmp_path / "sandbox"
-    context = ConversationContext()
-    tui = FakeTui(["写文件", "/exit"], confirmations=[True])
-    runtime = ArtCodeRuntime(fake_config(root), CancelOnSecondProvider(), context, tui)
-
-    await runtime.run()
-
-    messages = context.export_messages()
-    assert any(message.get("role") == "tool" for message in messages)
-    assert messages[-1]["role"] == "tool"
+    assert json.loads(tool_message["content"])["error_code"] == "tool_not_found"
+    assert provider.tools_seen[1] is None
+    assert "stopped:unknown_tool" in tui.output

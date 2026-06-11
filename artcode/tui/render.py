@@ -80,3 +80,27 @@ class TuiRenderer:
         detail = f"工具执行{status}：{result.message}（返回 {result.bytes_returned} bytes{truncated}）"
         style = "green" if result.ok else "red"
         self.console.print(detail, style=style)
+
+    def show_agent_iteration(self, current: int, maximum: int) -> None:
+        self.console.print(f"Agent Loop：第 {current}/{maximum} 轮", style="cyan")
+
+    def show_tool_calls_received(self, count: int) -> None:
+        self.console.print(f"模型请求 {count} 个工具调用。", style="yellow")
+
+    def show_tool_batch_started(self, batch_index: int, safety: str, count: int) -> None:
+        self.console.print(f"执行工具批次 {batch_index}：{safety}，{count} 个工具", style="yellow")
+
+    def show_token_usage(
+        self,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
+    ) -> None:
+        self.console.print(
+            f"Token 用量：prompt={prompt_tokens} completion={completion_tokens} total={total_tokens}",
+            style="cyan",
+        )
+
+    def show_agent_stopped(self, reason: str, message: str = "") -> None:
+        suffix = f"：{message}" if message else ""
+        self.console.print(f"Agent Loop 停止（{reason}）{suffix}", style="cyan")

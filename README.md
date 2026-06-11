@@ -2,12 +2,14 @@
 
 ArtCode is a local Python CLI coding agent learning project.
 
-## ch03: 工具系统
+## ch04: 动手实现 Agent Loop
 
-This chapter adds the first local tool system to ArtCode.
+This chapter turns ArtCode's single-step tool flow into a ReAct-style Agent Loop.
 
-ArtCode can expose six local tools to the model: read files, write files, edit files by exact unique replacement, run shell commands, find files by glob, and search text. All tools are restricted to configured allowed directories. By default, the allowed directory is `/Users/arthalter/Work/ArtCode/实验场`.
+普通用户输入 now enters an Agent Loop by default. The model can request tools, observe structured results, and continue for up to 12 iterations before ArtCode stops with a summary. A single model turn may request multiple tools; adjacent read-only tools run concurrently, while write/edit/command tools run serially.
 
-Write, edit, and command tools require user confirmation before execution. Tool results are returned to the model as structured messages, then ArtCode asks the model for a final natural-language summary without allowing another tool call in the same turn.
+ArtCode still exposes the six local tools from ch03: read files, write files, edit files by exact unique replacement, run shell commands, find files by glob, and search text. All tools remain restricted to configured allowed directories. By default, the allowed directory is `/Users/arthalter/Work/ArtCode/实验场`.
 
-Live DeepSeek integration tests read `artcode.yaml` from the project root, call the real DeepSeek API, require network access, and consume DeepSeek API quota. A deterministic ch03 tool-flow integration test uses a fake provider and only writes inside a temporary allowed directory.
+Plan Mode is available through `/plan 任务描述`, which only exposes read-only tools. `/do` executes the latest in-memory plan with the full tool set, and `/do 附加说明` adds extra execution constraints.
+
+Live DeepSeek integration tests read `artcode.yaml` from the project root, call the real DeepSeek API, and are expected to run when local configuration is available. Deterministic fake-provider integration tests only write inside temporary allowed directories.

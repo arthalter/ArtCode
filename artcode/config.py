@@ -10,7 +10,7 @@ from .errors import ConfigError, mask_secret
 
 
 CONFIG_FILENAME = "artcode.yaml"
-CHAPTER_NAME = "ch03：工具系统"
+CHAPTER_NAME = "ch04：动手实现 Agent Loop"
 SUPPORTED_PROTOCOL = "openai"
 SUPPORTED_THINKING_EFFORTS = {"low", "medium", "high"}
 DEFAULT_ALLOWED_DIR = Path("/Users/arthalter/Work/ArtCode/实验场")
@@ -94,7 +94,7 @@ def parse_config(raw: Any) -> ArtCodeConfig:
     if protocol != SUPPORTED_PROTOCOL:
         raise ConfigError(
             f"当前不支持 protocol: {protocol}。",
-            f"ch02 只支持 protocol: {SUPPORTED_PROTOCOL}。",
+            f"ArtCode 目前只支持 protocol: {SUPPORTED_PROTOCOL}。",
         )
 
     thinking = _parse_thinking(raw.get("thinking"))
