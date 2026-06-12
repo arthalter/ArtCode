@@ -45,3 +45,26 @@ def test_openai_tools_export_shape() -> None:
     assert "read_file" in names
     assert all("description" in item["function"] for item in exported)
     assert all("parameters" in item["function"] for item in exported)
+
+
+def test_tool_descriptions_reinforce_prompt_rules() -> None:
+    registry = create_default_tool_registry()
+
+    assert "编辑前" in registry.require("read_file").description
+    assert "覆盖" in registry.require("write_file").description
+    edit_description = registry.require("edit_file").description
+    assert "编辑前必须先读取" in edit_description
+    assert "old_text" in edit_description
+    command_description = registry.require("run_command").description
+    assert "优先使用专用工具" in command_description
+    assert "有副作用" in command_description
+    assert "优先于 shell find" in registry.require("find_files").description
+    assert "优先于 shell grep" in registry.require("search_text").description
+
+
+def test_tool_names_and_export_order_are_stable() -> None:
+    registry = create_default_tool_registry()
+
+    names = [item["function"]["name"] for item in registry.openai_tools()]
+
+    assert names == ["read_file", "write_file", "edit_file", "run_command", "find_files", "search_text"]

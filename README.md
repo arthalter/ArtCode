@@ -2,14 +2,14 @@
 
 ArtCode 是一个本地 Python CLI Coding Agent 学习项目。
 
-## ch04: 动手实现 Agent Loop
+## ch05: System Prompt 设计
 
-本章把 ArtCode 从 ch03 的单步工具调用流程，升级为 ReAct 风格的 Agent Loop。
+本章在 ch04 Agent Loop 的基础上，把 ArtCode 的全局指令升级为结构化 System Prompt 工程体系。
 
-普通用户输入默认进入 Agent Loop。模型可以根据任务需要请求工具、观察结构化结果，并继续下一轮推理和行动；循环最多执行 12 轮，超过后 ArtCode 会停止并生成总结。模型在同一轮中可以请求多个工具；相邻的只读工具会并发执行，写文件、改文件和执行命令这类有副作用工具会串行执行。
+稳定 System Prompt 被拆成七个固定模块：身份、系统约束、任务模式、动作执行、工具使用、语气风格、文本输出。模块按固定优先级拼装，便于后续接入项目指令、Skill 和长期记忆，同时保护 Prompt Cache 的稳定前缀。
 
-ArtCode 继续暴露 ch03 中已有的六个本地工具：读取文件、写入文件、按唯一精确文本替换编辑文件、执行 shell 命令、按 glob 模式查找文件，以及搜索文本。所有工具仍然受到允许目录限制；默认允许目录是 `/Users/arthalter/Work/ArtCode/实验场`。
+动态运行信息不再拼入稳定 System Prompt。ArtCode 会在每轮模型请求前临时注入 `<system-reminder>`，包含当前模式、工具边界、当前工作目录、允许访问目录和平台信息；这条提醒只参与本次 API 请求，不写入 Conversation Context。
 
-Plan Mode 可以通过 `/plan 任务描述` 进入。该模式只暴露只读工具，用于先理解项目并生成计划。`/do` 会使用完整工具集执行最近一次保存在内存中的计划；`/do 附加说明` 可以在执行计划时追加额外约束。
+ArtCode 继续暴露六个本地工具：读取文件、写入文件、按唯一精确文本替换编辑文件、执行 shell 命令、按 glob 模式查找文件，以及搜索文本。ch05 强化了这些工具的 description，让模型更稳定地遵守专用工具优先、编辑前先读、Plan Mode 只读等约定。
 
-真实 DeepSeek 集成测试会读取项目根目录下的 `artcode.yaml`，调用真实 DeepSeek API；只要本地配置可用，就应当执行这些测试。确定性的 fake provider 集成测试只会写入临时允许目录。
+真实 DeepSeek / OpenAI-compatible 集成测试会读取项目根目录下的 `artcode.yaml`。ch05 要求真实 Prompt Cache 验证必须观察到缓存命中 token 大于 0，才能算完整验收通过。确定性的 fake provider 集成测试只会写入临时允许目录。

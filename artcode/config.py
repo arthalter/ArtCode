@@ -10,7 +10,7 @@ from .errors import ConfigError, mask_secret
 
 
 CONFIG_FILENAME = "artcode.yaml"
-CHAPTER_NAME = "ch04：动手实现 Agent Loop"
+CHAPTER_NAME = "ch05：System Prompt 设计"
 SUPPORTED_PROTOCOL = "openai"
 SUPPORTED_THINKING_EFFORTS = {"low", "medium", "high"}
 DEFAULT_ALLOWED_DIR = Path("/Users/arthalter/Work/ArtCode/实验场")

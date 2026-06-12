@@ -66,8 +66,15 @@ class FakeTui:
     def show_tool_batch_started(self, batch_index: int, safety: str, count: int) -> None:
         self.output.append(f"batch:{batch_index}:{safety}:{count}")
 
-    def show_token_usage(self, prompt_tokens=None, completion_tokens=None, total_tokens=None) -> None:
-        self.output.append(f"usage:{total_tokens}")
+    def show_token_usage(
+        self,
+        prompt_tokens=None,
+        completion_tokens=None,
+        total_tokens=None,
+        cached_tokens=None,
+        cache_miss_tokens=None,
+    ) -> None:
+        self.output.append(f"usage:{total_tokens}:{cached_tokens}:{cache_miss_tokens}")
 
     def show_agent_stopped(self, reason: str, message: str = "") -> None:
         self.output.append(f"stopped:{reason}")

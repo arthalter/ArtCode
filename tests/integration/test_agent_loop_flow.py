@@ -50,7 +50,7 @@ class FakeTui:
         self.output.append(f"preview:{preview.tool_name}")
 
     async def confirm_tool_execution(self, preview) -> bool:
-        raise AssertionError("ch04 Agent Loop must not ask for tool confirmation")
+        raise AssertionError("Agent Loop must not ask for tool confirmation")
 
     def show_tool_result_summary(self, result) -> None:
         self.output.append(f"tool:{result.tool_name}:{result.status}:{result.error_code}")
@@ -64,7 +64,14 @@ class FakeTui:
     def show_tool_batch_started(self, batch_index: int, safety: str, count: int) -> None:
         self.output.append(f"batch:{batch_index}:{safety}:{count}")
 
-    def show_token_usage(self, prompt_tokens=None, completion_tokens=None, total_tokens=None) -> None:
+    def show_token_usage(
+        self,
+        prompt_tokens=None,
+        completion_tokens=None,
+        total_tokens=None,
+        cached_tokens=None,
+        cache_miss_tokens=None,
+    ) -> None:
         self.output.append(f"usage:{total_tokens}")
 
     def show_agent_stopped(self, reason: str, message: str = "") -> None:
@@ -75,8 +82,10 @@ class FakeProvider:
     def __init__(self, responses: list[list[dict]]) -> None:
         self.responses = responses
         self.tools_seen: list[list[dict] | None] = []
+        self.messages_seen: list[list[dict]] = []
 
     async def stream_chat(self, messages, tools=None):
+        self.messages_seen.append(list(messages))
         self.tools_seen.append(tools)
         for event in self.responses.pop(0):
             yield event
@@ -131,11 +140,13 @@ async def test_agent_loop_reads_writes_verifies_and_summarizes(tmp_path) -> None
         [content_delta_event("已读取、写入并验证。"), done_event()],
     ]
 
-    allowed_dir, _, context, _, _ = await run_runtime(tmp_path, ["处理文件", "/exit"], responses)
+    allowed_dir, provider, context, _, _ = await run_runtime(tmp_path, ["处理文件", "/exit"], responses)
 
     assert (allowed_dir / "result.txt").read_text(encoding="utf-8") == "hello world"
     assert [payload["tool_name"] for payload in tool_payloads(context)] == ["read_file", "write_file", "read_file"]
     assert context.export_messages()[-1]["content"] == "已读取、写入并验证。"
+    assert all(request[-1]["content"].startswith("<system-reminder>") for request in provider.messages_seen)
+    assert not any(message.get("content", "").startswith("<system-reminder>") for message in context.export_messages())
 
 
 async def test_plan_then_do_executes_latest_plan(tmp_path) -> None:
@@ -155,6 +166,7 @@ async def test_plan_then_do_executes_latest_plan(tmp_path) -> None:
     assert memory.get() == "计划：写入 planned.txt"
     assert (allowed_dir / "planned.txt").read_text(encoding="utf-8") == "ok"
     assert [tool["function"]["name"] for tool in provider.tools_seen[0]] == ["read_file", "find_files", "search_text"]
+    assert "write_file、edit_file、run_command" in provider.messages_seen[0][-1]["content"]
     assert context.export_messages()[-1]["content"] == "计划已执行。"
 
 
@@ -199,6 +211,9 @@ async def test_unknown_tool_executes_no_tools_and_summarizes(tmp_path) -> None:
     allowed_dir, _, context, tui, _ = await run_runtime(tmp_path, ["未知工具", "/exit"], responses)
 
     assert not (allowed_dir / "should_not_exist.txt").exists()
-    assert tool_payloads(context)[0]["error_code"] == "tool_not_found"
+    payloads = tool_payloads(context)
+    tool_messages = [message for message in context.export_messages() if message.get("role") == "tool"]
+    assert [message["tool_call_id"] for message in tool_messages] == ["call_1", "call_2"]
+    assert [payload["error_code"] for payload in payloads] == ["tool_not_found", "tool_execution_blocked"]
     assert "stopped:unknown_tool" in tui.output
     assert context.export_messages()[-1]["content"] == "未知工具，已停止。"

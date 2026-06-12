@@ -87,8 +87,10 @@ class PromptToolkitTui:
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
         total_tokens: int | None = None,
+        cached_tokens: int | None = None,
+        cache_miss_tokens: int | None = None,
     ) -> None:
-        self.renderer.show_token_usage(prompt_tokens, completion_tokens, total_tokens)
+        self.renderer.show_token_usage(prompt_tokens, completion_tokens, total_tokens, cached_tokens, cache_miss_tokens)
 
     def show_agent_stopped(self, reason: str, message: str = "") -> None:
         self.renderer.show_agent_stopped(reason, message)

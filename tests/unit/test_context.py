@@ -10,10 +10,12 @@ def test_context_starts_with_system_prompt() -> None:
     messages = context.export_messages()
 
     assert messages[0]["role"] == "system"
-    assert "ch04" in messages[0]["content"]
+    assert "ch05" in messages[0]["content"]
     assert "Agent Loop" in messages[0]["content"]
-    assert "同一轮请求多个工具" in messages[0]["content"]
-    assert "允许目录限制" in messages[0]["content"]
+    assert "# 身份" in messages[0]["content"]
+    assert "# 系统约束" in messages[0]["content"]
+    assert "# 文本输出" in messages[0]["content"]
+    assert "<system-reminder>" in messages[0]["content"]
 
 
 def test_append_user_and_assistant_messages() -> None:

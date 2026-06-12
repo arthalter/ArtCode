@@ -12,7 +12,11 @@ from .results import ToolResult, error_result, success_result
 
 class RunCommandTool:
     name = "run_command"
-    description = "在允许目录内执行一段 shell 命令，执行前需要用户确认。"
+    description = (
+        "在允许目录内执行一段 shell 命令。"
+        "命令始终视为有副作用工具，应谨慎使用；已有 read_file、find_files、search_text、write_file 或 edit_file "
+        "等专用工具能完成时，优先使用专用工具，不要用 shell 命令替代。"
+    )
     requires_confirmation = True
     parameters_schema = {
         "type": "object",
