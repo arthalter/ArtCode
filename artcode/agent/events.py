@@ -34,6 +34,8 @@ class TokenUsage:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    cached_tokens: int | None = None
+    cache_miss_tokens: int | None = None
 
     @classmethod
     def from_event_payload(cls, payload: dict[str, Any]) -> "TokenUsage":
@@ -41,6 +43,8 @@ class TokenUsage:
             prompt_tokens=_optional_int(payload.get("prompt_tokens")),
             completion_tokens=_optional_int(payload.get("completion_tokens")),
             total_tokens=_optional_int(payload.get("total_tokens")),
+            cached_tokens=_optional_int(payload.get("cached_tokens")),
+            cache_miss_tokens=_optional_int(payload.get("cache_miss_tokens")),
         )
 
     def to_payload(self) -> dict[str, int | None]:
@@ -48,6 +52,8 @@ class TokenUsage:
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
+            "cached_tokens": self.cached_tokens,
+            "cache_miss_tokens": self.cache_miss_tokens,
         }
 
 

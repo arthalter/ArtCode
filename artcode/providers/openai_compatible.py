@@ -123,6 +123,7 @@ def build_request_payload(
         "model": config.model,
         "messages": list(messages),
         "stream": True,
+        "stream_options": {"include_usage": True},
     }
     if tools is not None:
         payload["tools"] = list(tools)
@@ -161,10 +162,14 @@ def _events_from_sse_data(data: str, tool_calls: ToolCallAccumulator) -> Iterato
 
     usage = payload.get("usage")
     if isinstance(usage, dict):
+        prompt_tokens = _int_or_none(usage.get("prompt_tokens"))
+        cached_tokens = _cache_hit_tokens(usage)
         yield token_usage_event(
-            _int_or_none(usage.get("prompt_tokens")),
+            prompt_tokens,
             _int_or_none(usage.get("completion_tokens")),
             _int_or_none(usage.get("total_tokens")),
+            cached_tokens,
+            _cache_miss_tokens(usage, prompt_tokens, cached_tokens),
         )
 
     choices = payload.get("choices")
@@ -192,6 +197,29 @@ def _int_or_none(value: Any) -> int | None:
         return None
     if isinstance(value, int):
         return value
+    return None
+
+
+def _cache_hit_tokens(usage: dict[str, Any]) -> int | None:
+    deepseek_value = _int_or_none(usage.get("prompt_cache_hit_tokens"))
+    if deepseek_value is not None:
+        return deepseek_value
+    prompt_details = usage.get("prompt_tokens_details")
+    if isinstance(prompt_details, dict):
+        return _int_or_none(prompt_details.get("cached_tokens"))
+    return None
+
+
+def _cache_miss_tokens(
+    usage: dict[str, Any],
+    prompt_tokens: int | None,
+    cached_tokens: int | None,
+) -> int | None:
+    deepseek_value = _int_or_none(usage.get("prompt_cache_miss_tokens"))
+    if deepseek_value is not None:
+        return deepseek_value
+    if prompt_tokens is not None and cached_tokens is not None:
+        return max(prompt_tokens - cached_tokens, 0)
     return None
 
 

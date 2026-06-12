@@ -84,6 +84,8 @@ class TuiApp(Protocol):
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
         total_tokens: int | None = None,
+        cached_tokens: int | None = None,
+        cache_miss_tokens: int | None = None,
     ) -> None:
         ...
 
@@ -204,6 +206,8 @@ class ArtCodeRuntime:
                 event.payload.get("prompt_tokens"),
                 event.payload.get("completion_tokens"),
                 event.payload.get("total_tokens"),
+                event.payload.get("cached_tokens"),
+                event.payload.get("cache_miss_tokens"),
             )
         elif event.type == AgentEventType.STOPPED:
             self.tui.show_agent_stopped(event.payload["reason"], event.payload.get("message", ""))

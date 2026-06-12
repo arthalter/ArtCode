@@ -44,10 +44,12 @@ async def test_stream_collector_keeps_tool_calls() -> None:
 
 
 async def test_stream_collector_forwards_token_usage() -> None:
-    items = await collect(FakeProvider([token_usage_event(1, 2, 3), done_event()]))
+    items = await collect(FakeProvider([token_usage_event(1, 2, 3, 4, 5), done_event()]))
 
     assert items[0].type == AgentEventType.TOKEN_USAGE
     assert items[0].payload["total_tokens"] == 3
+    assert items[0].payload["cached_tokens"] == 4
+    assert items[0].payload["cache_miss_tokens"] == 5
 
 
 async def test_stream_collector_propagates_provider_errors() -> None:

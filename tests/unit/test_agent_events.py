@@ -12,12 +12,14 @@ def test_iteration_event_has_structured_payload() -> None:
 
 
 def test_token_usage_round_trips_payload() -> None:
-    usage = TokenUsage(prompt_tokens=1, completion_tokens=2, total_tokens=3)
+    usage = TokenUsage(prompt_tokens=1, completion_tokens=2, total_tokens=3, cached_tokens=4, cache_miss_tokens=5)
 
     assert token_usage_event(usage).payload == {
         "prompt_tokens": 1,
         "completion_tokens": 2,
         "total_tokens": 3,
+        "cached_tokens": 4,
+        "cache_miss_tokens": 5,
     }
 
 

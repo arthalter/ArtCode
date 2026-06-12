@@ -119,10 +119,10 @@ def test_safe_status_masks_api_key() -> None:
     assert config.api_key not in status.masked_api_key
 
 
-def test_chapter_name_is_ch04() -> None:
+def test_chapter_name_is_ch05() -> None:
     status = parse_config(valid_raw()).safe_status()
 
-    assert status.chapter == "ch04：动手实现 Agent Loop"
+    assert status.chapter == "ch05：System Prompt 设计"
 
 
 def test_tools_default_to_experiment_dir() -> None:

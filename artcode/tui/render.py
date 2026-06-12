@@ -95,9 +95,14 @@ class TuiRenderer:
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
         total_tokens: int | None = None,
+        cached_tokens: int | None = None,
+        cache_miss_tokens: int | None = None,
     ) -> None:
+        cache_part = ""
+        if cached_tokens is not None or cache_miss_tokens is not None:
+            cache_part = f" cached={cached_tokens} miss={cache_miss_tokens}"
         self.console.print(
-            f"Token 用量：prompt={prompt_tokens} completion={completion_tokens} total={total_tokens}",
+            f"Token 用量：prompt={prompt_tokens} completion={completion_tokens} total={total_tokens}{cache_part}",
             style="cyan",
         )
 

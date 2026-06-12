@@ -7,8 +7,9 @@ from typing import Any
 
 from artcode.conversation import ConversationContext
 from artcode.errors import RequestError
+from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.providers.base import StreamingProvider
-from artcode.tools import ToolExecutionContext, ToolRegistry
+from artcode.tools import ToolExecutionContext, ToolRegistry, error_result
 
 from .events import (
     AgentEvent,
@@ -60,6 +61,7 @@ class AgentLoop:
         plan_memory: PlanMemory | None = None,
         stream_collector: StreamCollector | None = None,
         tool_executor: ToolBatchExecutor | None = None,
+        request_assembler: PromptRequestAssembler | None = None,
     ) -> None:
         self.provider = provider
         self.conversation = conversation
@@ -68,6 +70,7 @@ class AgentLoop:
         self.plan_memory = plan_memory or PlanMemory()
         self.stream_collector = stream_collector or StreamCollector()
         self.tool_executor = tool_executor or ToolBatchExecutor(tool_registry, tool_context)
+        self.request_assembler = request_assembler or PromptRequestAssembler()
 
     async def run(self, request: AgentRunRequest) -> AsyncIterator[AgentEvent]:
         if request.append_user_message:
@@ -101,9 +104,10 @@ class AgentLoop:
 
                 plan = self.tool_executor.build_plan(model_turn.tool_calls, request.mode.tool_policy)
                 if isinstance(plan, ToolExecutionBlocked):
-                    self.conversation.append_tool_result(plan.tool_call, plan.result)
-                    yield tool_result_event(plan.tool_call, plan.result)
-                    async for event in self._summarize_if_needed(request, StopReason.UNKNOWN_TOOL):
+                    for tool_call, result in _blocked_tool_results(model_turn.tool_calls, plan):
+                        self.conversation.append_tool_result(tool_call, result)
+                        yield tool_result_event(tool_call, result)
+                    async for event in self._summarize_if_needed(request, plan.stop_reason):
                         yield event
                     return
 
@@ -144,15 +148,23 @@ class AgentLoop:
         yield stopped_event(reason, _stop_message(reason))
 
     async def _collect_model_turn_without_tools(self) -> "_CollectedTurn":
-        return await self._collect_model_turn_with_tools(None)
+        return await self._collect_model_turn_with_messages(self.conversation.export_messages(), None)
 
     async def _collect_model_turn(self, mode: AgentMode) -> "_CollectedTurn":
-        tools = mode.tool_policy.filter_openai_tools(self.tool_registry.openai_tools())
-        return await self._collect_model_turn_with_tools(tools)
+        request = self.request_assembler.assemble(
+            self.conversation.export_messages(),
+            mode,
+            self.tool_registry.openai_tools(),
+            self.tool_context,
+        )
+        return await self._collect_model_turn_with_messages(request.messages, request.tools)
 
-    async def _collect_model_turn_with_tools(self, tools: list[dict[str, Any]] | None) -> "_CollectedTurn":
+    async def _collect_model_turn_with_messages(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+    ) -> "_CollectedTurn":
         events: list[AgentEvent] = []
-        messages = self.conversation.export_messages()
         try:
             async for item in self.stream_collector.collect(self.provider, messages, tools):
                 if isinstance(item, ModelTurn):
@@ -182,3 +194,15 @@ def _stop_message(reason: StopReason) -> str:
     if reason == StopReason.USER_CANCELLED:
         return "用户取消了当前 Agent Loop。"
     return ""
+
+
+def _blocked_tool_results(tool_calls: list[Any], blocked: ToolExecutionBlocked):
+    for tool_call in tool_calls:
+        if tool_call.id == blocked.tool_call.id:
+            yield tool_call, blocked.result
+        else:
+            yield tool_call, error_result(
+                tool_call.name or "unknown_tool",
+                "tool_execution_blocked",
+                "同一轮工具调用中出现未知或当前模式不允许的工具，本轮所有工具均未执行。",
+            )

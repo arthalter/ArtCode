@@ -28,12 +28,16 @@ def token_usage_event(
     prompt_tokens: int | None = None,
     completion_tokens: int | None = None,
     total_tokens: int | None = None,
+    cached_tokens: int | None = None,
+    cache_miss_tokens: int | None = None,
 ) -> dict[str, Any]:
     event = {
         "type": TOKEN_USAGE,
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
+        "cached_tokens": cached_tokens,
+        "cache_miss_tokens": cache_miss_tokens,
     }
     validate_event(event)
     return event
@@ -58,7 +62,7 @@ def validate_event(event: dict[str, Any]) -> None:
         if not isinstance(tool_calls, list) or not all(isinstance(call, ToolCall) for call in tool_calls):
             raise ValueError("tool_calls events must include a list of ToolCall.")
     if event_type == TOKEN_USAGE:
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens", "cache_miss_tokens"):
             value = event.get(key)
             if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
                 raise ValueError("token_usage values must be integers or None.")

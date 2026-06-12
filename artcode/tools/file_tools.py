@@ -50,7 +50,10 @@ def _prepare_error(tool_name: str, exc: Exception, code: str = "invalid_argument
 
 class ReadFileTool:
     name = "read_file"
-    description = "读取允许目录内的 UTF-8 文本文件，可选按行范围读取。"
+    description = (
+        "读取允许目录内的 UTF-8 文本文件，可选按行范围读取。"
+        "用于理解代码、查看配置、获取编辑前上下文；修改已有文件前应先用本工具读取目标文件或相关片段。"
+    )
     requires_confirmation = False
     parameters_schema = _schema(
         {
@@ -101,7 +104,10 @@ class ReadFileTool:
 
 class WriteFileTool:
     name = "write_file"
-    description = "在允许目录内写入 UTF-8 文本文件，默认不覆盖已有文件。"
+    description = (
+        "在允许目录内创建或覆盖完整 UTF-8 文本文件，默认不覆盖已有文件。"
+        "适合写入新文件或整文件生成；覆盖已有文件前必须确认意图，避免用它做小范围替换。"
+    )
     requires_confirmation = True
     parameters_schema = _schema(
         {
@@ -145,7 +151,11 @@ class WriteFileTool:
 
 class EditFileTool:
     name = "edit_file"
-    description = "在允许目录内对 UTF-8 文本文件执行严格原文唯一匹配替换。"
+    description = (
+        "在允许目录内对 UTF-8 文本文件执行严格原文唯一匹配替换。"
+        "编辑前必须先读取目标文件或相关上下文；old_text 必须来自实际文件内容，并且应唯一匹配。"
+        "适合小范围精确修改，不适合整文件重写。"
+    )
     requires_confirmation = True
     parameters_schema = _schema(
         {
@@ -200,7 +210,10 @@ class EditFileTool:
 
 class FindFilesTool:
     name = "find_files"
-    description = "按 glob 模式查找允许目录内的文件。"
+    description = (
+        "按 glob 模式查找允许目录内的文件。"
+        "用于定位候选文件，优先于 shell find；找到文件后通常再配合 read_file 或 search_text 理解内容。"
+    )
     requires_confirmation = False
     parameters_schema = _schema(
         {
@@ -243,7 +256,10 @@ class FindFilesTool:
 
 class SearchTextTool:
     name = "search_text"
-    description = "在允许目录内按普通文本搜索 UTF-8 文本文件内容。"
+    description = (
+        "在允许目录内按普通文本搜索 UTF-8 文本文件内容。"
+        "用于查找符号、配置、错误文本或相关上下文，优先于 shell grep；修改前可用它定位需要读取的片段。"
+    )
     requires_confirmation = False
     parameters_schema = _schema(
         {
