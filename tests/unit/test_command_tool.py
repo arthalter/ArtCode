@@ -3,6 +3,7 @@ from __future__ import annotations
 from artcode.tools.base import PreparedToolCall, ToolExecutionContext
 from artcode.tools.command_tool import RunCommandTool
 from artcode.tools.policy import AllowedPathPolicy
+import asyncio
 
 
 def context_for(root, timeout: float = 10.0, max_result_bytes: int = 20_000) -> ToolExecutionContext:
@@ -97,3 +98,27 @@ async def test_run_command_truncates_large_output(tmp_path) -> None:
 
     assert result.truncated is True
     assert len(result.content.encode("utf-8")) <= 30
+
+
+async def test_shell_environment_does_not_inherit_secrets(tmp_path, monkeypatch) -> None:
+    context = context_for(tmp_path / "sandbox")
+    monkeypatch.setenv("DEEPEST_SECRET_TOKEN", "never-expose-this")
+
+    result = await run_prepared({"command": "env"}, context)
+
+    assert result.ok is True
+    assert "DEEPEST_SECRET_TOKEN" not in result.content
+    assert "never-expose-this" not in result.content
+
+
+async def test_timeout_kills_entire_process_group(tmp_path) -> None:
+    context = context_for(tmp_path / "sandbox", timeout=0.1)
+    marker = context.default_cwd / "child.log"
+    command = f"while true; do printf x >> '{marker}'; sleep 0.01; done & wait"
+
+    result = await run_prepared({"command": command}, context)
+    size_after_timeout = marker.stat().st_size
+    await asyncio.sleep(0.08)
+
+    assert result.error_code == "command_timeout"
+    assert marker.stat().st_size == size_after_timeout

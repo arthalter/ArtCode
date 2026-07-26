@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import signal
 from dataclasses import dataclass, field
+from dataclasses import replace
 from typing import Protocol
 
 from artcode.agent import (
@@ -19,6 +20,15 @@ from artcode.commands import CommandRegistry, create_default_registry
 from artcode.config import ArtCodeConfig
 from artcode.conversation import ConversationContext
 from artcode.providers.base import StreamingProvider
+from artcode.permissions import (
+    ApprovalChoice,
+    ApprovalRequest,
+    PermissionEngine,
+    PermissionMode,
+    PermissionState,
+    RuleWriter,
+    ShellPolicy,
+)
 from artcode.tools import (
     AllowedPathPolicy,
     ToolExecutionContext,
@@ -28,6 +38,8 @@ from artcode.tools import (
     create_default_tool_registry,
 )
 from artcode.tui import UserRequestedExit
+from artcode.workspace import Workspace
+from artcode.agent.tools import ToolBatchExecutor
 
 
 class TuiApp(Protocol):
@@ -104,26 +116,55 @@ class ArtCodeRuntime:
     commands: CommandRegistry = field(default_factory=create_default_registry)
     plan_memory: PlanMemory | None = None
     agent_loop: AgentLoop | None = None
+    workspace: Workspace | None = None
+    permission_state: PermissionState = field(default_factory=PermissionState)
+    permission_engine: PermissionEngine | None = None
+    rule_writer: RuleWriter | None = None
 
     def __post_init__(self) -> None:
         if self.tool_registry is None:
             self.tool_registry = create_default_tool_registry()
         if self.tool_context is None:
-            policy = AllowedPathPolicy(self.config.tools.allowed_dirs)
-            self.tool_context = ToolExecutionContext(policy, default_cwd=self.config.tools.allowed_dirs[0])
+            selected = self.workspace or Workspace.from_path(self.config.workspace)
+            policy = AllowedPathPolicy((selected.root,))
+            self.tool_context = ToolExecutionContext(policy, default_cwd=selected.root)
         if self.plan_memory is None:
             self.plan_memory = PlanMemory()
         if self.agent_loop is None:
+            executor = ToolBatchExecutor(
+                self.tool_registry,
+                self.tool_context,
+                permission_engine=self.permission_engine,
+                permission_state=self.permission_state,
+                approver=self if self.permission_engine is not None else None,
+                rule_writer=self.rule_writer,
+            )
             self.agent_loop = AgentLoop(
                 provider=self.provider,
                 conversation=self.conversation,
                 tool_registry=self.tool_registry,
                 tool_context=self.tool_context,
                 plan_memory=self.plan_memory,
+                tool_executor=executor,
             )
 
     async def run(self) -> int:
-        self.tui.show_startup(self.config.safe_status())
+        status = self.config.safe_status()
+        if self.workspace is not None:
+            status = replace(
+                status,
+                workspace=str(self.workspace.root),
+                permission_mode=self.permission_state.mode.value,
+                shell_policy=self.permission_state.shell_policy.value,
+                seatbelt_status=(
+                    "self-test passed"
+                    if self.tool_context is not None
+                    and self.tool_context.seatbelt is not None
+                    and self.tool_context.seatbelt.self_tested
+                    else "not initialized"
+                ),
+            )
+        self.tui.show_startup(status)
         while True:
             try:
                 user_input = await self.tui.read_input(self.config.model)
@@ -145,11 +186,70 @@ class ArtCodeRuntime:
                 if command_result.action == "do":
                     await self._run_do(command_result.argument)
                     continue
+                if command_result.action == "permission":
+                    self._handle_permission_command(command_result.argument)
+                    continue
+                if command_result.action == "sandbox":
+                    await self._handle_sandbox_command(command_result.argument)
+                    continue
                 if command_result.message:
                     self.tui.show_help(command_result.message)
                 continue
 
             await self._run_agent(user_input, NORMAL_AGENT_MODE)
+
+    async def request_approval(self, request: ApprovalRequest) -> ApprovalChoice:
+        handler = getattr(self.tui, "request_approval", None)
+        if callable(handler):
+            return await handler(request)
+        preview = ToolPreview(request.tool_name, request.source, request.target, True)
+        allowed = await self.tui.confirm_tool_execution(preview)
+        return ApprovalChoice.ALLOW_ONCE if allowed else ApprovalChoice.DENY_ONCE
+
+    def _handle_permission_command(self, argument: str) -> None:
+        if not argument:
+            self.tui.show_help(
+                f"当前权限模式：{self.permission_state.mode.value}；可选：default、edit、full"
+            )
+            return
+        try:
+            self.permission_state.mode = PermissionMode(argument.lower())
+        except ValueError:
+            self.tui.show_help("权限模式只能是 default、edit 或 full。")
+            return
+        self.tui.show_help(f"权限模式已切换为：{self.permission_state.mode.value}")
+
+    async def _handle_sandbox_command(self, argument: str) -> None:
+        if not argument:
+            self.tui.show_help(
+                f"当前 Shell 策略：{self.permission_state.shell_policy.value}；可选：auto、ask、off"
+            )
+            return
+        try:
+            selected = ShellPolicy(argument.lower())
+        except ValueError:
+            self.tui.show_help("Shell 策略只能是 auto、ask 或 off。")
+            return
+        if selected is ShellPolicy.UNSANDBOXED_ASK:
+            confirm = getattr(self.tui, "confirm_unsandboxed", None)
+            if callable(confirm):
+                allowed = await confirm()
+            else:
+                allowed = await self.tui.confirm_tool_execution(
+                    ToolPreview(
+                        "run_command",
+                        "关闭 Seatbelt 后，命令只受危险命令检查和人工授权保护。",
+                        "当前运行",
+                        True,
+                    )
+                )
+            if not allowed:
+                self.tui.show_help("已取消切换，Shell 策略保持不变。")
+                return
+        self.permission_state.shell_policy = selected
+        if self.tool_context is not None:
+            object.__setattr__(self.tool_context, "shell_policy", selected)
+        self.tui.show_help(f"Shell 策略已切换为：{selected.value}")
 
     async def _run_do(self, extra_instruction: str) -> None:
         plan = self.plan_memory.get() if self.plan_memory is not None else None

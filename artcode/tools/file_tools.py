@@ -44,7 +44,16 @@ def _bool_arg(arguments: dict[str, Any], name: str, default: bool = False) -> bo
 
 
 def _prepare_error(tool_name: str, exc: Exception, code: str = "invalid_arguments") -> ToolResult:
-    error_code = "path_outside_allowed_dirs" if "不在允许目录" in str(exc) else code
+    text = str(exc)
+    error_code = (
+        "path_outside_workspace"
+        if "Workspace 外" in text
+        else "path_outside_allowed_dirs"
+        if "不在允许目录" in text
+        else "sensitive_path"
+        if "敏感路径" in text
+        else code
+    )
     return error_result(tool_name, error_code, str(exc))
 
 
@@ -77,7 +86,7 @@ class ReadFileTool:
         return PreparedToolCall(
             tool=self,
             arguments={"path": path, "start_line": start_line, "end_line": end_line},
-            preview=ToolPreview(self.name, f"读取文件 {path}", str(path), False),
+            preview=ToolPreview(self.name, f"读取文件 {path}", _target(context, path), False),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
@@ -135,7 +144,7 @@ class WriteFileTool:
         return PreparedToolCall(
             tool=self,
             arguments={"path": path, "content": content, "overwrite": overwrite},
-            preview=ToolPreview(self.name, f"{action}文件 {path}", str(path), True),
+            preview=ToolPreview(self.name, f"{action}文件 {path}", _target(context, path), True),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
@@ -179,7 +188,7 @@ class EditFileTool:
         return PreparedToolCall(
             tool=self,
             arguments={"path": path, "old_text": old_text, "new_text": new_text},
-            preview=ToolPreview(self.name, f"修改文件 {path}", str(path), True),
+            preview=ToolPreview(self.name, f"修改文件 {path}", _target(context, path), True),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
@@ -230,7 +239,7 @@ class FindFilesTool:
         return PreparedToolCall(
             tool=self,
             arguments={"pattern": pattern},
-            preview=ToolPreview(self.name, f"查找文件 {pattern}", pattern, False),
+            preview=ToolPreview(self.name, f"查找文件 {pattern}", ".", False),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
@@ -281,7 +290,7 @@ class SearchTextTool:
         except Exception as exc:
             return _prepare_error(self.name, exc)
 
-        target = str(path) if path is not None else "所有允许目录"
+        target = _target(context, path) if path is not None else "."
         return PreparedToolCall(
             tool=self,
             arguments={"query": query, "path": path},
@@ -325,5 +334,17 @@ def _iter_search_files(path: Path | None, context: ToolExecutionContext) -> list
         if root.is_file() and context.path_policy.is_allowed(root):
             files.append(root)
         elif root.is_dir() and context.path_policy.is_allowed(root):
-            files.extend(candidate for candidate in root.rglob("*") if candidate.is_file())
+            for candidate in root.rglob("*"):
+                try:
+                    if candidate.is_file() and context.path_policy.is_allowed(candidate.resolve()):
+                        files.append(candidate.resolve())
+                except OSError:
+                    continue
     return files
+
+
+def _target(context: ToolExecutionContext, path: Path) -> str:
+    relative_target = getattr(context.path_policy, "relative_target", None)
+    if callable(relative_target):
+        return relative_target(path)
+    return str(path)

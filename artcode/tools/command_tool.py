@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
+import signal
 from pathlib import Path
 from typing import Any
 
@@ -39,9 +41,13 @@ class RunCommandTool:
             return cwd_result
         cwd = cwd_result
 
-        dangerous = validate_shell_command(command, context.path_policy)
-        if dangerous is not None:
-            return dangerous
+        # ch05 compatibility tests still exercise the old policy directly.
+        # The ch06 runtime uses WorkspacePathPolicy and delegates hard command
+        # checks to PermissionEngine before any process is started.
+        if isinstance(context.path_policy, AllowedPathPolicy):
+            dangerous = validate_shell_command(command, context.path_policy)
+            if dangerous is not None:
+                return dangerous
 
         return PreparedToolCall(
             tool=self,
@@ -52,23 +58,36 @@ class RunCommandTool:
     async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
         command: str = prepared.arguments["command"]
         cwd: Path = prepared.arguments["cwd"]
+        argv = ["/bin/zsh", "-f", "-c", command]
+        if context.shell_policy.uses_sandbox:
+            if context.seatbelt is None:
+                return error_result(self.name, "sandbox_error", "Seatbelt 未初始化，拒绝执行命令。")
+            try:
+                argv = [*context.seatbelt.command_prefix(), *argv]
+            except Exception as exc:
+                return error_result(self.name, "sandbox_error", str(exc))
+        environment = _safe_environment(context)
+        process: asyncio.subprocess.Process | None = None
         try:
-            process = await asyncio.create_subprocess_shell(
-                command,
+            process = await asyncio.create_subprocess_exec(
+                *argv,
                 cwd=str(cwd),
+                env=environment,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 process.communicate(),
                 timeout=context.command_timeout_seconds,
             )
         except TimeoutError:
-            try:
-                process.kill()
-                await process.wait()
-            except ProcessLookupError:
-                pass
+            if process is not None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    await process.wait()
+                except ProcessLookupError:
+                    pass
             return error_result(
                 self.name,
                 "command_timeout",
@@ -127,3 +146,15 @@ def _resolve_cwd(raw_cwd: Any, context: ToolExecutionContext) -> Path | ToolResu
     if not cwd.is_dir():
         return error_result("run_command", "invalid_arguments", f"cwd 不是目录：{cwd}")
     return cwd
+
+
+def _safe_environment(context: ToolExecutionContext) -> dict[str, str]:
+    allowed = ("PATH", "LANG", "LC_ALL", "TERM")
+    environment = {key: os.environ[key] for key in allowed if key in os.environ}
+    environment.setdefault("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+    environment["HOME"] = str(Path.home())
+    if context.seatbelt is not None and context.seatbelt.temp_dir is not None:
+        environment["TMPDIR"] = str(context.seatbelt.temp_dir)
+    else:
+        environment["TMPDIR"] = os.environ.get("TMPDIR", "/tmp")
+    return environment

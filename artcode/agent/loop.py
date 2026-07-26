@@ -73,11 +73,15 @@ class AgentLoop:
         self.request_assembler = request_assembler or PromptRequestAssembler()
 
     async def run(self, request: AgentRunRequest) -> AsyncIterator[AgentEvent]:
+        # Repair history left by an older interrupted run before appending the
+        # next user message, so tool results remain adjacent to tool_calls.
+        self.conversation.repair_incomplete_tool_calls()
         if request.append_user_message:
             self.conversation.append_user(request.user_content)
 
         yield run_started_event(request.mode.name, request.max_iterations)
 
+        pending_tool_calls: dict[str, Any] = {}
         try:
             for iteration in range(1, request.max_iterations + 1):
                 yield iteration_started_event(iteration, request.max_iterations)
@@ -100,27 +104,37 @@ class AgentLoop:
                     return
 
                 self.conversation.append_assistant_tool_call(model_turn.tool_calls)
+                pending_tool_calls = {tool_call.id: tool_call for tool_call in model_turn.tool_calls}
                 yield tool_calls_received_event(len(model_turn.tool_calls))
 
                 plan = self.tool_executor.build_plan(model_turn.tool_calls, request.mode.tool_policy)
                 if isinstance(plan, ToolExecutionBlocked):
                     for tool_call, result in _blocked_tool_results(model_turn.tool_calls, plan):
                         self.conversation.append_tool_result(tool_call, result)
+                        pending_tool_calls.pop(tool_call.id, None)
                         yield tool_result_event(tool_call, result)
                     async for event in self._summarize_if_needed(request, plan.stop_reason):
                         yield event
                     return
 
-                async for event in self.tool_executor.execute_plan(plan):
+                async for event in self.tool_executor.execute_plan(plan, plan_mode=request.mode == PLAN_MODE):
                     if event.type == AgentEventType.TOOL_RESULT:
                         tool_call = event.payload["tool_call"]
                         result = event.payload["result"]
                         self.conversation.append_tool_result(tool_call, result)
+                        pending_tool_calls.pop(tool_call.id, None)
                     yield event
 
             async for event in self._summarize_if_needed(request, StopReason.ITERATION_LIMIT):
                 yield event
         except asyncio.CancelledError:
+            repaired = self.conversation.repair_incomplete_tool_calls(
+                error_code="tool_execution_cancelled",
+                message="用户取消了 Agent Loop，工具未执行或未完成。",
+            )
+            for tool_call, result in repaired:
+                if tool_call.id in pending_tool_calls:
+                    yield tool_result_event(tool_call, result)
             yield stopped_event(StopReason.USER_CANCELLED, "用户取消了当前 Agent Loop。")
             return
 
@@ -148,9 +162,11 @@ class AgentLoop:
         yield stopped_event(reason, _stop_message(reason))
 
     async def _collect_model_turn_without_tools(self) -> "_CollectedTurn":
+        self.conversation.repair_incomplete_tool_calls()
         return await self._collect_model_turn_with_messages(self.conversation.export_messages(), None)
 
     async def _collect_model_turn(self, mode: AgentMode) -> "_CollectedTurn":
+        self.conversation.repair_incomplete_tool_calls()
         request = self.request_assembler.assemble(
             self.conversation.export_messages(),
             mode,

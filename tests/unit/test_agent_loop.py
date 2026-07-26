@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,12 @@ class FakeTool:
     async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
         self.executions += 1
         return self.result or success_result(self.name, f"{self.name} ok")
+
+
+class CancellingTool(FakeTool):
+    async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
+        self.executions += 1
+        raise asyncio.CancelledError
 
 
 def context_for(tmp_path: Path) -> ToolExecutionContext:
@@ -221,6 +228,42 @@ async def test_stream_error_does_not_write_partial_text_or_summarize(tmp_path) -
     assert events[-1].payload["reason"] == StopReason.STREAM_ERROR.value
     assert context.export_messages()[-1] == {"role": "user", "content": "你好"}
     assert len(provider.tools_seen) == 1
+
+
+async def test_cancelled_multi_tool_turn_completes_every_tool_call_and_next_run_is_valid(tmp_path) -> None:
+    context = ConversationContext()
+    first = FakeTool("write_file")
+    second = CancellingTool("edit_file")
+    first_provider = FakeProvider(
+        [
+            [
+                tool_calls_event(
+                    [
+                        ToolCall("call_1", "write_file", "{}"),
+                        ToolCall("call_2", "edit_file", "{}"),
+                    ]
+                ),
+                done_event(),
+            ]
+        ]
+    )
+    loop = AgentLoop(first_provider, context, registry_with(first, second), context_for(tmp_path))
+
+    events = await collect(loop, AgentRunRequest("执行两个工具", NORMAL_AGENT_MODE))
+
+    assert events[-1].payload["reason"] == StopReason.USER_CANCELLED.value
+    tool_messages = [message for message in context.export_messages() if message.get("role") == "tool"]
+    assert [message["tool_call_id"] for message in tool_messages] == ["call_1", "call_2"]
+    assert json.loads(tool_messages[1]["content"])["error_code"] == "tool_execution_cancelled"
+
+    second_provider = FakeProvider([[content_delta_event("可以继续"), done_event()]])
+    next_loop = AgentLoop(second_provider, context, registry_with(first, second), context_for(tmp_path))
+    next_events = await collect(next_loop, AgentRunRequest("继续", NORMAL_AGENT_MODE))
+
+    assert next_events[-1].payload["reason"] == StopReason.NATURAL.value
+    sent = second_provider.messages_seen[0]
+    assistant_index = next(index for index, message in enumerate(sent) if message.get("tool_calls"))
+    assert [sent[assistant_index + offset]["tool_call_id"] for offset in (1, 2)] == ["call_1", "call_2"]
 
 
 async def test_plan_mode_saves_plan_on_natural_completion(tmp_path) -> None:

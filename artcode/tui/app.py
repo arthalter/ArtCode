@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from prompt_toolkit import PromptSession
 
 from artcode.tools import ToolPreview, ToolResult
+from artcode.permissions import ApprovalChoice, ApprovalRequest
 
 from .keybindings import create_input_keybindings
 from .render import TuiRenderer
@@ -64,6 +65,32 @@ class PromptToolkitTui:
     async def confirm_tool_execution(self, preview: ToolPreview) -> bool:
         while True:
             answer = await self._session.prompt_async("执行这个工具？(yes/no)> ")
+            normalized = answer.strip().lower()
+            if normalized in {"yes", "y"}:
+                return True
+            if normalized in {"no", "n"}:
+                return False
+
+    async def request_approval(self, request: ApprovalRequest) -> ApprovalChoice:
+        self.renderer.show_approval(request)
+        choices = {
+            "1": ApprovalChoice.ALLOW_ONCE,
+            "2": ApprovalChoice.DENY_ONCE,
+            "3": ApprovalChoice.ALLOW_ALWAYS,
+            "4": ApprovalChoice.DENY_ALWAYS,
+        }
+        while True:
+            answer = await self._session.prompt_async(
+                "选择：1 仅本次允许 / 2 仅本次禁止 / 3 以后允许 / 4 以后禁止 > "
+            )
+            if answer.strip() in choices:
+                return choices[answer.strip()]
+
+    async def confirm_unsandboxed(self) -> bool:
+        while True:
+            answer = await self._session.prompt_async(
+                "关闭 Seatbelt 将失去操作系统级隔离，确认继续？(yes/no)> "
+            )
             normalized = answer.strip().lower()
             if normalized in {"yes", "y"}:
                 return True

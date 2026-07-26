@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from artcode.agent import PlanMemory
-from artcode.config import ArtCodeConfig, ThinkingConfig, ToolConfig
+from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.conversation import ConversationContext
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
@@ -99,7 +99,7 @@ def config_for(allowed_dir: Path) -> ArtCodeConfig:
         base_url="https://example.invalid",
         api_key="sk-test",
         thinking=ThinkingConfig(),
-        tools=ToolConfig((allowed_dir,)),
+        workspace=allowed_dir,
     )
 
 

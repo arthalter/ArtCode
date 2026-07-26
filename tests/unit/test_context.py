@@ -88,3 +88,33 @@ def test_multiple_tool_calls_can_each_receive_error_result() -> None:
     messages = context.export_messages()
     assert messages[-2]["tool_call_id"] == "call_1"
     assert messages[-1]["tool_call_id"] == "call_2"
+
+
+def test_repair_incomplete_tool_calls_inserts_results_before_later_user_message() -> None:
+    context = ConversationContext()
+    calls = [
+        ToolCall("call_1", "read_file", "{}"),
+        ToolCall("call_2", "write_file", "{}"),
+    ]
+    context.append_assistant_tool_call(calls)
+    context.append_tool_result(calls[0], success_result("read_file", "ok"))
+    context.append_user("下一条消息")
+
+    repaired = context.repair_incomplete_tool_calls()
+
+    assert [call.id for call, _result in repaired] == ["call_2"]
+    messages = context.export_messages()
+    assistant_index = next(index for index, message in enumerate(messages) if message.get("tool_calls"))
+    assert messages[assistant_index + 1]["tool_call_id"] == "call_1"
+    assert messages[assistant_index + 2]["tool_call_id"] == "call_2"
+    assert messages[assistant_index + 3] == {"role": "user", "content": "下一条消息"}
+
+
+def test_repair_is_idempotent_for_complete_tool_turn() -> None:
+    context = ConversationContext()
+    call = ToolCall("call_1", "read_file", "{}")
+    context.append_assistant_tool_call([call])
+    context.append_tool_result(call, success_result("read_file", "ok"))
+
+    assert context.repair_incomplete_tool_calls() == []
+    assert context.repair_incomplete_tool_calls() == []
