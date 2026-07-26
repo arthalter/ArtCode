@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -17,10 +18,10 @@ def required_live_config() -> ArtCodeConfig:
     try:
         config = load_config(ROOT / "artcode.yaml")
     except ConfigError as exc:
-        pytest.fail(f"ch05 cache validation requires real API config: {exc.message}")
+        pytest.fail(f"ch06 cache validation requires real API config: {exc.message}")
     if "your-deepseek-api-key" in config.api_key or config.api_key.startswith("<"):
-        pytest.fail("ch05 cache validation requires a real API key in artcode.yaml")
-    return config
+        pytest.fail("ch06 cache validation requires a real API key in artcode.yaml")
+    return replace(config, model="deepseek-v4-flash")
 
 
 async def collect_cached_tokens(provider: OpenAICompatibleProvider, messages: list[dict[str, str]]) -> int:
@@ -43,7 +44,7 @@ async def test_live_prompt_cache_hit_tokens_are_positive() -> None:
         [
             build_system_prompt(),
             "稳定缓存验证片段：",
-            *[f"cache-line-{index}: ArtCode ch05 keeps stable prompt prefixes for cache validation." for index in range(300)],
+            *[f"cache-line-{index}: ArtCode ch06 keeps stable prompt prefixes for cache validation." for index in range(300)],
         ]
     )
     messages = [

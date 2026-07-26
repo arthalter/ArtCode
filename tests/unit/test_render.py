@@ -24,7 +24,7 @@ def test_startup_status_contains_non_sensitive_fields() -> None:
         thinking_enabled=True,
         thinking_effort="high",
         masked_api_key="sk-t...alue",
-        allowed_dirs=("/tmp/artcode-sandbox",),
+        workspace="/tmp/artcode-sandbox",
     )
 
     renderer.show_startup(status)

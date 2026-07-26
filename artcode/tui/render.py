@@ -9,6 +9,7 @@ from rich.text import Text
 from artcode.config import SafeConfigStatus
 from artcode.errors import ArtCodeError
 from artcode.tools import ToolPreview, ToolResult
+from artcode.permissions import ApprovalRequest
 
 
 class _PrintableError(Protocol):
@@ -32,12 +33,27 @@ class TuiRenderer:
                 "streaming: on",
                 f"thinking: {thinking}",
                 f"api_key: {status.masked_api_key}",
-                "allowed_dirs:",
-                *[f"  - {path}" for path in status.allowed_dirs],
+                f"workspace: {status.workspace}",
+                f"permission: {status.permission_mode}",
+                f"sandbox: {status.shell_policy}",
+                f"seatbelt: {status.seatbelt_status}",
                 "input: Enter 发送，Ctrl+Enter 或 Esc Enter 换行",
             ]
         )
         self.console.print(Panel(body, title="ArtCode", border_style="cyan"))
+
+    def show_approval(self, request: ApprovalRequest) -> None:
+        body = "\n".join(
+            [
+                f"工具：{request.tool_name}",
+                f"目标：{request.target}",
+                f"Workspace：{request.workspace}",
+                f"权限模式：{request.permission_mode.value}",
+                f"Shell 策略：{request.shell_policy.value}",
+                f"ASK 来源：{request.source}",
+            ]
+        )
+        self.console.print(Panel(body, title="需要授权", border_style="yellow"))
 
     def prompt_text(self, model: str) -> str:
         return f"{model}> "

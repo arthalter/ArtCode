@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from artcode.config import ArtCodeConfig, ThinkingConfig, ToolConfig
+from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.conversation import ConversationContext
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
@@ -106,7 +106,7 @@ def config_for(allowed_dir) -> ArtCodeConfig:
         base_url="https://example.invalid",
         api_key="sk-test",
         thinking=ThinkingConfig(),
-        tools=ToolConfig((allowed_dir,)),
+        workspace=allowed_dir,
     )
 
 

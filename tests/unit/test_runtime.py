@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from artcode.agent import PlanMemory
-from artcode.config import ArtCodeConfig, ThinkingConfig, ToolConfig
+from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.conversation import ConversationContext
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
@@ -101,7 +101,7 @@ def fake_config(root: Path) -> ArtCodeConfig:
         base_url="https://api.deepseek.com",
         api_key="sk-test",
         thinking=ThinkingConfig(),
-        tools=ToolConfig((root,)),
+        workspace=root,
     )
 
 

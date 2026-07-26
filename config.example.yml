@@ -1,0 +1,13 @@
+# 首次使用前，请运行：
+# mkdir -p ~/.artcode
+# cp config.example.yml ~/.artcode/config.yml
+# 然后编辑 ~/.artcode/config.yml，填写真实 API Key。
+
+protocol: openai
+model: deepseek-v4-flash
+base_url: https://api.deepseek.com
+api_key: your-deepseek-api-key
+
+thinking:
+  enabled: false
+  effort: high
