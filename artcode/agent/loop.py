@@ -170,7 +170,7 @@ class AgentLoop:
         request = self.request_assembler.assemble(
             self.conversation.export_messages(),
             mode,
-            self.tool_registry.openai_tools(),
+            self.tool_registry.openai_tools(include_internal_metadata=True),
             self.tool_context,
         )
         return await self._collect_model_turn_with_messages(request.messages, request.tools)

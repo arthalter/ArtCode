@@ -2,6 +2,41 @@
 
 ArtCode 是一个本地 Python CLI Coding Agent 学习项目。
 
+## ch07：MCP 协议
+
+ch07 允许 ArtCode 通过官方 Python MCP SDK 复用外部 MCP Server 的工具：
+
+- 支持本地 `stdio` 子进程和远程 `streamable_http`。
+- 用户级 Server 写在 `~/.artcode/config.yml`；项目级 Server 写在 `<workspace>/.artcode/config.yml`。
+- 项目配置只允许 `mcp_servers`，同名项目条目完整替换用户条目，不做字段继承。
+- `env` 和 `headers` 支持 `${VAR}`；缺失变量只会跳过对应 Server。
+- 项目级 Server 每次启动均需确认，且在确认前不会启动进程、连接网络或展开秘密。
+- MCP 工具注册为 `mcp__<server>__<tool>`；Normal、Do 和 Plan 均可看到，但每次调用都必须二选一确认。
+- 单个 Server 配置错误、超时或断开不会影响内置工具与其他 Server；断开后本次进程不自动重连。
+- 仅接入 MCP Tools，不接入 Resources、Prompts、Sampling、Roots 或 OAuth。
+
+项目级示例：
+
+```yaml
+mcp_servers:
+  local_demo:
+    transport: stdio
+    command: python
+    args: [./servers/demo.py]
+    env:
+      SERVICE_TOKEN: ${SERVICE_TOKEN}
+
+  remote_demo:
+    transport: streamable_http
+    url: https://example.com/mcp
+    headers:
+      Authorization: Bearer ${MCP_TOKEN}
+```
+
+安全提示：stdio Server 是用户信任的外部进程，不受 ArtCode 文件工具的 Workspace 沙箱保护。Streamable HTTP 为兼容 MCP Server 允许跨域重定向，并会向重定向目标原样转发配置的全部自定义 Headers，包括认证信息。不要连接不可信 Server 或 URL。
+
+常见错误包括传输字段混用、未知字段、`${VAR}` 未设置、项目配置包含其他顶层字段，以及远端工具 Schema 顶层不是 JSON object。上述错误会显示对应 Server 和失败阶段，但不会显示秘密值。
+
 ## ch06：权限系统
 
 ch06 将 ArtCode 的工具安全模型改为单一 Workspace，并增加失败关闭的纵深权限系统：

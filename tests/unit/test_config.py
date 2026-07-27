@@ -118,10 +118,10 @@ def test_safe_status_masks_api_key() -> None:
     assert config.api_key not in status.masked_api_key
 
 
-def test_chapter_name_is_ch06() -> None:
+def test_chapter_name_is_ch07() -> None:
     status = parse_config(valid_raw()).safe_status()
 
-    assert status.chapter == "ch06：权限系统"
+    assert status.chapter == "ch07：MCP协议"
 
 
 def test_old_tools_allowed_dirs_is_rejected() -> None:

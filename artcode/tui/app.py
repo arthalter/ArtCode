@@ -6,6 +6,7 @@ from prompt_toolkit import PromptSession
 
 from artcode.tools import ToolPreview, ToolResult
 from artcode.permissions import ApprovalChoice, ApprovalRequest
+from artcode.mcp.models import McpServerConfig, TransportKind
 
 from .keybindings import create_input_keybindings
 from .render import TuiRenderer
@@ -69,6 +70,24 @@ class PromptToolkitTui:
             if normalized in {"yes", "y"}:
                 return True
             if normalized in {"no", "n"}:
+                return False
+
+    async def confirm_mcp_server(self, config: McpServerConfig) -> bool:
+        self.renderer.show_mcp_server_approval(config)
+        while True:
+            answer = await self._session.prompt_async("连接这个项目 MCP Server？(yes/no)> ")
+            if answer.strip().lower() in {"yes", "y"}:
+                return True
+            if answer.strip().lower() in {"no", "n"}:
+                return False
+
+    async def confirm_mcp_tool(self, preview: ToolPreview, plan_mode: bool = False) -> bool:
+        self.renderer.show_mcp_tool_approval(preview, plan_mode)
+        while True:
+            answer = await self._session.prompt_async("执行这个 MCP 工具？(yes/no)> ")
+            if answer.strip().lower() in {"yes", "y"}:
+                return True
+            if answer.strip().lower() in {"no", "n"}:
                 return False
 
     async def request_approval(self, request: ApprovalRequest) -> ApprovalChoice:
