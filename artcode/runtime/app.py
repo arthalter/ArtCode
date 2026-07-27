@@ -206,6 +206,13 @@ class ArtCodeRuntime:
         allowed = await self.tui.confirm_tool_execution(preview)
         return ApprovalChoice.ALLOW_ONCE if allowed else ApprovalChoice.DENY_ONCE
 
+    async def request_mcp_approval(self, preview: ToolPreview) -> bool:
+        handler = getattr(self.tui, "confirm_mcp_tool", None)
+        if callable(handler):
+            executor = getattr(self.agent_loop, "tool_executor", None)
+            return await handler(preview, bool(getattr(executor, "plan_mode", False)))
+        return await self.tui.confirm_tool_execution(preview)
+
     def _handle_permission_command(self, argument: str) -> None:
         if not argument:
             self.tui.show_help(

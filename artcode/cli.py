@@ -16,6 +16,7 @@ from .workspace import ArtCodePaths, Workspace, WorkspaceError
 from .permissions import PermissionEngine, PermissionState, RuleLoader, RulePaths, RuleWriter
 from .security import DangerousCommandValidator
 from .sandbox import SeatbeltError, SeatbeltSession
+from .mcp import McpManager, load_mcp_configuration
 from importlib.resources import files
 
 
@@ -51,6 +52,16 @@ async def run_app(
         return 2
 
     provider = OpenAICompatibleProvider(config)
+    tui = PromptToolkitTui(renderer=renderer)
+    user_mcp_raw = {"mcp_servers": config.mcp_servers_raw or {}}
+    mcp_configs, mcp_issues = load_mcp_configuration(user_mcp_raw, workspace.root)
+    mcp_manager = McpManager(
+        mcp_configs,
+        workspace.root,
+        mcp_issues,
+        approver=tui.confirm_mcp_server,
+    )
+    mcp_report = await mcp_manager.start()
     state = PermissionState()
     path_policy = WorkspacePathPolicy(workspace, sensitive_paths)
     tool_context = ToolExecutionContext(
@@ -60,21 +71,25 @@ async def run_app(
         seatbelt=seatbelt,
         permission_state=state,
     )
+    registry = create_default_tool_registry()
+    registry.register_many(mcp_manager.adapters)
     runtime = ArtCodeRuntime(
         config=config,
         provider=provider,
         conversation=ConversationContext(),
-        tui=PromptToolkitTui(renderer=renderer),
-        tool_registry=create_default_tool_registry(),
+        tui=tui,
+        tool_registry=registry,
         tool_context=tool_context,
         workspace=workspace,
         permission_state=state,
         permission_engine=PermissionEngine(rules, dangerous),
         rule_writer=RuleWriter(rules),
     )
+    renderer.show_mcp_startup(mcp_report)
     try:
         return await runtime.run()
     finally:
+        await mcp_manager.close()
         seatbelt.close()
 
 

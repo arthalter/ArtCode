@@ -49,8 +49,10 @@ class PromptRequestAssembler:
         if all_tools is None:
             return None
         if mode is None:
-            return list(all_tools)
-        return mode.tool_policy.filter_openai_tools(list(all_tools))
+            selected = list(all_tools)
+        else:
+            selected = mode.tool_policy.filter_openai_tools(list(all_tools))
+        return [_without_internal_metadata(tool) for tool in selected]
 
 
 def _tool_names(tools: list[dict[str, Any]]) -> tuple[str, ...]:
@@ -60,3 +62,9 @@ def _tool_names(tools: list[dict[str, Any]]) -> tuple[str, ...]:
         if isinstance(function, dict) and isinstance(function.get("name"), str):
             names.append(function["name"])
     return tuple(names)
+
+
+def _without_internal_metadata(tool: dict[str, Any]) -> dict[str, Any]:
+    clean = dict(tool)
+    clean.pop("x-artcode-origin", None)
+    return clean

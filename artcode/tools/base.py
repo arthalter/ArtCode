@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -9,6 +10,16 @@ from artcode.sandbox import SeatbeltSession
 
 from .policy import AllowedPathPolicy
 from .results import MAX_RESULT_BYTES, ToolResult
+
+
+class ToolOrigin(StrEnum):
+    BUILTIN = "builtin"
+    MCP = "mcp"
+
+
+class ToolApprovalPolicy(StrEnum):
+    STANDARD = "standard"
+    ALWAYS_ASK_ONCE = "always_ask_once"
 
 
 @dataclass(frozen=True)
@@ -42,6 +53,8 @@ class Tool(Protocol):
     description: str
     parameters_schema: dict[str, Any]
     requires_confirmation: bool
+    origin: ToolOrigin
+    approval_policy: ToolApprovalPolicy
 
     def prepare(
         self,

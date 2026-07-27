@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
@@ -10,7 +10,7 @@ from .errors import ConfigError, mask_secret
 
 
 CONFIG_FILENAME = "config.yml"
-CHAPTER_NAME = "ch06：权限系统"
+CHAPTER_NAME = "ch07：MCP协议"
 SUPPORTED_PROTOCOL = "openai"
 SUPPORTED_THINKING_EFFORTS = {"low", "medium", "high"}
 
@@ -45,6 +45,7 @@ class ArtCodeConfig:
     api_key: str
     thinking: ThinkingConfig
     workspace: Path | None = None
+    mcp_servers_raw: Mapping[str, Any] | None = None
 
     def safe_status(self) -> SafeConfigStatus:
         return SafeConfigStatus(
@@ -102,6 +103,7 @@ def parse_config(raw: Any) -> ArtCodeConfig:
         base_url=base_url,
         api_key=api_key,
         thinking=thinking,
+        mcp_servers_raw=raw.get("mcp_servers") if isinstance(raw.get("mcp_servers"), dict) else None,
     )
 
 
