@@ -1,6 +1,8 @@
 from .context import (
     ConversationContext,
     ConversationEntry,
+    ConversationEntryObserver,
+    ConversationPersistenceRejected,
     ConversationSnapshot,
     UserMessageRecord,
 )
@@ -8,6 +10,8 @@ from .context import (
 __all__ = [
     "ConversationContext",
     "ConversationEntry",
+    "ConversationEntryObserver",
+    "ConversationPersistenceRejected",
     "ConversationSnapshot",
     "UserMessageRecord",
 ]

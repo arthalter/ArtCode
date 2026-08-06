@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from artcode.tools import ToolExecutionContext
 
@@ -18,9 +18,25 @@ class PromptRequest:
     tools: list[dict[str, Any]] | None
 
 
+class DurableSystemPromptSource(Protocol):
+    def build_system_prompt(self) -> str:
+        ...
+
+
 class PromptRequestAssembler:
-    def __init__(self, reminder_builder: SystemReminderBuilder | None = None) -> None:
+    def __init__(
+        self,
+        reminder_builder: SystemReminderBuilder | None = None,
+        *,
+        durable_prompt: DurableSystemPromptSource | None = None,
+        resume_reminder_required: bool = False,
+    ) -> None:
         self.reminder_builder = reminder_builder or SystemReminderBuilder()
+        self.durable_prompt = durable_prompt
+        self._resume_reminder_pending = resume_reminder_required
+
+    def require_resume_reminder(self) -> None:
+        self._resume_reminder_pending = True
 
     def assemble(
         self,
@@ -30,6 +46,8 @@ class PromptRequestAssembler:
         tool_context: ToolExecutionContext,
     ) -> PromptRequest:
         messages = deepcopy(conversation_messages)
+        if self.durable_prompt is not None and messages and messages[0].get("role") == "system":
+            messages[0]["content"] = self.durable_prompt.build_system_prompt()
         tools = self._filtered_tools(mode, all_tools)
         if mode is not None:
             all_tool_names = _tool_names(all_tools or [])
@@ -41,6 +59,19 @@ class PromptRequestAssembler:
                 tool_context,
             )
             messages.append(self.reminder_builder.build_message(reminder_context))
+            if self._resume_reminder_pending:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "<system-reminder>\n"
+                            "恢复会话距最后有效消息已超过 24 小时。文件、依赖、进程和运行环境可能已变化；"
+                            "继续任务前应重新读取或验证相关现状，不要仅依据旧会话假设。\n"
+                            "</system-reminder>"
+                        ),
+                    }
+                )
+                self._resume_reminder_pending = False
         return PromptRequest(messages=messages, tools=tools)
 
     def _filtered_tools(

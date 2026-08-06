@@ -10,7 +10,7 @@ from .errors import ConfigError, mask_secret
 
 
 CONFIG_FILENAME = "config.yml"
-CHAPTER_NAME = "ch08：上下文管理"
+CHAPTER_NAME = "ch09：会话恢复与长期记忆"
 SUPPORTED_PROTOCOL = "openai"
 SUPPORTED_THINKING_EFFORTS = {"low", "medium", "high"}
 DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
@@ -52,6 +52,15 @@ class SafeConfigStatus:
     shell_policy: str = "auto"
     seatbelt_status: str = "not initialized"
     context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
+    session_id: str = ""
+    session_state: str = "disabled"
+    recovered_messages: int = 0
+    bad_session_lines: int = 0
+    session_truncated: bool = False
+    instruction_bytes: int = 0
+    instruction_issues: int = 0
+    user_active_notes: int = 0
+    project_active_notes: int = 0
 
 
 @dataclass(frozen=True)

@@ -143,3 +143,6 @@ class PromptToolkitTui:
 
     def show_context_status(self, payload: dict) -> None:
         self.renderer.show_context_status(payload)
+
+    def show_persistence_status(self, payload: dict) -> None:
+        self.renderer.show_persistence_status(payload)

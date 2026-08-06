@@ -11,3 +11,5 @@ ch06 keeps the hard Prompt Cache live check and additionally runs real macOS Sea
 Deterministic Agent Loop integration tests use a fake provider. They exercise multi-turn tool use, Plan Mode, `/do`, multi-tool batching, unknown-tool stopping, system-reminder injection, and final summaries. These tests do not call DeepSeek and only write inside temporary Workspaces.
 
 ch08 adds a deterministic end-to-end context-management flow covering large tool-result persistence, automatic nine-section summarization, continuation requests, bounded artifact rereads, usage anchoring, and session cleanup. Its live DeepSeek test performs a real tool-free summary, verifies that analysis is discarded and verbatim user text survives, then continues the conversation from the compressed history.
+
+ch09 adds a deterministic two-process persistence flow covering JSONL tool protocol storage, exact resume, layered instructions, asynchronous memory extraction, atomic index publication, and injection on the next process request. Its live DeepSeek test records an explicit cross-project preference twice and verifies that the second update does not create a duplicate active note.

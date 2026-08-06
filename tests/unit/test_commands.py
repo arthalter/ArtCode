@@ -79,3 +79,14 @@ def test_help_includes_compact() -> None:
     result = create_default_registry().handle("/help")
 
     assert "/compact" in result.message
+    assert "/sessions" in result.message
+    assert "/memory" in result.message
+
+
+def test_persistence_status_commands_take_no_arguments() -> None:
+    registry = create_default_registry()
+
+    assert registry.handle("/sessions").action == "sessions"
+    assert registry.handle("/memory").action == "memory"
+    assert registry.handle("/sessions extra").action == "help"
+    assert registry.handle("/memory extra").action == "help"

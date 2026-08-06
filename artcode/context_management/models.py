@@ -18,6 +18,7 @@ class CompressionTrigger(StrEnum):
     FORCED = "forced"
     MANUAL = "manual"
     EMERGENCY = "emergency"
+    RESTORE = "restore"
 
 
 @dataclass

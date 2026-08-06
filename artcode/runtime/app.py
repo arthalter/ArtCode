@@ -41,6 +41,8 @@ from artcode.tui import UserRequestedExit
 from artcode.workspace import Workspace
 from artcode.agent.tools import ToolBatchExecutor
 from artcode.context_management import ContextManager
+from artcode.prompting.assembler import PromptRequestAssembler
+from artcode.persistence import PersistenceCoordinator
 
 
 class TuiApp(Protocol):
@@ -108,6 +110,9 @@ class TuiApp(Protocol):
     def show_context_status(self, payload: dict) -> None:
         ...
 
+    def show_persistence_status(self, payload: dict) -> None:
+        ...
+
 
 @dataclass
 class ArtCodeRuntime:
@@ -125,6 +130,8 @@ class ArtCodeRuntime:
     permission_engine: PermissionEngine | None = None
     rule_writer: RuleWriter | None = None
     context_manager: ContextManager | None = None
+    request_assembler: PromptRequestAssembler | None = None
+    persistence: PersistenceCoordinator | None = None
 
     def __post_init__(self) -> None:
         if self.tool_registry is None:
@@ -134,7 +141,9 @@ class ArtCodeRuntime:
             policy = AllowedPathPolicy((selected.root,))
             self.tool_context = ToolExecutionContext(policy, default_cwd=selected.root)
         if self.plan_memory is None:
-            self.plan_memory = PlanMemory()
+            self.plan_memory = self.persistence.plan_memory if self.persistence is not None else PlanMemory()
+        if self.persistence is not None:
+            self.persistence.add_memory_callback(self._show_memory_report)
         if self.agent_loop is None:
             executor = ToolBatchExecutor(
                 self.tool_registry,
@@ -152,6 +161,13 @@ class ArtCodeRuntime:
                 plan_memory=self.plan_memory,
                 tool_executor=executor,
                 context_manager=self.context_manager,
+                request_assembler=self.request_assembler,
+                natural_turn_observer=(
+                    self.persistence.turn_observer if self.persistence is not None else None
+                ),
+                session_id=(
+                    self.persistence.status.session_id if self.persistence is not None else "ephemeral"
+                ),
             )
 
     async def run(self) -> int:
@@ -169,6 +185,24 @@ class ArtCodeRuntime:
                     and self.tool_context.seatbelt.self_tested
                     else "not initialized"
                 ),
+            )
+        if self.persistence is not None:
+            persistent = self.persistence.status
+            status = replace(
+                status,
+                session_id=persistent.session_id,
+                session_state=(
+                    "restored" if persistent.restored else (
+                        "new (latest locked)" if persistent.default_locked_new_session else "new"
+                    )
+                ),
+                recovered_messages=persistent.recovered_messages,
+                bad_session_lines=persistent.bad_line_count,
+                session_truncated=persistent.truncated,
+                instruction_bytes=persistent.instruction_bytes,
+                instruction_issues=persistent.instruction_issues,
+                user_active_notes=persistent.user_active_notes,
+                project_active_notes=persistent.project_active_notes,
             )
         self.tui.show_startup(status)
         while True:
@@ -200,6 +234,12 @@ class ArtCodeRuntime:
                     continue
                 if command_result.action == "sandbox":
                     await self._handle_sandbox_command(command_result.argument)
+                    continue
+                if command_result.action == "sessions":
+                    self._show_sessions()
+                    continue
+                if command_result.action == "memory":
+                    self._show_memory()
                     continue
                 if command_result.message:
                     self.tui.show_help(command_result.message)
@@ -304,8 +344,18 @@ class ArtCodeRuntime:
             self._remove_generation_cancel_handler()
 
     async def _consume_agent_events(self, request: AgentRunRequest) -> None:
+        previous_error = self.conversation.last_observer_error
         async for event in self.agent_loop.run(request):
             self._handle_agent_event(event)
+        current_error = self.conversation.last_observer_error
+        if current_error is not None and current_error is not previous_error:
+            self._show_persistence_payload(
+                {
+                    "kind": "journal",
+                    "status": "failed",
+                    "message": "当前轮可继续，但下次恢复可能不完整。",
+                }
+            )
 
     def _handle_agent_event(self, event: AgentEvent) -> None:
         if event.type == AgentEventType.ITERATION_STARTED:
@@ -337,6 +387,60 @@ class ArtCodeRuntime:
             handler = getattr(self.tui, "show_context_status", None)
             if callable(handler):
                 handler(event.payload)
+
+    def _show_sessions(self) -> None:
+        if self.persistence is None:
+            self.tui.show_help("会话持久化尚未启用。")
+            return
+        current = self.persistence.status.session_id
+        lines = ["最近会话："]
+        for item in self.persistence.sessions_summary(20):
+            marker = "*" if item.session_id == current else " "
+            locked = " [使用中]" if item.locked else ""
+            lines.append(
+                f"{marker} {item.session_id} | {item.title} | {item.message_count} 条 | "
+                f"{item.last_active_at.isoformat()}{locked}"
+            )
+        if len(lines) == 1:
+            lines.append("（无）")
+        self.tui.show_help("\n".join(lines))
+
+    def _show_memory(self) -> None:
+        if self.persistence is None:
+            self.tui.show_help("长期记忆尚未启用。")
+            return
+        summary = self.persistence.memory_summary()
+        report = summary["last_report"]
+        last = report.status if report is not None else "尚无后台更新"
+        self.tui.show_help(
+            "\n".join(
+                (
+                    f"用户级记忆：{summary['user_path']}（active={summary['user_active']} superseded={summary['user_superseded']} issues={summary['user_issues']}）",
+                    f"项目级记忆：{summary['project_path']}（active={summary['project_active']} superseded={summary['project_superseded']} issues={summary['project_issues']}）",
+                    f"最近更新：{last}",
+                )
+            )
+        )
+
+    def _show_memory_report(self, report) -> None:
+        self._show_persistence_payload(
+            {
+                "kind": "memory",
+                "status": report.status,
+                "created": report.created,
+                "updated": report.updated,
+                "superseded": report.superseded,
+                "rejected": report.rejected,
+                "message": report.message,
+            }
+        )
+
+    def _show_persistence_payload(self, payload: dict) -> None:
+        handler = getattr(self.tui, "show_persistence_status", None)
+        if callable(handler):
+            handler(payload)
+        elif payload.get("message"):
+            self.tui.show_help(payload["message"])
 
     def _install_generation_cancel_handler(self, task: asyncio.Task[None]) -> None:
         try:

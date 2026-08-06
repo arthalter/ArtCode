@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from dataclasses import dataclass, replace
-from typing import Any, Iterable
+from typing import Any, Iterable, Protocol
 
 from artcode.prompts import SYSTEM_PROMPT
 from artcode.providers.tool_calls import ToolCall
@@ -12,10 +13,15 @@ from artcode.tools.results import ToolResult, error_result
 Message = dict[str, Any]
 
 
+class ConversationPersistenceRejected(RuntimeError):
+    pass
+
+
 @dataclass
 class ConversationEntry:
     id: str
     payload: Message
+    mode: str = "normal"
     raw_tool_result: ToolResult | None = None
     summarized_user_ids: tuple[str, ...] = ()
     persistence_failed: bool = False
@@ -34,29 +40,87 @@ class UserMessageRecord:
     ordinal: int
 
 
+class ConversationEntryObserver(Protocol):
+    def validate_entry(self, entry: ConversationEntry) -> None:
+        ...
+
+    def on_entry(self, entry: ConversationEntry) -> None:
+        ...
+
+
 class ConversationContext:
-    def __init__(self, system_prompt: str = SYSTEM_PROMPT) -> None:
+    def __init__(
+        self,
+        system_prompt: str = SYSTEM_PROMPT,
+        observer: ConversationEntryObserver | None = None,
+    ) -> None:
         self._next_id = 1
         self._version = 0
+        self._observer = observer
+        self._last_observer_error: Exception | None = None
         self._entries: list[ConversationEntry] = [
             self._make_entry({"role": "system", "content": system_prompt})
         ]
         self._user_archive: dict[str, UserMessageRecord] = {}
 
+    @classmethod
+    def from_persisted_records(
+        cls,
+        records: Iterable[Any],
+        *,
+        system_prompt: str = SYSTEM_PROMPT,
+        observer: ConversationEntryObserver | None = None,
+    ) -> "ConversationContext":
+        context = cls(system_prompt=system_prompt, observer=None)
+        system_entry = context._entries[0]
+        restored: list[ConversationEntry] = [system_entry]
+        user_archive: dict[str, UserMessageRecord] = {}
+        max_id = 0
+        for record in records:
+            entry_id = str(record.entry_id)
+            payload = deepcopy(record.message)
+            mode = str(record.mode)
+            raw_result = _tool_result_from_message(payload) if payload.get("role") == "tool" else None
+            entry = ConversationEntry(entry_id, payload, mode, raw_result)
+            restored.append(entry)
+            if payload.get("role") == "user" and isinstance(payload.get("content"), str):
+                user_archive[entry_id] = UserMessageRecord(
+                    entry_id, payload["content"], len(user_archive)
+                )
+            if entry_id.startswith("msg-") and entry_id[4:].isdigit():
+                max_id = max(max_id, int(entry_id[4:]))
+        context._entries = restored
+        context._user_archive = user_archive
+        context._next_id = max(max_id + 1, context._next_id)
+        context._version = 0
+        context._observer = observer
+        context._last_observer_error = None
+        return context
+
     @property
     def version(self) -> int:
         return self._version
 
-    def append_user(self, content: str) -> None:
-        entry = self._append("user", content)
+    @property
+    def last_observer_error(self) -> Exception | None:
+        return self._last_observer_error
+
+    def bind_observer(self, observer: ConversationEntryObserver | None) -> None:
+        self._observer = observer
+        self._last_observer_error = None
+
+    def append_user(self, content: str, *, mode: str = "normal") -> ConversationEntry:
+        entry = self._append("user", content, mode=mode)
         self._user_archive[entry.id] = UserMessageRecord(entry.id, content, len(self._user_archive))
+        return entry
 
-    def append_assistant(self, content: str) -> None:
-        self._append("assistant", content)
+    def append_assistant(self, content: str, *, mode: str = "normal") -> ConversationEntry:
+        return self._append("assistant", content, mode=mode)
 
-    def append_assistant_tool_call(self, tool_calls: list[ToolCall]) -> None:
-        self._entries.append(
-            self._make_entry(
+    def append_assistant_tool_call(
+        self, tool_calls: list[ToolCall], *, mode: str = "normal"
+    ) -> ConversationEntry:
+        entry = self._make_entry(
                 {
                     "role": "assistant",
                     "content": "",
@@ -71,16 +135,26 @@ class ConversationContext:
                         }
                         for tool_call in tool_calls
                     ],
-                }
+                },
+                mode=mode,
             )
-        )
+        self._preflight(entry)
+        self._entries.append(entry)
         self._changed()
+        self._notify(entry)
+        return entry
 
-    def append_tool_result(self, tool_call: ToolCall, result: ToolResult) -> None:
-        self._entries.append(
-            self._make_entry(_tool_result_message(tool_call, result), raw_tool_result=result)
+    def append_tool_result(
+        self, tool_call: ToolCall, result: ToolResult, *, mode: str = "normal"
+    ) -> ConversationEntry:
+        entry = self._make_entry(
+            _tool_result_message(tool_call, result), raw_tool_result=result, mode=mode
         )
+        self._preflight(entry)
+        self._entries.append(entry)
         self._changed()
+        self._notify(entry)
+        return entry
 
     def export_messages(self) -> list[Message]:
         return deepcopy([entry.payload for entry in self._entries])
@@ -139,12 +213,14 @@ class ConversationContext:
         raw_tool_result: ToolResult | None = None,
         summarized_user_ids: tuple[str, ...] = (),
         persistence_failed: bool = False,
+        mode: str = "normal",
     ) -> ConversationEntry:
         return self._make_entry(
             payload,
             raw_tool_result=raw_tool_result,
             summarized_user_ids=summarized_user_ids,
             persistence_failed=persistence_failed,
+            mode=mode,
         )
 
     def repair_incomplete_tool_calls(
@@ -176,21 +252,29 @@ class ConversationContext:
                     continue
                 result = error_result(tool_call.name, error_code, message)
                 missing_entries.append(
-                    self._make_entry(_tool_result_message(tool_call, result), raw_tool_result=result)
+                    self._make_entry(
+                        _tool_result_message(tool_call, result),
+                        raw_tool_result=result,
+                        mode=self._entries[index].mode,
+                    )
                 )
                 repaired.append((tool_call, result))
 
             if missing_entries:
                 self._entries[following:following] = missing_entries
                 self._changed()
+                for entry in missing_entries:
+                    self._notify(entry)
                 following += len(missing_entries)
             index = following
         return repaired
 
-    def _append(self, role: str, content: str) -> ConversationEntry:
-        entry = self._make_entry({"role": role, "content": content})
+    def _append(self, role: str, content: str, *, mode: str = "normal") -> ConversationEntry:
+        entry = self._make_entry({"role": role, "content": content}, mode=mode)
+        self._preflight(entry)
         self._entries.append(entry)
         self._changed()
+        self._notify(entry)
         return entry
 
     def _make_entry(
@@ -200,16 +284,34 @@ class ConversationContext:
         raw_tool_result: ToolResult | None = None,
         summarized_user_ids: tuple[str, ...] = (),
         persistence_failed: bool = False,
+        mode: str = "normal",
     ) -> ConversationEntry:
         entry = ConversationEntry(
             id=f"msg-{self._next_id:08d}",
             payload=deepcopy(payload),
+            mode=mode,
             raw_tool_result=raw_tool_result,
             summarized_user_ids=summarized_user_ids,
             persistence_failed=persistence_failed,
         )
         self._next_id += 1
         return entry
+
+    def _notify(self, entry: ConversationEntry) -> None:
+        if self._observer is not None:
+            try:
+                self._observer.on_entry(deepcopy(entry))
+            except Exception as exc:
+                entry.persistence_failed = True
+                self._last_observer_error = exc
+
+    def _preflight(self, entry: ConversationEntry) -> None:
+        validator = getattr(self._observer, "validate_entry", None)
+        if callable(validator):
+            try:
+                validator(deepcopy(entry))
+            except Exception as exc:
+                raise ConversationPersistenceRejected(str(exc)) from exc
 
     def _changed(self) -> None:
         self._version += 1
@@ -236,3 +338,27 @@ def _tool_result_message(tool_call: ToolCall, result: ToolResult) -> Message:
         "name": tool_call.name,
         "content": result.to_model_content(),
     }
+
+
+def _tool_result_from_message(message: Message) -> ToolResult | None:
+    try:
+        payload = json.loads(message.get("content", ""))
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    required = {"tool_name", "ok", "status", "message", "content", "error_code", "bytes_returned"}
+    if not required.issubset(payload):
+        return None
+    try:
+        return ToolResult(
+            tool_name=str(payload["tool_name"]),
+            ok=bool(payload["ok"]),
+            status=str(payload["status"]),
+            message=str(payload["message"]),
+            content=str(payload["content"]),
+            error_code=None if payload["error_code"] is None else str(payload["error_code"]),
+            bytes_returned=int(payload["bytes_returned"]),
+        )
+    except (TypeError, ValueError):
+        return None

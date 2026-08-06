@@ -39,6 +39,10 @@ class TuiRenderer:
                 f"sandbox: {status.shell_policy}",
                 f"seatbelt: {status.seatbelt_status}",
                 f"context: {status.context_window_tokens} tokens",
+                f"session: {status.session_id or 'disabled'} ({status.session_state})",
+                f"recovered: {status.recovered_messages} messages; bad lines: {status.bad_session_lines}; truncated: {'yes' if status.session_truncated else 'no'}",
+                f"instructions: {status.instruction_bytes} bytes; issues: {status.instruction_issues}",
+                f"memory: user={status.user_active_notes}; project={status.project_active_notes}",
                 "input: Enter 发送，Ctrl+Enter 或 Esc Enter 换行",
             ]
         )
@@ -171,3 +175,17 @@ class TuiRenderer:
         )
         style = "red" if payload.get("status") in {"failed", "blocked"} else "cyan"
         self.console.print(detail, style=style)
+
+    def show_persistence_status(self, payload: dict) -> None:
+        kind = payload.get("kind", "persistence")
+        status = payload.get("status", "unknown")
+        message = payload.get("message", "")
+        counts = ""
+        if kind == "memory":
+            counts = (
+                f" 新增={payload.get('created', 0)} 更新={payload.get('updated', 0)} "
+                f"作废={payload.get('superseded', 0)} 拒绝={payload.get('rejected', 0)}"
+            )
+        suffix = f"：{message}" if message else ""
+        style = "red" if status in {"failed", "rejected"} else "cyan"
+        self.console.print(f"持久状态 [{kind}/{status}]{counts}{suffix}", style=style)

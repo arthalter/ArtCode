@@ -2,6 +2,41 @@
 
 ArtCode 是一个本地 Python CLI Coding Agent 学习项目。
 
+## ch09：会话恢复与长期记忆
+
+ch09 让 ArtCode 在退出、终端中断或跨天之后继续先前任务，同时保持全部数据本地、可读、可删：
+
+- 直接运行 `artcode` 会恢复当前 Workspace 最近的可用会话；`--new` 始终新建，`--resume SESSION_ID` 精确恢复指定会话。
+- 会话按消息即时追加到 `<workspace>/.artcode/sessions/<session-id>.jsonl`。单行损坏会被隔离，半行和不完整工具协议会截断到最后一个安全边界。
+- `/sessions` 显示最近 20 个会话；运行中不切换会话，避免把当前工具、权限或模型状态带进另一份历史。
+- 启动时依次加载 `<workspace>/.artcode/instructions.md`、`<workspace>/ARTCODE.md`、`~/.artcode/instructions.md`。项目本地规则优先级最高。
+- 指令可在独立行使用 `@include relative/path.md`，最多展开 5 层；绝对路径、非 Markdown、循环和越过所属用户目录或 Workspace 的引用会被跳过。
+- 自动长期记忆保存在用户级或项目级 `memory/` 目录。每条事实是一份带 frontmatter 的 Markdown，`index.md` 只是可重建索引。
+- 只有明确跨项目通用的用户偏好可以自动进入用户级记忆；纠正反馈、项目知识和参考资料默认只属于当前项目。
+- 每轮自然结束后，后台模型以无工具、关闭 Thinking 的方式提炼最多 5 个变更；失败或超时不影响已经显示的回复和会话存档。
+- `/memory` 只显示路径、计数和最近更新状态，不打印笔记正文。
+
+本地布局：
+
+```text
+~/.artcode/
+├── instructions.md
+└── memory/
+    ├── index.md
+    └── mem-*.md
+
+<workspace>/
+├── ARTCODE.md
+└── .artcode/
+    ├── instructions.md
+    ├── sessions/*.jsonl
+    └── memory/
+        ├── index.md
+        └── mem-*.md
+```
+
+指令、会话和记忆不会同步到云端，也不加密；它们可能包含源代码片段或对话内容，应按普通本地敏感文件管理。可直接编辑指令和笔记，删除索引后 ArtCode 会从有效笔记重建；删除会话或笔记前建议先退出正在使用该 Workspace 的 ArtCode 进程。
+
 ## ch08：上下文管理
 
 ch08 为长时间运行的 Agent 增加两层上下文保护：

@@ -21,7 +21,7 @@ def test_default_fixed_sections_are_the_ch05_seven_modules() -> None:
 def test_default_system_prompt_contains_system_reminder_rule() -> None:
     prompt = build_system_prompt()
 
-    assert "ch05" in prompt
+    assert "ch09" in prompt
     assert "<system-reminder>" in prompt
     assert "系统级补充约束" in prompt
 

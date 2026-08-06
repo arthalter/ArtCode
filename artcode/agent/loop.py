@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-from artcode.conversation import ConversationContext
+from artcode.conversation import ConversationContext, ConversationPersistenceRejected
 from artcode.errors import ContextWindowExceededError, RequestError
 from artcode.prompting.assembler import PromptRequest, PromptRequestAssembler
 from artcode.providers.base import StreamingProvider
@@ -17,6 +17,8 @@ from .events import (
     AgentEvent,
     AgentEventType,
     ModelTurn,
+    NaturalTurn,
+    NaturalTurnObserver,
     StopReason,
     final_summary_started_event,
     context_status_event,
@@ -66,6 +68,8 @@ class AgentLoop:
         tool_executor: ToolBatchExecutor | None = None,
         request_assembler: PromptRequestAssembler | None = None,
         context_manager: ContextManager | None = None,
+        natural_turn_observer: NaturalTurnObserver | None = None,
+        session_id: str = "ephemeral",
     ) -> None:
         self.provider = provider
         self.conversation = conversation
@@ -76,13 +80,25 @@ class AgentLoop:
         self.tool_executor = tool_executor or ToolBatchExecutor(tool_registry, tool_context)
         self.request_assembler = request_assembler or PromptRequestAssembler()
         self.context_manager = context_manager
+        self.natural_turn_observer = natural_turn_observer
+        self.session_id = session_id
 
     async def run(self, request: AgentRunRequest) -> AsyncIterator[AgentEvent]:
         # Repair history left by an older interrupted run before appending the
         # next user message, so tool results remain adjacent to tool_calls.
         self.conversation.repair_incomplete_tool_calls()
+        entry_ids: list[str] = []
+        tool_summaries: list[dict[str, Any]] = []
         if request.append_user_message:
-            self.conversation.append_user(request.user_content)
+            try:
+                user_entry = self.conversation.append_user(
+                    request.user_content, mode=request.mode.name
+                )
+            except ConversationPersistenceRejected as exc:
+                yield run_started_event(request.mode.name, request.max_iterations)
+                yield stopped_event(StopReason.STREAM_ERROR, str(exc))
+                return
+            entry_ids.append(user_entry.id)
 
         yield run_started_event(request.mode.name, request.max_iterations)
 
@@ -102,20 +118,49 @@ class AgentLoop:
 
                 if not model_turn.tool_calls:
                     if model_turn.text:
-                        self.conversation.append_assistant(model_turn.text)
+                        try:
+                            assistant_entry = self.conversation.append_assistant(
+                                model_turn.text, mode=request.mode.name
+                            )
+                        except ConversationPersistenceRejected as exc:
+                            yield stopped_event(StopReason.STREAM_ERROR, str(exc))
+                            return
+                        entry_ids.append(assistant_entry.id)
                         if request.mode == PLAN_MODE:
                             self.plan_memory.save(model_turn.text)
+                        if self.natural_turn_observer is not None:
+                            self.natural_turn_observer.submit(
+                                NaturalTurn(
+                                    session_id=self.session_id,
+                                    mode=request.mode.name,
+                                    user_content=request.user_content,
+                                    final_text=model_turn.text,
+                                    entry_ids=tuple(entry_ids),
+                                    tool_summaries=tuple(tool_summaries),
+                                )
+                            )
                     yield stopped_event(StopReason.NATURAL)
                     return
 
-                self.conversation.append_assistant_tool_call(model_turn.tool_calls)
+                try:
+                    tool_call_entry = self.conversation.append_assistant_tool_call(
+                        model_turn.tool_calls, mode=request.mode.name
+                    )
+                except ConversationPersistenceRejected as exc:
+                    yield stopped_event(StopReason.STREAM_ERROR, str(exc))
+                    return
+                entry_ids.append(tool_call_entry.id)
                 pending_tool_calls = {tool_call.id: tool_call for tool_call in model_turn.tool_calls}
                 yield tool_calls_received_event(len(model_turn.tool_calls))
 
                 plan = self.tool_executor.build_plan(model_turn.tool_calls, request.mode.tool_policy)
                 if isinstance(plan, ToolExecutionBlocked):
                     for tool_call, result in _blocked_tool_results(model_turn.tool_calls, plan):
-                        self.conversation.append_tool_result(tool_call, result)
+                        result_entry = self.conversation.append_tool_result(
+                            tool_call, result, mode=request.mode.name
+                        )
+                        entry_ids.append(result_entry.id)
+                        tool_summaries.append(_natural_tool_summary(tool_call, result))
                         pending_tool_calls.pop(tool_call.id, None)
                         yield tool_result_event(tool_call, result)
                     async for event in self._summarize_if_needed(request, plan.stop_reason):
@@ -126,7 +171,11 @@ class AgentLoop:
                     if event.type == AgentEventType.TOOL_RESULT:
                         tool_call = event.payload["tool_call"]
                         result = event.payload["result"]
-                        self.conversation.append_tool_result(tool_call, result)
+                        result_entry = self.conversation.append_tool_result(
+                            tool_call, result, mode=request.mode.name
+                        )
+                        entry_ids.append(result_entry.id)
+                        tool_summaries.append(_natural_tool_summary(tool_call, result))
                         pending_tool_calls.pop(tool_call.id, None)
                     yield event
 
@@ -162,7 +211,13 @@ class AgentLoop:
         for event in turn.events:
             yield event
         if turn.model_turn is not None and turn.model_turn.text:
-            self.conversation.append_assistant(turn.model_turn.text)
+            try:
+                self.conversation.append_assistant(
+                    turn.model_turn.text, mode="normal"
+                )
+            except ConversationPersistenceRejected as exc:
+                yield stopped_event(StopReason.STREAM_ERROR, str(exc))
+                return
             yield model_turn_completed_event(turn.model_turn.text, len(turn.model_turn.tool_calls))
         yield stopped_event(reason, _stop_message(reason))
 
@@ -282,7 +337,12 @@ class AgentLoop:
         include_tools: bool,
     ) -> PromptRequest:
         if not include_tools:
-            return PromptRequest(self.conversation.export_messages(), None)
+            return self.request_assembler.assemble(
+                self.conversation.export_messages(),
+                mode,
+                None,
+                self.tool_context,
+            )
         return self.request_assembler.assemble(
             self.conversation.export_messages(),
             mode,
@@ -368,3 +428,15 @@ def _blocked_tool_results(tool_calls: list[Any], blocked: ToolExecutionBlocked):
                 "tool_execution_blocked",
                 "同一轮工具调用中出现未知或当前模式不允许的工具，本轮所有工具均未执行。",
             )
+
+
+def _natural_tool_summary(tool_call: Any, result: Any) -> dict[str, Any]:
+    content = result.content if isinstance(getattr(result, "content", None), str) else ""
+    return {
+        "name": tool_call.name,
+        "ok": bool(result.ok),
+        "status": str(result.status),
+        "message": str(result.message)[:500],
+        "bytes_returned": int(result.bytes_returned),
+        "content": content[:2000],
+    }

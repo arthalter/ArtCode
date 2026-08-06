@@ -32,6 +32,14 @@ class ArtCodePaths:
     def skills_dir(self) -> Path:
         return self.home / "skills"
 
+    @property
+    def user_instruction_file(self) -> Path:
+        return self.home / "instructions.md"
+
+    @property
+    def user_memory_dir(self) -> Path:
+        return self.home / "memory"
+
 
 @dataclass(frozen=True)
 class Workspace:
@@ -66,6 +74,22 @@ class Workspace:
     @property
     def context_root(self) -> Path:
         return self.root / ".artcode" / "context"
+
+    @property
+    def project_instruction_file(self) -> Path:
+        return self.root / "ARTCODE.md"
+
+    @property
+    def local_instruction_file(self) -> Path:
+        return self.root / ".artcode" / "instructions.md"
+
+    @property
+    def sessions_dir(self) -> Path:
+        return self.root / ".artcode" / "sessions"
+
+    @property
+    def project_memory_dir(self) -> Path:
+        return self.root / ".artcode" / "memory"
 
     def contains(self, path: Path) -> bool:
         resolved = path.expanduser().resolve()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 from artcode.providers.tool_calls import ToolCall
 from artcode.tools import ToolResult
@@ -63,6 +63,21 @@ class ModelTurn:
     text: str
     tool_calls: list[ToolCall]
     usage: TokenUsage | None = None
+
+
+@dataclass(frozen=True)
+class NaturalTurn:
+    session_id: str
+    mode: str
+    user_content: str
+    final_text: str
+    entry_ids: tuple[str, ...]
+    tool_summaries: tuple[dict[str, Any], ...] = ()
+
+
+class NaturalTurnObserver(Protocol):
+    def submit(self, turn: NaturalTurn) -> None:
+        ...
 
 
 @dataclass(frozen=True)

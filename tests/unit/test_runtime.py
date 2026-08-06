@@ -12,6 +12,8 @@ from artcode.runtime import ArtCodeRuntime
 from artcode.context_management import ContextManager, ContextSummarizer
 from artcode.context_management.retention import RetentionPlanner
 from artcode.context_management.summarizer import SUMMARY_TITLES, VERBATIM_PLACEHOLDER
+from artcode.persistence import PersistenceCoordinator, SessionSelection
+from artcode.workspace import ArtCodePaths, Workspace
 
 
 class FakeTui:
@@ -84,6 +86,9 @@ class FakeTui:
 
     def show_context_status(self, payload: dict) -> None:
         self.output.append(f"context:{payload['trigger']}:{payload['status']}")
+
+    def show_persistence_status(self, payload: dict) -> None:
+        self.output.append(f"persistence:{payload['kind']}:{payload['status']}")
 
 
 class FakeProvider:
@@ -261,3 +266,36 @@ async def test_runtime_compact_does_not_append_command_as_user_message(tmp_path)
     assert all(message.get("content") != "/compact" for message in context.export_messages())
     assert user_count_before == 6
     assert len(provider.messages_seen) == 1
+
+
+async def test_runtime_persistence_commands_show_metadata_without_becoming_messages(tmp_path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    workspace = Workspace.from_path(root)
+    provider = FakeProvider([])
+    persistence = PersistenceCoordinator.start(
+        ArtCodePaths.create(tmp_path / "home"),
+        workspace,
+        provider,
+        SessionSelection.new(),
+    )
+    tui = FakeTui(["/sessions", "/memory", "/exit"])
+    runtime = ArtCodeRuntime(
+        fake_config(root),
+        provider,
+        persistence.conversation,
+        tui,
+        workspace=workspace,
+        plan_memory=persistence.plan_memory,
+        persistence=persistence,
+    )
+    try:
+        await runtime.run()
+        output = "\n".join(tui.output)
+        assert persistence.status.session_id in output
+        assert "用户级记忆" in output
+        assert "项目级记忆" in output
+        assert "superseded=0" in output
+        assert len(persistence.conversation.export_messages()) == 1
+    finally:
+        await persistence.close()
