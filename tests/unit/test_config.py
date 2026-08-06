@@ -4,7 +4,7 @@ import pytest
 
 from pathlib import Path
 
-from artcode.config import ArtCodeConfig, DEFAULT_ALLOWED_DIR, load_config, parse_config
+from artcode.config import ArtCodeConfig, ContextConfig, load_config, parse_config
 from artcode.errors import ConfigError
 
 
@@ -38,7 +38,6 @@ def test_parse_valid_config() -> None:
     assert config.protocol == "openai"
     assert config.thinking.enabled is True
     assert config.thinking.effort == "high"
-    assert config.tools.allowed_dirs
 
 
 def test_load_missing_file(tmp_path) -> None:
@@ -119,53 +118,47 @@ def test_safe_status_masks_api_key() -> None:
     assert config.api_key not in status.masked_api_key
 
 
-def test_chapter_name_is_ch04() -> None:
+def test_chapter_name_is_ch09() -> None:
     status = parse_config(valid_raw()).safe_status()
 
-    assert status.chapter == "ch04：动手实现 Agent Loop"
+    assert status.chapter == "ch09：会话恢复与长期记忆"
 
 
-def test_tools_default_to_experiment_dir() -> None:
-    config = parse_config(raw_without_tools())
+def test_context_defaults_and_thresholds() -> None:
+    config = parse_config(valid_raw())
 
-    assert config.tools.allowed_dirs == (DEFAULT_ALLOWED_DIR.resolve(),)
-
-
-def test_tools_allowed_dirs_are_absolute_and_created(tmp_path) -> None:
-    allowed_dir = tmp_path / "sandbox"
-
-    config = parse_config(valid_raw(allowed_dir))
-
-    assert config.tools.allowed_dirs == (allowed_dir.resolve(),)
-    assert allowed_dir.exists()
+    assert config.context == ContextConfig(200_000)
+    assert config.context.automatic_threshold == 167_000
+    assert config.context.forced_threshold == 177_000
+    assert config.safe_status().context_window_tokens == 200_000
 
 
-def test_tools_allowed_dirs_must_be_absolute() -> None:
+@pytest.mark.parametrize("value", [200_000, 500_000, 1_000_000])
+def test_context_window_accepts_supported_range(value: int) -> None:
+    raw = valid_raw()
+    raw["context"] = {"window_tokens": value}
+
+    assert parse_config(raw).context.window_tokens == value
+
+
+@pytest.mark.parametrize("value", [199_999, 1_000_001, True, "200000", 200000.0])
+def test_context_window_rejects_invalid_values(value) -> None:
+    raw = valid_raw()
+    raw["context"] = {"window_tokens": value}
+
+    with pytest.raises(ConfigError, match="context.window_tokens"):
+        parse_config(raw)
+
+
+def test_old_tools_allowed_dirs_is_rejected() -> None:
     raw = valid_raw()
     raw["tools"] = {"allowed_dirs": ["relative/path"]}
 
-    with pytest.raises(ConfigError, match="只支持绝对路径"):
+    with pytest.raises(ConfigError, match="已移除 tools.allowed_dirs"):
         parse_config(raw)
 
 
-def test_tools_allowed_dirs_must_not_contain_empty_path() -> None:
-    raw = valid_raw()
-    raw["tools"] = {"allowed_dirs": ["   "]}
-
-    with pytest.raises(ConfigError, match="不能包含空路径"):
-        parse_config(raw)
-
-
-def test_tools_allowed_dirs_items_must_be_strings() -> None:
-    raw = valid_raw()
-    raw["tools"] = {"allowed_dirs": [123]}
-
-    with pytest.raises(ConfigError, match="每一项都必须是绝对路径字符串"):
-        parse_config(raw)
-
-
-def test_safe_status_contains_allowed_dirs(tmp_path) -> None:
-    allowed_dir = tmp_path / "sandbox"
-    status = parse_config(valid_raw(allowed_dir)).safe_status()
-
-    assert status.allowed_dirs == (str(allowed_dir.resolve()),)
+def test_default_config_path_is_artcode_home(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    with pytest.raises(ConfigError, match=r"\.artcode/config.yml"):
+        load_config()

@@ -15,7 +15,10 @@ def test_help_command_returns_minimal_help() -> None:
     registry = create_default_registry()
     result = registry.handle("/help")
 
-    assert result == CommandResult(action="help", message="/exit\n/quit\n/help\n/plan 任务描述\n/do [附加说明]")
+    assert result is not None
+    assert result.action == "help"
+    assert "/permission [default|edit|full]" in result.message
+    assert "/sandbox [auto|ask|off]" in result.message
 
 
 def test_slash_word_inside_normal_text_does_not_trigger() -> None:
@@ -55,3 +58,35 @@ def test_do_command_accepts_optional_argument() -> None:
 
     assert registry.handle("/do") == CommandResult(action="do")
     assert registry.handle("/do 不要运行测试") == CommandResult(action="do", argument="不要运行测试")
+
+
+def test_permission_and_sandbox_commands_capture_optional_values() -> None:
+    registry = create_default_registry()
+    assert registry.handle("/permission full") == CommandResult(action="permission", argument="full")
+    assert registry.handle("/sandbox ask") == CommandResult(action="sandbox", argument="ask")
+
+
+def test_compact_command_has_no_arguments() -> None:
+    registry = create_default_registry()
+
+    assert registry.handle("/compact") == CommandResult(action="compact")
+    result = registry.handle("/compact now")
+    assert result.action == "help"
+    assert "不接受参数" in result.message
+
+
+def test_help_includes_compact() -> None:
+    result = create_default_registry().handle("/help")
+
+    assert "/compact" in result.message
+    assert "/sessions" in result.message
+    assert "/memory" in result.message
+
+
+def test_persistence_status_commands_take_no_arguments() -> None:
+    registry = create_default_registry()
+
+    assert registry.handle("/sessions").action == "sessions"
+    assert registry.handle("/memory").action == "memory"
+    assert registry.handle("/sessions extra").action == "help"
+    assert registry.handle("/memory extra").action == "help"

@@ -2,18 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
 from .errors import ConfigError, mask_secret
 
 
-CONFIG_FILENAME = "artcode.yaml"
-CHAPTER_NAME = "ch04：动手实现 Agent Loop"
+CONFIG_FILENAME = "config.yml"
+CHAPTER_NAME = "ch09：会话恢复与长期记忆"
 SUPPORTED_PROTOCOL = "openai"
 SUPPORTED_THINKING_EFFORTS = {"low", "medium", "high"}
-DEFAULT_ALLOWED_DIR = Path("/Users/arthalter/Work/ArtCode/实验场")
+DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
+MIN_CONTEXT_WINDOW_TOKENS = 200_000
+MAX_CONTEXT_WINDOW_TOKENS = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -23,8 +25,16 @@ class ThinkingConfig:
 
 
 @dataclass(frozen=True)
-class ToolConfig:
-    allowed_dirs: tuple[Path, ...] = (DEFAULT_ALLOWED_DIR,)
+class ContextConfig:
+    window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
+
+    @property
+    def automatic_threshold(self) -> int:
+        return self.window_tokens * 167 // 200
+
+    @property
+    def forced_threshold(self) -> int:
+        return self.window_tokens * 177 // 200
 
 
 @dataclass(frozen=True)
@@ -37,7 +47,20 @@ class SafeConfigStatus:
     thinking_enabled: bool
     thinking_effort: str
     masked_api_key: str
-    allowed_dirs: tuple[str, ...]
+    workspace: str = ""
+    permission_mode: str = "default"
+    shell_policy: str = "auto"
+    seatbelt_status: str = "not initialized"
+    context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
+    session_id: str = ""
+    session_state: str = "disabled"
+    recovered_messages: int = 0
+    bad_session_lines: int = 0
+    session_truncated: bool = False
+    instruction_bytes: int = 0
+    instruction_issues: int = 0
+    user_active_notes: int = 0
+    project_active_notes: int = 0
 
 
 @dataclass(frozen=True)
@@ -47,7 +70,9 @@ class ArtCodeConfig:
     base_url: str
     api_key: str
     thinking: ThinkingConfig
-    tools: ToolConfig = ToolConfig()
+    workspace: Path | None = None
+    mcp_servers_raw: Mapping[str, Any] | None = None
+    context: ContextConfig = ContextConfig()
 
     def safe_status(self) -> SafeConfigStatus:
         return SafeConfigStatus(
@@ -59,16 +84,16 @@ class ArtCodeConfig:
             thinking_enabled=self.thinking.enabled,
             thinking_effort=self.thinking.effort,
             masked_api_key=mask_secret(self.api_key),
-            allowed_dirs=tuple(str(path) for path in self.tools.allowed_dirs),
+            context_window_tokens=self.context.window_tokens,
         )
 
 
 def load_config(config_path: Path | str | None = None) -> ArtCodeConfig:
-    path = Path(config_path) if config_path is not None else Path.cwd() / CONFIG_FILENAME
+    path = Path(config_path) if config_path is not None else Path.home() / ".artcode" / CONFIG_FILENAME
     if not path.exists():
         raise ConfigError(
             f"找不到配置文件 {CONFIG_FILENAME}。",
-            "请复制 artcode.example.yaml 为 artcode.yaml，并填写 DeepSeek API key。",
+            "请复制 config.example.yml 到 ~/.artcode/config.yml，并填写 DeepSeek API key。",
         )
 
     try:
@@ -97,15 +122,18 @@ def parse_config(raw: Any) -> ArtCodeConfig:
             f"ArtCode 目前只支持 protocol: {SUPPORTED_PROTOCOL}。",
         )
 
+    if "tools" in raw:
+        raise ConfigError("ch06 已移除 tools.allowed_dirs；请使用 --workspace 指定项目目录。")
     thinking = _parse_thinking(raw.get("thinking"))
-    tools = _parse_tools(raw.get("tools"))
+    context = _parse_context(raw.get("context"))
     return ArtCodeConfig(
         protocol=protocol,
         model=model,
         base_url=base_url,
         api_key=api_key,
         thinking=thinking,
-        tools=tools,
+        context=context,
+        mcp_servers_raw=raw.get("mcp_servers") if isinstance(raw.get("mcp_servers"), dict) else None,
     )
 
 
@@ -141,41 +169,18 @@ def _parse_thinking(raw: Any) -> ThinkingConfig:
     return ThinkingConfig(enabled=enabled, effort=effort)
 
 
-def _parse_tools(raw: Any) -> ToolConfig:
+def _parse_context(raw: Any) -> ContextConfig:
     if raw is None:
-        return _tool_config_from_allowed_dirs([DEFAULT_ALLOWED_DIR])
+        return ContextConfig()
     if not isinstance(raw, dict):
-        raise ConfigError("配置字段 tools 必须是对象/map。")
+        raise ConfigError("配置字段 context 必须是对象/map。")
 
-    allowed_dirs = raw.get("allowed_dirs")
-    if allowed_dirs is None:
-        return _tool_config_from_allowed_dirs([DEFAULT_ALLOWED_DIR])
-    if not isinstance(allowed_dirs, list):
-        raise ConfigError("配置字段 tools.allowed_dirs 必须是列表。")
-    if not allowed_dirs:
-        raise ConfigError("配置字段 tools.allowed_dirs 不能为空列表。")
-
-    return _tool_config_from_allowed_dirs(allowed_dirs)
-
-
-def _tool_config_from_allowed_dirs(raw_dirs: list[Any]) -> ToolConfig:
-    parsed: list[Path] = []
-    for value in raw_dirs:
-        if not isinstance(value, (str, Path)):
-            raise ConfigError("配置字段 tools.allowed_dirs 的每一项都必须是绝对路径字符串。")
-        path_text = str(value).strip()
-        if not path_text:
-            raise ConfigError("配置字段 tools.allowed_dirs 不能包含空路径。")
-        path = Path(path_text).expanduser()
-        if not path.is_absolute():
-            raise ConfigError("配置字段 tools.allowed_dirs 只支持绝对路径。")
-        try:
-            path.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise ConfigError(
-                f"无法创建允许目录：{path}。",
-                "请检查目录路径是否正确，以及当前用户是否有权限创建该目录。",
-            ) from exc
-        parsed.append(path.resolve())
-
-    return ToolConfig(allowed_dirs=tuple(parsed))
+    value = raw.get("window_tokens", DEFAULT_CONTEXT_WINDOW_TOKENS)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError("配置字段 context.window_tokens 必须是整数。")
+    if not MIN_CONTEXT_WINDOW_TOKENS <= value <= MAX_CONTEXT_WINDOW_TOKENS:
+        raise ConfigError(
+            "配置字段 context.window_tokens 必须在 "
+            f"{MIN_CONTEXT_WINDOW_TOKENS} 到 {MAX_CONTEXT_WINDOW_TOKENS} 之间。"
+        )
+    return ContextConfig(window_tokens=value)

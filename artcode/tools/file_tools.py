@@ -7,6 +7,8 @@ from typing import Any
 
 from .base import PreparedToolCall, ToolExecutionContext, ToolPreview
 from .results import ToolResult, error_result, success_result
+from artcode.context_management.estimator import estimate_text_tokens
+from artcode.context_management.models import SINGLE_TOOL_RESULT_TOKENS
 
 
 def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
@@ -44,13 +46,25 @@ def _bool_arg(arguments: dict[str, Any], name: str, default: bool = False) -> bo
 
 
 def _prepare_error(tool_name: str, exc: Exception, code: str = "invalid_arguments") -> ToolResult:
-    error_code = "path_outside_allowed_dirs" if "不在允许目录" in str(exc) else code
+    text = str(exc)
+    error_code = (
+        "path_outside_workspace"
+        if "Workspace 外" in text
+        else "path_outside_allowed_dirs"
+        if "不在允许目录" in text
+        else "sensitive_path"
+        if "敏感路径" in text
+        else code
+    )
     return error_result(tool_name, error_code, str(exc))
 
 
 class ReadFileTool:
     name = "read_file"
-    description = "读取允许目录内的 UTF-8 文本文件，可选按行范围读取。"
+    description = (
+        "读取允许目录内的 UTF-8 文本文件，可选按行范围读取。"
+        "用于理解代码、查看配置、获取编辑前上下文；修改已有文件前应先用本工具读取目标文件或相关片段。"
+    )
     requires_confirmation = False
     parameters_schema = _schema(
         {
@@ -71,10 +85,27 @@ class ReadFileTool:
         except Exception as exc:
             return _prepare_error(self.name, exc)
 
+        artifact_store = context.artifact_store
+        is_artifact = bool(
+            artifact_store is not None
+            and artifact_store.is_current_artifact(path)
+        )
+        if is_artifact and (start_line is None or end_line is None):
+            return error_result(
+                self.name,
+                "artifact_range_required",
+                "读取当前会话的存盘结果时，必须同时提供 start_line 和 end_line。",
+            )
+
         return PreparedToolCall(
             tool=self,
-            arguments={"path": path, "start_line": start_line, "end_line": end_line},
-            preview=ToolPreview(self.name, f"读取文件 {path}", str(path), False),
+            arguments={
+                "path": path,
+                "start_line": start_line,
+                "end_line": end_line,
+                "is_artifact": is_artifact,
+            },
+            preview=ToolPreview(self.name, f"读取文件 {path}", _target(context, path), False),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
@@ -96,12 +127,22 @@ class ReadFileTool:
             end = end_line if end_line is not None else len(lines)
             text = "".join(lines[start:end])
 
-        return success_result(self.name, f"已读取文件：{path}", text, context.max_result_bytes)
+        if prepared.arguments.get("is_artifact") and estimate_text_tokens(text) > SINGLE_TOOL_RESULT_TOKENS:
+            return error_result(
+                self.name,
+                "artifact_range_too_large",
+                "选定的存盘结果片段超过 8,000 Token，请缩小行范围。",
+            )
+
+        return success_result(self.name, f"已读取文件：{path}", text)
 
 
 class WriteFileTool:
     name = "write_file"
-    description = "在允许目录内写入 UTF-8 文本文件，默认不覆盖已有文件。"
+    description = (
+        "在允许目录内创建或覆盖完整 UTF-8 文本文件，默认不覆盖已有文件。"
+        "适合写入新文件或整文件生成；覆盖已有文件前必须确认意图，避免用它做小范围替换。"
+    )
     requires_confirmation = True
     parameters_schema = _schema(
         {
@@ -129,7 +170,7 @@ class WriteFileTool:
         return PreparedToolCall(
             tool=self,
             arguments={"path": path, "content": content, "overwrite": overwrite},
-            preview=ToolPreview(self.name, f"{action}文件 {path}", str(path), True),
+            preview=ToolPreview(self.name, f"{action}文件 {path}", _target(context, path), True),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
@@ -140,12 +181,16 @@ class WriteFileTool:
             path.write_text(content, encoding="utf-8")
         except OSError as exc:
             return error_result(self.name, "write_error", f"写入文件失败：{exc}")
-        return success_result(self.name, f"已写入文件：{path}", f"path: {path}", context.max_result_bytes)
+        return success_result(self.name, f"已写入文件：{path}", f"path: {path}")
 
 
 class EditFileTool:
     name = "edit_file"
-    description = "在允许目录内对 UTF-8 文本文件执行严格原文唯一匹配替换。"
+    description = (
+        "在允许目录内对 UTF-8 文本文件执行严格原文唯一匹配替换。"
+        "编辑前必须先读取目标文件或相关上下文；old_text 必须来自实际文件内容，并且应唯一匹配。"
+        "适合小范围精确修改，不适合整文件重写。"
+    )
     requires_confirmation = True
     parameters_schema = _schema(
         {
@@ -169,7 +214,7 @@ class EditFileTool:
         return PreparedToolCall(
             tool=self,
             arguments={"path": path, "old_text": old_text, "new_text": new_text},
-            preview=ToolPreview(self.name, f"修改文件 {path}", str(path), True),
+            preview=ToolPreview(self.name, f"修改文件 {path}", _target(context, path), True),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
@@ -195,12 +240,15 @@ class EditFileTool:
             path.write_text(text.replace(old_text, new_text, 1), encoding="utf-8")
         except OSError as exc:
             return error_result(self.name, "write_error", f"写入文件失败：{exc}")
-        return success_result(self.name, f"已修改文件：{path}", f"path: {path}", context.max_result_bytes)
+        return success_result(self.name, f"已修改文件：{path}", f"path: {path}")
 
 
 class FindFilesTool:
     name = "find_files"
-    description = "按 glob 模式查找允许目录内的文件。"
+    description = (
+        "按 glob 模式查找允许目录内的文件。"
+        "用于定位候选文件，优先于 shell find；找到文件后通常再配合 read_file 或 search_text 理解内容。"
+    )
     requires_confirmation = False
     parameters_schema = _schema(
         {
@@ -217,7 +265,7 @@ class FindFilesTool:
         return PreparedToolCall(
             tool=self,
             arguments={"pattern": pattern},
-            preview=ToolPreview(self.name, f"查找文件 {pattern}", pattern, False),
+            preview=ToolPreview(self.name, f"查找文件 {pattern}", ".", False),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
@@ -238,12 +286,15 @@ class FindFilesTool:
                 matches.append(str(resolved))
 
         content = "\n".join(sorted(set(matches)))
-        return success_result(self.name, f"找到 {len(set(matches))} 个匹配文件。", content, context.max_result_bytes)
+        return success_result(self.name, f"找到 {len(set(matches))} 个匹配文件。", content)
 
 
 class SearchTextTool:
     name = "search_text"
-    description = "在允许目录内按普通文本搜索 UTF-8 文本文件内容。"
+    description = (
+        "在允许目录内按普通文本搜索 UTF-8 文本文件内容。"
+        "用于查找符号、配置、错误文本或相关上下文，优先于 shell grep；修改前可用它定位需要读取的片段。"
+    )
     requires_confirmation = False
     parameters_schema = _schema(
         {
@@ -265,7 +316,7 @@ class SearchTextTool:
         except Exception as exc:
             return _prepare_error(self.name, exc)
 
-        target = str(path) if path is not None else "所有允许目录"
+        target = _target(context, path) if path is not None else "."
         return PreparedToolCall(
             tool=self,
             arguments={"query": query, "path": path},
@@ -299,7 +350,7 @@ class SearchTextTool:
 
         payload = {"matches": matches, "skipped_unreadable_files": skipped}
         content = json.dumps(payload, ensure_ascii=False, indent=2)
-        return success_result(self.name, f"找到 {len(matches)} 处匹配。", content, context.max_result_bytes)
+        return success_result(self.name, f"找到 {len(matches)} 处匹配。", content)
 
 
 def _iter_search_files(path: Path | None, context: ToolExecutionContext) -> list[Path]:
@@ -309,5 +360,17 @@ def _iter_search_files(path: Path | None, context: ToolExecutionContext) -> list
         if root.is_file() and context.path_policy.is_allowed(root):
             files.append(root)
         elif root.is_dir() and context.path_policy.is_allowed(root):
-            files.extend(candidate for candidate in root.rglob("*") if candidate.is_file())
+            for candidate in root.rglob("*"):
+                try:
+                    if candidate.is_file() and context.path_policy.is_allowed(candidate.resolve()):
+                        files.append(candidate.resolve())
+                except OSError:
+                    continue
     return files
+
+
+def _target(context: ToolExecutionContext, path: Path) -> str:
+    relative_target = getattr(context.path_policy, "relative_target", None)
+    if callable(relative_target):
+        return relative_target(path)
+    return str(path)

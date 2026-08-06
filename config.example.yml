@@ -1,0 +1,36 @@
+# 首次使用前，请运行：
+# mkdir -p ~/.artcode
+# cp config.example.yml ~/.artcode/config.yml
+# 然后编辑 ~/.artcode/config.yml，填写真实 API Key。
+
+protocol: openai
+model: deepseek-v4-flash
+base_url: https://api.deepseek.com
+api_key: your-deepseek-api-key
+
+thinking:
+  enabled: false
+  effort: high
+
+# 当前会话使用的模型上下文窗口。允许范围：200000–1000000。
+context:
+  window_tokens: 200000
+
+# 用户级 MCP Server。项目也可以在 <workspace>/.artcode/config.yml 中只声明
+# mcp_servers；同名项目条目会完整替换用户条目。
+mcp_servers:
+  local_demo:
+    transport: stdio
+    enabled: false
+    command: python
+    args:
+      - ./servers/demo.py
+    env:
+      SERVICE_TOKEN: ${SERVICE_TOKEN}
+
+  remote_demo:
+    transport: streamable_http
+    enabled: false
+    url: https://example.com/mcp
+    headers:
+      Authorization: Bearer ${MCP_TOKEN}

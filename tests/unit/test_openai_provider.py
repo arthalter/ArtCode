@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from artcode.config import ArtCodeConfig, ThinkingConfig
-from artcode.errors import AuthenticationError, ModelError, ThinkingModeUnsupportedError
+from artcode.errors import AuthenticationError, ContextWindowExceededError, ModelError, ThinkingModeUnsupportedError
+from artcode.providers import ProviderRequestOptions
 from artcode.providers.events import DONE, TOKEN_USAGE, TOOL_CALLS
 from artcode.providers.openai_compatible import (
     CONNECT_TIMEOUT_SECONDS,
@@ -34,6 +35,7 @@ def test_payload_without_thinking_omits_thinking_fields() -> None:
     payload = build_request_payload(config(False), [{"role": "user", "content": "hi"}])
 
     assert payload["stream"] is True
+    assert payload["stream_options"] == {"include_usage": True}
     assert "thinking" not in payload
     assert "reasoning_effort" not in payload
 
@@ -61,6 +63,21 @@ def test_payload_without_tools_omits_tool_fields() -> None:
     assert "tool_choice" not in payload
 
 
+def test_summary_options_limit_output_and_disable_thinking() -> None:
+    payload = build_request_payload(
+        config(True),
+        [{"role": "user", "content": "hi"}],
+        None,
+        options=ProviderRequestOptions(max_output_tokens=20_000, thinking_enabled=False),
+    )
+
+    assert payload["max_tokens"] == 20_000
+    assert payload["thinking"] == {"type": "disabled"}
+    assert "reasoning_effort" not in payload
+    assert "tools" not in payload
+    assert "tool_choice" not in payload
+
+
 def test_provider_timeout_values() -> None:
     timeout = provider_timeout()
 
@@ -84,6 +101,17 @@ def test_thinking_errors_are_mapped() -> None:
     error = map_http_error(400, "unsupported reasoning_effort", [])
 
     assert isinstance(error, ThinkingModeUnsupportedError)
+
+
+def test_context_window_errors_have_dedicated_type_and_are_redacted() -> None:
+    error = map_http_error(
+        400,
+        "context_length_exceeded for sk-secret-key",
+        ["sk-secret-key"],
+    )
+
+    assert isinstance(error, ContextWindowExceededError)
+    assert "sk-secret-key" not in error.user_message
 
 
 class FakeStreamResponse:
@@ -127,4 +155,38 @@ async def test_provider_stream_parses_usage_event() -> None:
 
     assert events[0]["type"] == TOKEN_USAGE
     assert events[0]["total_tokens"] == 7
+    assert events[0]["cached_tokens"] is None
+    assert events[0]["cache_miss_tokens"] is None
     assert events[-1]["type"] == DONE
+
+
+async def test_provider_stream_parses_deepseek_cache_usage() -> None:
+    provider = OpenAICompatibleProvider(config(False))
+    lines = [
+        'data: {"choices":[],"usage":{"prompt_tokens":10,"prompt_cache_hit_tokens":7,"prompt_cache_miss_tokens":3,"completion_tokens":4,"total_tokens":14}}',
+        "",
+        "data: [DONE]",
+        "",
+    ]
+
+    events = [event async for event in provider._iter_stream_events(FakeStreamResponse(lines))]
+
+    assert events[0]["type"] == TOKEN_USAGE
+    assert events[0]["cached_tokens"] == 7
+    assert events[0]["cache_miss_tokens"] == 3
+
+
+async def test_provider_stream_parses_openai_cached_tokens() -> None:
+    provider = OpenAICompatibleProvider(config(False))
+    lines = [
+        'data: {"choices":[],"usage":{"prompt_tokens":10,"prompt_tokens_details":{"cached_tokens":6},"completion_tokens":4,"total_tokens":14}}',
+        "",
+        "data: [DONE]",
+        "",
+    ]
+
+    events = [event async for event in provider._iter_stream_events(FakeStreamResponse(lines))]
+
+    assert events[0]["type"] == TOKEN_USAGE
+    assert events[0]["cached_tokens"] == 6
+    assert events[0]["cache_miss_tokens"] == 4

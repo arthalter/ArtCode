@@ -16,7 +16,7 @@ def capture_renderer() -> tuple[TuiRenderer, Console]:
 def test_startup_status_contains_non_sensitive_fields() -> None:
     renderer, console = capture_renderer()
     status = SafeConfigStatus(
-        chapter="ch04：动手实现 Agent Loop",
+        chapter="ch05：System Prompt 设计",
         protocol="openai",
         model="deepseek-v4-flash",
         base_url="https://api.deepseek.com",
@@ -24,20 +24,21 @@ def test_startup_status_contains_non_sensitive_fields() -> None:
         thinking_enabled=True,
         thinking_effort="high",
         masked_api_key="sk-t...alue",
-        allowed_dirs=("/tmp/artcode-sandbox",),
+        workspace="/tmp/artcode-sandbox",
     )
 
     renderer.show_startup(status)
     output = console.export_text()
 
     assert "ArtCode" in output
-    assert "ch04：动手实现 Agent Loop" in output
+    assert "ch05：System Prompt 设计" in output
     assert "protocol: openai" in output
     assert "model: deepseek-v4-flash" in output
     assert "base_url: https://api.deepseek.com" in output
     assert "streaming: on" in output
     assert "thinking: on (high)" in output
     assert "/tmp/artcode-sandbox" in output
+    assert "context: 200000 tokens" in output
     assert "sk-test-secret-value" not in output
 
 
@@ -98,3 +99,34 @@ def test_agent_progress_rendering() -> None:
     assert "read_only" in output
     assert "total=30" in output
     assert "iteration_limit" in output
+
+
+def test_token_usage_rendering_includes_cache_fields() -> None:
+    renderer, console = capture_renderer()
+
+    renderer.show_token_usage(10, 20, 30, cached_tokens=7, cache_miss_tokens=3)
+
+    output = console.export_text()
+    assert "cached=7" in output
+    assert "miss=3" in output
+
+
+def test_context_status_is_compact_and_does_not_print_history() -> None:
+    renderer, console = capture_renderer()
+
+    renderer.show_context_status(
+        {
+            "trigger": "automatic",
+            "status": "success",
+            "before_tokens": 167_420,
+            "after_tokens": 18_430,
+            "persisted_count": 2,
+            "circuit_open": False,
+        }
+    )
+
+    output = console.export_text()
+    assert "automatic / success" in output
+    assert "167420 → 18430" in output
+    assert "存盘 2 个" in output
+    assert "熔断 closed" in output

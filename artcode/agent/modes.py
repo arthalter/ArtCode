@@ -25,7 +25,8 @@ class ToolAccessPolicy:
             if not isinstance(function, dict):
                 continue
             name = function.get("name")
-            if isinstance(name, str) and self.allows(name):
+            origin = tool.get("x-artcode-origin", "builtin")
+            if isinstance(name, str) and (origin == "mcp" or self.allows(name)):
                 filtered.append(tool)
         return filtered
 

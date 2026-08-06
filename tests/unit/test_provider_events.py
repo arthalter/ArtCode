@@ -46,14 +46,19 @@ def test_tool_calls_requires_tool_call_list() -> None:
 
 
 def test_token_usage_event_contains_real_usage() -> None:
-    assert token_usage_event(1, 2, 3) == {
+    assert token_usage_event(1, 2, 3, 4, 5) == {
         "type": TOKEN_USAGE,
         "prompt_tokens": 1,
         "completion_tokens": 2,
         "total_tokens": 3,
+        "cached_tokens": 4,
+        "cache_miss_tokens": 5,
     }
 
 
 def test_token_usage_requires_ints_or_none() -> None:
     with pytest.raises(ValueError, match="integers or None"):
         validate_event({"type": TOKEN_USAGE, "prompt_tokens": "1", "completion_tokens": None, "total_tokens": None})
+
+    with pytest.raises(ValueError, match="integers or None"):
+        validate_event({"type": TOKEN_USAGE, "cached_tokens": True})

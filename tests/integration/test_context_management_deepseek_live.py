@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE
+from artcode.config import ArtCodeConfig, ConfigError, load_config
+from artcode.context_management import ContextManager, ContextSummarizer
+from artcode.context_management.models import CompressionTrigger
+from artcode.context_management.retention import RetentionPlanner
+from artcode.context_management.summarizer import SUMMARY_TITLES
+from artcode.conversation import ConversationContext
+from artcode.providers.openai_compatible import OpenAICompatibleProvider
+from artcode.tools import AllowedPathPolicy, ToolExecutionContext, ToolRegistry
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def required_live_config() -> ArtCodeConfig:
+    try:
+        config = load_config(ROOT / "artcode.yaml")
+    except ConfigError as exc:
+        pytest.fail(f"ch08 live context validation requires real API config: {exc.message}")
+    if "your-deepseek-api-key" in config.api_key or config.api_key.startswith("<"):
+        pytest.fail("ch08 live context validation requires a real API key in artcode.yaml")
+    return replace(config, model="deepseek-v4-flash")
+
+
+async def test_live_deepseek_summary_and_followup_preserve_user_intent(tmp_path) -> None:
+    marker = "CH08-LIVE-CONTEXT-7429"
+    config = required_live_config()
+    provider = OpenAICompatibleProvider(config)
+    conversation = ConversationContext("你是简洁的上下文连续性测试助手。")
+    conversation.append_user(f"请逐字记住暗号 {marker}，只回复已记住。")
+    conversation.append_assistant("已记住。")
+    for index in range(10):
+        conversation.append_user(f"这是用于形成历史的第 {index} 条请求。")
+        conversation.append_assistant(f"已记录第 {index} 条请求。")
+    manager = ContextManager(
+        config.context,
+        ContextSummarizer(provider, conversation),
+        retention_planner=RetentionPlanner(recent_token_budget=50, minimum_messages=3),
+    )
+
+    reports = []
+    for _attempt in range(3):
+        report = await manager.compact(conversation, CompressionTrigger.MANUAL)
+        reports.append(report)
+        if report.status == "success":
+            break
+
+    assert report.status == "success", [item.message for item in reports]
+    messages = conversation.export_messages()
+    summary = messages[1]["content"]
+    assert summary.startswith("<conversation-summary>")
+    assert "<analysis>" not in summary
+    assert marker in summary
+    assert all(title in summary for title in SUMMARY_TITLES)
+
+    loop = AgentLoop(
+        provider,
+        conversation,
+        ToolRegistry(),
+        ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path),
+        context_manager=manager,
+    )
+    events = [
+        event
+        async for event in loop.run(
+            AgentRunRequest("最早要求你逐字记住的暗号是什么？只回复暗号。", NORMAL_AGENT_MODE)
+        )
+    ]
+
+    assert events[-1].payload["reason"] == "natural"
+    assert marker in conversation.export_messages()[-1]["content"]

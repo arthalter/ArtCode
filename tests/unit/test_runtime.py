@@ -4,11 +4,16 @@ import json
 from pathlib import Path
 
 from artcode.agent import PlanMemory
-from artcode.config import ArtCodeConfig, ThinkingConfig, ToolConfig
+from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.conversation import ConversationContext
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
 from artcode.runtime import ArtCodeRuntime
+from artcode.context_management import ContextManager, ContextSummarizer
+from artcode.context_management.retention import RetentionPlanner
+from artcode.context_management.summarizer import SUMMARY_TITLES, VERBATIM_PLACEHOLDER
+from artcode.persistence import PersistenceCoordinator, SessionSelection
+from artcode.workspace import ArtCodePaths, Workspace
 
 
 class FakeTui:
@@ -66,11 +71,24 @@ class FakeTui:
     def show_tool_batch_started(self, batch_index: int, safety: str, count: int) -> None:
         self.output.append(f"batch:{batch_index}:{safety}:{count}")
 
-    def show_token_usage(self, prompt_tokens=None, completion_tokens=None, total_tokens=None) -> None:
-        self.output.append(f"usage:{total_tokens}")
+    def show_token_usage(
+        self,
+        prompt_tokens=None,
+        completion_tokens=None,
+        total_tokens=None,
+        cached_tokens=None,
+        cache_miss_tokens=None,
+    ) -> None:
+        self.output.append(f"usage:{total_tokens}:{cached_tokens}:{cache_miss_tokens}")
 
     def show_agent_stopped(self, reason: str, message: str = "") -> None:
         self.output.append(f"stopped:{reason}")
+
+    def show_context_status(self, payload: dict) -> None:
+        self.output.append(f"context:{payload['trigger']}:{payload['status']}")
+
+    def show_persistence_status(self, payload: dict) -> None:
+        self.output.append(f"persistence:{payload['kind']}:{payload['status']}")
 
 
 class FakeProvider:
@@ -79,11 +97,19 @@ class FakeProvider:
         self.tools_seen: list[list[dict] | None] = []
         self.messages_seen: list[list[dict]] = []
 
-    async def stream_chat(self, messages, tools=None):
+    async def stream_chat(self, messages, tools=None, *, options=None):
         self.messages_seen.append(list(messages))
         self.tools_seen.append(tools)
         for event in self.responses.pop(0):
             yield event
+
+
+def valid_summary() -> str:
+    sections = []
+    for index, title in enumerate(SUMMARY_TITLES, start=1):
+        body = VERBATIM_PLACEHOLDER if index == 6 else f"内容 {index}"
+        sections.append(f"## {index}. {title}\n{body}")
+    return "<analysis>draft</analysis><summary>" + "\n\n".join(sections) + "</summary>"
 
 
 def fake_config(root: Path) -> ArtCodeConfig:
@@ -94,7 +120,7 @@ def fake_config(root: Path) -> ArtCodeConfig:
         base_url="https://api.deepseek.com",
         api_key="sk-test",
         thinking=ThinkingConfig(),
-        tools=ToolConfig((root,)),
+        workspace=root,
     )
 
 
@@ -209,3 +235,67 @@ async def test_runtime_unknown_tool_stops_and_summarizes(tmp_path) -> None:
     assert json.loads(tool_message["content"])["error_code"] == "tool_not_found"
     assert provider.tools_seen[1] is None
     assert "stopped:unknown_tool" in tui.output
+
+
+async def test_runtime_compact_does_not_append_command_as_user_message(tmp_path) -> None:
+    context = ConversationContext("system")
+    for index in range(12):
+        if index % 2 == 0:
+            context.append_user(f"old {index}")
+        else:
+            context.append_assistant("x" * 100)
+    user_count_before = sum(message["role"] == "user" for message in context.export_messages())
+    tui = FakeTui(["/compact", "/exit"])
+    provider = FakeProvider([[content_delta_event(valid_summary()), done_event()]])
+    context_manager = ContextManager(
+        fake_config(tmp_path / "sandbox").context,
+        ContextSummarizer(provider, context),
+        retention_planner=RetentionPlanner(recent_token_budget=50, minimum_messages=3),
+    )
+    runtime = ArtCodeRuntime(
+        fake_config(tmp_path / "sandbox-2"),
+        provider,
+        context,
+        tui,
+        context_manager=context_manager,
+    )
+
+    await runtime.run()
+
+    assert "context:manual:success" in tui.output
+    assert all(message.get("content") != "/compact" for message in context.export_messages())
+    assert user_count_before == 6
+    assert len(provider.messages_seen) == 1
+
+
+async def test_runtime_persistence_commands_show_metadata_without_becoming_messages(tmp_path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    workspace = Workspace.from_path(root)
+    provider = FakeProvider([])
+    persistence = PersistenceCoordinator.start(
+        ArtCodePaths.create(tmp_path / "home"),
+        workspace,
+        provider,
+        SessionSelection.new(),
+    )
+    tui = FakeTui(["/sessions", "/memory", "/exit"])
+    runtime = ArtCodeRuntime(
+        fake_config(root),
+        provider,
+        persistence.conversation,
+        tui,
+        workspace=workspace,
+        plan_memory=persistence.plan_memory,
+        persistence=persistence,
+    )
+    try:
+        await runtime.run()
+        output = "\n".join(tui.output)
+        assert persistence.status.session_id in output
+        assert "用户级记忆" in output
+        assert "项目级记忆" in output
+        assert "superseded=0" in output
+        assert len(persistence.conversation.export_messages()) == 1
+    finally:
+        await persistence.close()

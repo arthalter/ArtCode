@@ -9,6 +9,8 @@ from rich.text import Text
 from artcode.config import SafeConfigStatus
 from artcode.errors import ArtCodeError
 from artcode.tools import ToolPreview, ToolResult
+from artcode.permissions import ApprovalRequest
+from artcode.mcp.models import McpServerConfig, McpStartupReport, TransportKind
 
 
 class _PrintableError(Protocol):
@@ -32,12 +34,66 @@ class TuiRenderer:
                 "streaming: on",
                 f"thinking: {thinking}",
                 f"api_key: {status.masked_api_key}",
-                "allowed_dirs:",
-                *[f"  - {path}" for path in status.allowed_dirs],
+                f"workspace: {status.workspace}",
+                f"permission: {status.permission_mode}",
+                f"sandbox: {status.shell_policy}",
+                f"seatbelt: {status.seatbelt_status}",
+                f"context: {status.context_window_tokens} tokens",
+                f"session: {status.session_id or 'disabled'} ({status.session_state})",
+                f"recovered: {status.recovered_messages} messages; bad lines: {status.bad_session_lines}; truncated: {'yes' if status.session_truncated else 'no'}",
+                f"instructions: {status.instruction_bytes} bytes; issues: {status.instruction_issues}",
+                f"memory: user={status.user_active_notes}; project={status.project_active_notes}",
                 "input: Enter 发送，Ctrl+Enter 或 Esc Enter 换行",
             ]
         )
         self.console.print(Panel(body, title="ArtCode", border_style="cyan"))
+
+    def show_approval(self, request: ApprovalRequest) -> None:
+        body = "\n".join(
+            [
+                f"工具：{request.tool_name}",
+                f"目标：{request.target}",
+                f"Workspace：{request.workspace}",
+                f"权限模式：{request.permission_mode.value}",
+                f"Shell 策略：{request.shell_policy.value}",
+                f"ASK 来源：{request.source}",
+            ]
+        )
+        self.console.print(Panel(body, title="需要授权", border_style="yellow"))
+
+    def show_mcp_server_approval(self, config: McpServerConfig) -> None:
+        if config.transport is TransportKind.STDIO:
+            target = " ".join((config.command or "", *config.args))
+            risk = "外部进程不受 ArtCode Workspace 文件沙箱保护。"
+            names = f"环境变量：{', '.join(config.referenced_variables) or '无'}"
+        else:
+            target = config.url or ""
+            risk = "跨域重定向会原样转发全部自定义 Headers。"
+            names = f"Headers：{', '.join(config.headers) or '无'}；引用变量：{', '.join(config.referenced_variables) or '无'}"
+        body = "\n".join((f"Server：{config.name}", f"目标：{target}", names, risk))
+        self.console.print(Panel(body, title="项目 MCP Server 授权", border_style="yellow"))
+
+    def show_mcp_tool_approval(self, preview: ToolPreview, plan_mode: bool = False) -> None:
+        body = "\n".join(
+            (
+                f"来源：{preview.target}",
+                f"注册名：{preview.tool_name}",
+                f"Plan 模式：{'是' if plan_mode else '否'}",
+                f"脱敏参数：{preview.summary}",
+                "MCP 工具始终视为可能产生副作用。",
+            )
+        )
+        self.console.print(Panel(body, title="MCP 工具授权", border_style="yellow"))
+
+    def show_mcp_startup(self, report: McpStartupReport) -> None:
+        lines = [
+            f"配置 {report.configured_count} / 成功 {report.connected_count} / "
+            f"失败 {report.failed_count} / 工具 {report.registered_tool_count}"
+        ]
+        for item in report.server_reports:
+            suffix = f"：{item.detail}" if item.detail else ""
+            lines.append(f"{item.name} [{item.source.value}] {item.state.value} 工具={item.tool_count}{suffix}")
+        self.console.print(Panel("\n".join(lines), title="MCP", border_style="magenta"))
 
     def prompt_text(self, model: str) -> str:
         return f"{model}> "
@@ -76,8 +132,7 @@ class TuiRenderer:
 
     def show_tool_result_summary(self, result: ToolResult) -> None:
         status = "成功" if result.ok else "失败"
-        truncated = "，已截断" if result.truncated else ""
-        detail = f"工具执行{status}：{result.message}（返回 {result.bytes_returned} bytes{truncated}）"
+        detail = f"工具执行{status}：{result.message}（返回 {result.bytes_returned} bytes）"
         style = "green" if result.ok else "red"
         self.console.print(detail, style=style)
 
@@ -95,12 +150,42 @@ class TuiRenderer:
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
         total_tokens: int | None = None,
+        cached_tokens: int | None = None,
+        cache_miss_tokens: int | None = None,
     ) -> None:
+        cache_part = ""
+        if cached_tokens is not None or cache_miss_tokens is not None:
+            cache_part = f" cached={cached_tokens} miss={cache_miss_tokens}"
         self.console.print(
-            f"Token 用量：prompt={prompt_tokens} completion={completion_tokens} total={total_tokens}",
+            f"Token 用量：prompt={prompt_tokens} completion={completion_tokens} total={total_tokens}{cache_part}",
             style="cyan",
         )
 
     def show_agent_stopped(self, reason: str, message: str = "") -> None:
         suffix = f"：{message}" if message else ""
         self.console.print(f"Agent Loop 停止（{reason}）{suffix}", style="cyan")
+
+    def show_context_status(self, payload: dict) -> None:
+        circuit = "open" if payload.get("circuit_open") else "closed"
+        message = f"；{payload['message']}" if payload.get("message") else ""
+        detail = (
+            f"上下文：{payload.get('trigger')} / {payload.get('status')}，"
+            f"{payload.get('before_tokens')} → {payload.get('after_tokens')} Token，"
+            f"存盘 {payload.get('persisted_count')} 个，熔断 {circuit}{message}"
+        )
+        style = "red" if payload.get("status") in {"failed", "blocked"} else "cyan"
+        self.console.print(detail, style=style)
+
+    def show_persistence_status(self, payload: dict) -> None:
+        kind = payload.get("kind", "persistence")
+        status = payload.get("status", "unknown")
+        message = payload.get("message", "")
+        counts = ""
+        if kind == "memory":
+            counts = (
+                f" 新增={payload.get('created', 0)} 更新={payload.get('updated', 0)} "
+                f"作废={payload.get('superseded', 0)} 拒绝={payload.get('rejected', 0)}"
+            )
+        suffix = f"：{message}" if message else ""
+        style = "red" if status in {"failed", "rejected"} else "cyan"
+        self.console.print(f"持久状态 [{kind}/{status}]{counts}{suffix}", style=style)

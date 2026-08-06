@@ -7,7 +7,7 @@ from typing import Any
 from artcode.agent import AgentEventType, ToolAccessPolicy
 from artcode.agent.tools import ToolBatchExecutor, ToolExecutionBlocked, ToolSafety, classify_tool
 from artcode.providers.tool_calls import ToolCall
-from artcode.tools import AllowedPathPolicy, PreparedToolCall, ToolExecutionContext, ToolPreview, ToolRegistry
+from artcode.tools import AllowedPathPolicy, PreparedToolCall, ToolExecutionContext, ToolOrigin, ToolPreview, ToolRegistry
 from artcode.tools.results import ToolResult, error_result, success_result
 
 
@@ -34,6 +34,20 @@ class FakeTool:
             await asyncio.sleep(self.delay)
         self.finished.append(self.name)
         return self.result or success_result(self.name, f"{self.name} ok")
+
+
+class FakeMcpTool(FakeTool):
+    origin = ToolOrigin.MCP
+
+
+class FakeMcpApprover:
+    def __init__(self, choices: list[bool]) -> None:
+        self.choices = choices
+        self.previews = []
+
+    async def request_mcp_approval(self, preview) -> bool:
+        self.previews.append(preview)
+        return self.choices.pop(0)
 
 
 def context_for(tmp_path: Path) -> ToolExecutionContext:
@@ -120,3 +134,25 @@ async def test_side_effect_batch_runs_serially(tmp_path) -> None:
     events = [event async for event in executor.execute_plan(plan)]
 
     assert [event.payload["tool_call"].id for event in events if event.type == AgentEventType.TOOL_RESULT] == ["1", "2"]
+
+
+async def test_mcp_batch_asks_each_call_and_runs_approved_calls(tmp_path) -> None:
+    first = FakeMcpTool("external_one")
+    second = FakeMcpTool("external_two")
+    approver = FakeMcpApprover([True, False])
+    executor = ToolBatchExecutor(
+        registry_with(first, second), context_for(tmp_path), approver=approver
+    )
+    plan = executor.build_plan(
+        [ToolCall("1", first.name, "{}"), ToolCall("2", second.name, "{}")],
+        ToolAccessPolicy(frozenset()),
+    )
+
+    events = [event async for event in executor.execute_plan(plan, plan_mode=True)]
+    results = [event.payload["result"] for event in events if event.type == AgentEventType.TOOL_RESULT]
+
+    assert plan.batches[0].safety is ToolSafety.MCP_EXTERNAL
+    assert len(approver.previews) == 2
+    assert first.started
+    assert not second.started
+    assert results[1].error_code == "user_denied"
