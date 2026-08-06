@@ -2,6 +2,27 @@
 
 ArtCode 是一个本地 Python CLI Coding Agent 学习项目。
 
+## ch08：上下文管理
+
+ch08 为长时间运行的 Agent 增加两层上下文保护：
+
+- 每次模型请求前检查工具结果；单个结果超过 8,000 Token，或同轮结果合计超过 16,000 Token 时，将完整原文保存到 Workspace 内的 `.artcode/context/<session-id>/tool-results/`，对话只保留首尾预览和相对路径。
+- 存盘文件必须通过 `read_file` 同时指定 `start_line` 与 `end_line` 分段回读，单次片段不能超过 8,000 Token。
+- 上下文默认窗口为 200,000 Token，可在 200,000–1,000,000 之间配置；83.5% 自动摘要，88.5% 强制尝试。
+- 重量压缩保留 System Prompt、近期约 10,000 Token 和至少 5 条消息；旧历史折叠为一份九段摘要，用户原始消息由程序逐字注入。
+- 连续三次自动摘要失败会打开熔断器；真正的上下文超限最多触发一次紧急摘要和一次原请求重试。
+- `/compact` 可以随时手动压缩，不会作为用户消息写入对话。
+- Artifact 只服务当前运行：正常退出删除当前会话目录，下次启动清理确认失活的遗留目录。
+
+配置示例：
+
+```yaml
+context:
+  window_tokens: 200000
+```
+
+ArtCode 使用最近一次真实 API `prompt_tokens` 加字符差量近似估算上下文，不引入精确 tokenizer。未触发压缩时，Normal、Plan、Do、内置工具、MCP 与权限系统保持原有行为。
+
 ## ch07：MCP 协议
 
 ch07 允许 ArtCode 通过官方 Python MCP SDK 复用外部 MCP Server 的工具：

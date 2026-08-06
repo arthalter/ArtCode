@@ -26,6 +26,7 @@ class AgentEventType(StrEnum):
     TOOL_RESULT = "tool_result"
     TOKEN_USAGE = "token_usage"
     FINAL_SUMMARY_STARTED = "final_summary_started"
+    CONTEXT_STATUS = "context_status"
     STOPPED = "stopped"
 
 
@@ -119,6 +120,29 @@ def token_usage_event(usage: TokenUsage) -> AgentEvent:
 
 def final_summary_started_event(reason: StopReason) -> AgentEvent:
     return AgentEvent(AgentEventType.FINAL_SUMMARY_STARTED, {"reason": reason.value})
+
+
+def context_status_event(
+    trigger: str,
+    status: str,
+    before_tokens: int,
+    after_tokens: int,
+    persisted_count: int,
+    circuit_open: bool,
+    message: str = "",
+) -> AgentEvent:
+    return AgentEvent(
+        AgentEventType.CONTEXT_STATUS,
+        {
+            "trigger": trigger,
+            "status": status,
+            "before_tokens": before_tokens,
+            "after_tokens": after_tokens,
+            "persisted_count": persisted_count,
+            "circuit_open": circuit_open,
+            "message": message,
+        },
+    )
 
 
 def stopped_event(reason: StopReason, message: str = "") -> AgentEvent:

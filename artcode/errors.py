@@ -56,6 +56,10 @@ class ModelError(RequestError):
     pass
 
 
+class ContextWindowExceededError(RequestError):
+    pass
+
+
 class TimeoutError(RequestError):
     pass
 

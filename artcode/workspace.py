@@ -63,6 +63,10 @@ class Workspace:
     def local_permissions_file(self) -> Path:
         return self.root / "permissions.local.yml"
 
+    @property
+    def context_root(self) -> Path:
+        return self.root / ".artcode" / "context"
+
     def contains(self, path: Path) -> bool:
         resolved = path.expanduser().resolve()
         return resolved == self.root or self.root in resolved.parents

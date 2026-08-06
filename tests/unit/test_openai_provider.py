@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from artcode.config import ArtCodeConfig, ThinkingConfig
-from artcode.errors import AuthenticationError, ModelError, ThinkingModeUnsupportedError
+from artcode.errors import AuthenticationError, ContextWindowExceededError, ModelError, ThinkingModeUnsupportedError
+from artcode.providers import ProviderRequestOptions
 from artcode.providers.events import DONE, TOKEN_USAGE, TOOL_CALLS
 from artcode.providers.openai_compatible import (
     CONNECT_TIMEOUT_SECONDS,
@@ -62,6 +63,21 @@ def test_payload_without_tools_omits_tool_fields() -> None:
     assert "tool_choice" not in payload
 
 
+def test_summary_options_limit_output_and_disable_thinking() -> None:
+    payload = build_request_payload(
+        config(True),
+        [{"role": "user", "content": "hi"}],
+        None,
+        options=ProviderRequestOptions(max_output_tokens=20_000, thinking_enabled=False),
+    )
+
+    assert payload["max_tokens"] == 20_000
+    assert payload["thinking"] == {"type": "disabled"}
+    assert "reasoning_effort" not in payload
+    assert "tools" not in payload
+    assert "tool_choice" not in payload
+
+
 def test_provider_timeout_values() -> None:
     timeout = provider_timeout()
 
@@ -85,6 +101,17 @@ def test_thinking_errors_are_mapped() -> None:
     error = map_http_error(400, "unsupported reasoning_effort", [])
 
     assert isinstance(error, ThinkingModeUnsupportedError)
+
+
+def test_context_window_errors_have_dedicated_type_and_are_redacted() -> None:
+    error = map_http_error(
+        400,
+        "context_length_exceeded for sk-secret-key",
+        ["sk-secret-key"],
+    )
+
+    assert isinstance(error, ContextWindowExceededError)
+    assert "sk-secret-key" not in error.user_message
 
 
 class FakeStreamResponse:

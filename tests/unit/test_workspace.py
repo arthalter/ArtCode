@@ -30,3 +30,9 @@ def test_workspace_uses_path_membership_not_string_prefix(tmp_path: Path) -> Non
     workspace = Workspace.from_path(root)
     assert workspace.contains(root / "file.txt")
     assert not workspace.contains(other / "file.txt")
+
+
+def test_workspace_context_root_is_internal_directory(tmp_path: Path) -> None:
+    workspace = Workspace.from_path(tmp_path)
+
+    assert workspace.context_root == tmp_path / ".artcode" / "context"

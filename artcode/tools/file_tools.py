@@ -7,6 +7,8 @@ from typing import Any
 
 from .base import PreparedToolCall, ToolExecutionContext, ToolPreview
 from .results import ToolResult, error_result, success_result
+from artcode.context_management.estimator import estimate_text_tokens
+from artcode.context_management.models import SINGLE_TOOL_RESULT_TOKENS
 
 
 def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
@@ -83,9 +85,26 @@ class ReadFileTool:
         except Exception as exc:
             return _prepare_error(self.name, exc)
 
+        artifact_store = context.artifact_store
+        is_artifact = bool(
+            artifact_store is not None
+            and artifact_store.is_current_artifact(path)
+        )
+        if is_artifact and (start_line is None or end_line is None):
+            return error_result(
+                self.name,
+                "artifact_range_required",
+                "读取当前会话的存盘结果时，必须同时提供 start_line 和 end_line。",
+            )
+
         return PreparedToolCall(
             tool=self,
-            arguments={"path": path, "start_line": start_line, "end_line": end_line},
+            arguments={
+                "path": path,
+                "start_line": start_line,
+                "end_line": end_line,
+                "is_artifact": is_artifact,
+            },
             preview=ToolPreview(self.name, f"读取文件 {path}", _target(context, path), False),
         )
 
@@ -108,7 +127,14 @@ class ReadFileTool:
             end = end_line if end_line is not None else len(lines)
             text = "".join(lines[start:end])
 
-        return success_result(self.name, f"已读取文件：{path}", text, context.max_result_bytes)
+        if prepared.arguments.get("is_artifact") and estimate_text_tokens(text) > SINGLE_TOOL_RESULT_TOKENS:
+            return error_result(
+                self.name,
+                "artifact_range_too_large",
+                "选定的存盘结果片段超过 8,000 Token，请缩小行范围。",
+            )
+
+        return success_result(self.name, f"已读取文件：{path}", text)
 
 
 class WriteFileTool:
@@ -155,7 +181,7 @@ class WriteFileTool:
             path.write_text(content, encoding="utf-8")
         except OSError as exc:
             return error_result(self.name, "write_error", f"写入文件失败：{exc}")
-        return success_result(self.name, f"已写入文件：{path}", f"path: {path}", context.max_result_bytes)
+        return success_result(self.name, f"已写入文件：{path}", f"path: {path}")
 
 
 class EditFileTool:
@@ -214,7 +240,7 @@ class EditFileTool:
             path.write_text(text.replace(old_text, new_text, 1), encoding="utf-8")
         except OSError as exc:
             return error_result(self.name, "write_error", f"写入文件失败：{exc}")
-        return success_result(self.name, f"已修改文件：{path}", f"path: {path}", context.max_result_bytes)
+        return success_result(self.name, f"已修改文件：{path}", f"path: {path}")
 
 
 class FindFilesTool:
@@ -260,7 +286,7 @@ class FindFilesTool:
                 matches.append(str(resolved))
 
         content = "\n".join(sorted(set(matches)))
-        return success_result(self.name, f"找到 {len(set(matches))} 个匹配文件。", content, context.max_result_bytes)
+        return success_result(self.name, f"找到 {len(set(matches))} 个匹配文件。", content)
 
 
 class SearchTextTool:
@@ -324,7 +350,7 @@ class SearchTextTool:
 
         payload = {"matches": matches, "skipped_unreadable_files": skipped}
         content = json.dumps(payload, ensure_ascii=False, indent=2)
-        return success_result(self.name, f"找到 {len(matches)} 处匹配。", content, context.max_result_bytes)
+        return success_result(self.name, f"找到 {len(matches)} 处匹配。", content)
 
 
 def _iter_search_files(path: Path | None, context: ToolExecutionContext) -> list[Path]:

@@ -40,6 +40,7 @@ from artcode.tools import (
 from artcode.tui import UserRequestedExit
 from artcode.workspace import Workspace
 from artcode.agent.tools import ToolBatchExecutor
+from artcode.context_management import ContextManager
 
 
 class TuiApp(Protocol):
@@ -104,6 +105,9 @@ class TuiApp(Protocol):
     def show_agent_stopped(self, reason: str, message: str = "") -> None:
         ...
 
+    def show_context_status(self, payload: dict) -> None:
+        ...
+
 
 @dataclass
 class ArtCodeRuntime:
@@ -120,6 +124,7 @@ class ArtCodeRuntime:
     permission_state: PermissionState = field(default_factory=PermissionState)
     permission_engine: PermissionEngine | None = None
     rule_writer: RuleWriter | None = None
+    context_manager: ContextManager | None = None
 
     def __post_init__(self) -> None:
         if self.tool_registry is None:
@@ -146,6 +151,7 @@ class ArtCodeRuntime:
                 tool_context=self.tool_context,
                 plan_memory=self.plan_memory,
                 tool_executor=executor,
+                context_manager=self.context_manager,
             )
 
     async def run(self) -> int:
@@ -185,6 +191,9 @@ class ArtCodeRuntime:
                     continue
                 if command_result.action == "do":
                     await self._run_do(command_result.argument)
+                    continue
+                if command_result.action == "compact":
+                    await self._run_compact()
                     continue
                 if command_result.action == "permission":
                     self._handle_permission_command(command_result.argument)
@@ -277,6 +286,10 @@ class ArtCodeRuntime:
             content = "\n\n".join(["请执行最近计划：", plan])
         await self._run_agent(content, DO_MODE)
 
+    async def _run_compact(self) -> None:
+        async for event in self.agent_loop.compact_context():
+            self._handle_agent_event(event)
+
     async def _run_agent(self, user_content, mode) -> None:
         self.tui.show_user_label()
         self.tui.show_assistant_label()
@@ -320,6 +333,10 @@ class ArtCodeRuntime:
             self.tui.show_agent_stopped(event.payload["reason"], event.payload.get("message", ""))
             if event.payload["reason"] == "user_cancelled":
                 self.tui.show_cancelled()
+        elif event.type == AgentEventType.CONTEXT_STATUS:
+            handler = getattr(self.tui, "show_context_status", None)
+            if callable(handler):
+                handler(event.payload)
 
     def _install_generation_cancel_handler(self, task: asyncio.Task[None]) -> None:
         try:

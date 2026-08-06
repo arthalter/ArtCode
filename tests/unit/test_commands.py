@@ -64,3 +64,18 @@ def test_permission_and_sandbox_commands_capture_optional_values() -> None:
     registry = create_default_registry()
     assert registry.handle("/permission full") == CommandResult(action="permission", argument="full")
     assert registry.handle("/sandbox ask") == CommandResult(action="sandbox", argument="ask")
+
+
+def test_compact_command_has_no_arguments() -> None:
+    registry = create_default_registry()
+
+    assert registry.handle("/compact") == CommandResult(action="compact")
+    result = registry.handle("/compact now")
+    assert result.action == "help"
+    assert "不接受参数" in result.message
+
+
+def test_help_includes_compact() -> None:
+    result = create_default_registry().handle("/help")
+
+    assert "/compact" in result.message

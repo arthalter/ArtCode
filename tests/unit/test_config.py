@@ -4,7 +4,7 @@ import pytest
 
 from pathlib import Path
 
-from artcode.config import ArtCodeConfig, load_config, parse_config
+from artcode.config import ArtCodeConfig, ContextConfig, load_config, parse_config
 from artcode.errors import ConfigError
 
 
@@ -118,10 +118,36 @@ def test_safe_status_masks_api_key() -> None:
     assert config.api_key not in status.masked_api_key
 
 
-def test_chapter_name_is_ch07() -> None:
+def test_chapter_name_is_ch08() -> None:
     status = parse_config(valid_raw()).safe_status()
 
-    assert status.chapter == "ch07：MCP协议"
+    assert status.chapter == "ch08：上下文管理"
+
+
+def test_context_defaults_and_thresholds() -> None:
+    config = parse_config(valid_raw())
+
+    assert config.context == ContextConfig(200_000)
+    assert config.context.automatic_threshold == 167_000
+    assert config.context.forced_threshold == 177_000
+    assert config.safe_status().context_window_tokens == 200_000
+
+
+@pytest.mark.parametrize("value", [200_000, 500_000, 1_000_000])
+def test_context_window_accepts_supported_range(value: int) -> None:
+    raw = valid_raw()
+    raw["context"] = {"window_tokens": value}
+
+    assert parse_config(raw).context.window_tokens == value
+
+
+@pytest.mark.parametrize("value", [199_999, 1_000_001, True, "200000", 200000.0])
+def test_context_window_rejects_invalid_values(value) -> None:
+    raw = valid_raw()
+    raw["context"] = {"window_tokens": value}
+
+    with pytest.raises(ConfigError, match="context.window_tokens"):
+        parse_config(raw)
 
 
 def test_old_tools_allowed_dirs_is_rejected() -> None:

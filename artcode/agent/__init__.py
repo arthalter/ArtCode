@@ -4,6 +4,7 @@ from .events import (
     ModelTurn,
     StopReason,
     TokenUsage,
+    context_status_event,
 )
 from .loop import AgentLoop, AgentRunRequest, AgentRunResult
 from .memory import PlanMemory
@@ -27,6 +28,7 @@ __all__ = [
     "StopReason",
     "StreamCollector",
     "TokenUsage",
+    "context_status_event",
     "ToolAccessPolicy",
     "ToolBatchExecutor",
     "ToolExecutionBatch",

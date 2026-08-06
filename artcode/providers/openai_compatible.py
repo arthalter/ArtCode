@@ -9,6 +9,7 @@ import httpx
 from artcode.config import ArtCodeConfig
 from artcode.errors import (
     AuthenticationError,
+    ContextWindowExceededError,
     ModelError,
     NetworkError,
     StreamInterruptedError,
@@ -18,6 +19,7 @@ from artcode.errors import (
 )
 
 from .events import content_delta_event, done_event, token_usage_event, tool_calls_event
+from .base import ProviderRequestOptions
 from .sse import SSEDecoder
 from .tool_calls import ToolCallAccumulator
 
@@ -35,8 +37,10 @@ class OpenAICompatibleProvider:
         self,
         messages: Sequence[dict[str, Any]],
         tools: Sequence[dict[str, Any]] | None = None,
+        *,
+        options: ProviderRequestOptions | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
-        payload = build_request_payload(self.config, messages, tools)
+        payload = build_request_payload(self.config, messages, tools, options=options)
         headers = {
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json",
@@ -118,6 +122,8 @@ def build_request_payload(
     config: ArtCodeConfig,
     messages: Sequence[dict[str, Any]],
     tools: Sequence[dict[str, Any]] | None = None,
+    *,
+    options: ProviderRequestOptions | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": config.model,
@@ -128,9 +134,16 @@ def build_request_payload(
     if tools is not None:
         payload["tools"] = list(tools)
         payload["tool_choice"] = "auto"
-    if config.thinking.enabled:
+    if options is not None and options.max_output_tokens is not None:
+        payload["max_tokens"] = options.max_output_tokens
+    thinking_enabled = config.thinking.enabled
+    if options is not None and options.thinking_enabled is not None:
+        thinking_enabled = options.thinking_enabled
+    if thinking_enabled:
         payload["thinking"] = {"type": "enabled"}
         payload["reasoning_effort"] = map_reasoning_effort(config.thinking.effort)
+    elif options is not None and options.thinking_enabled is False:
+        payload["thinking"] = {"type": "disabled"}
     return payload
 
 
@@ -144,6 +157,11 @@ def map_http_error(status_code: int, response_body: str, secrets: Sequence[str])
     safe_body = scrub_secrets(response_body, secrets)
     if status_code in {401, 403}:
         return AuthenticationError("DeepSeek 认证失败。", "请检查 artcode.yaml 中的 api_key 是否正确。")
+    if _looks_like_context_window_error(safe_body):
+        return ContextWindowExceededError(
+            "模型上下文窗口已超限。",
+            f"服务端返回 HTTP {status_code}：{safe_body}",
+        )
     if _looks_like_thinking_error(safe_body):
         return ThinkingModeUnsupportedError(
             "DeepSeek 当前不接受 Thinking Mode 参数。",
@@ -226,3 +244,16 @@ def _cache_miss_tokens(
 def _looks_like_thinking_error(response_body: str) -> bool:
     lowered = response_body.lower()
     return "thinking" in lowered or "reasoning_effort" in lowered or "reasoning effort" in lowered
+
+
+def _looks_like_context_window_error(response_body: str) -> bool:
+    lowered = response_body.lower()
+    markers = (
+        "context_length_exceeded",
+        "context length exceeded",
+        "maximum context length",
+        "max context length",
+        "context window",
+        "too many tokens",
+    )
+    return any(marker in lowered for marker in markers)

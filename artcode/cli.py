@@ -17,6 +17,7 @@ from .permissions import PermissionEngine, PermissionState, RuleLoader, RulePath
 from .security import DangerousCommandValidator
 from .sandbox import SeatbeltError, SeatbeltSession
 from .mcp import McpManager, load_mcp_configuration
+from .context_management import ContextArtifactStore, ContextManager, ContextSummarizer, LightweightCompactor
 from importlib.resources import files
 
 
@@ -26,10 +27,14 @@ async def run_app(
     artcode_home: Path | None = None,
 ) -> int:
     renderer = TuiRenderer()
+    artifact_store = None
+    seatbelt = None
     try:
         app_paths = ArtCodePaths.create(artcode_home)
         workspace = Workspace.from_path(workspace_path)
         config = load_config(config_path or app_paths.config_file)
+        artifact_store = ContextArtifactStore(workspace)
+        artifact_store.start()
         rule_paths = RulePaths.from_context(app_paths, workspace)
         rules = RuleLoader(rule_paths)
         rules.validate_all()
@@ -45,7 +50,11 @@ async def run_app(
         )
         seatbelt = SeatbeltSession(workspace.root, sensitive_paths)
         await seatbelt.start()
-    except (ConfigError, WorkspaceError, ValueError, SeatbeltError) as exc:
+    except (ConfigError, WorkspaceError, ValueError, SeatbeltError, OSError, RuntimeError) as exc:
+        if artifact_store is not None:
+            artifact_store.close()
+        if seatbelt is not None:
+            seatbelt.close()
         if not isinstance(exc, ConfigError):
             exc = ConfigError(str(exc))
         renderer.show_startup_error(exc)
@@ -70,13 +79,20 @@ async def run_app(
         shell_policy=state.shell_policy,
         seatbelt=seatbelt,
         permission_state=state,
+        artifact_store=artifact_store,
     )
     registry = create_default_tool_registry()
     registry.register_many(mcp_manager.adapters)
+    conversation = ConversationContext()
+    context_manager = ContextManager(
+        config.context,
+        ContextSummarizer(provider, conversation),
+        lightweight_compactor=LightweightCompactor(artifact_store),
+    )
     runtime = ArtCodeRuntime(
         config=config,
         provider=provider,
-        conversation=ConversationContext(),
+        conversation=conversation,
         tui=tui,
         tool_registry=registry,
         tool_context=tool_context,
@@ -84,12 +100,14 @@ async def run_app(
         permission_state=state,
         permission_engine=PermissionEngine(rules, dangerous),
         rule_writer=RuleWriter(rules),
+        context_manager=context_manager,
     )
     renderer.show_mcp_startup(mcp_report)
     try:
         return await runtime.run()
     finally:
         await mcp_manager.close()
+        artifact_store.close()
         seatbelt.close()
 
 

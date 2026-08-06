@@ -108,13 +108,12 @@ class RunCommandTool:
             ]
         )
         if process.returncode == 0:
-            return success_result(self.name, "命令执行成功。", content, context.max_result_bytes)
+            return success_result(self.name, "命令执行成功。", content)
         return error_result(
             self.name,
             "command_failed",
             f"命令退出码为 {process.returncode}。",
             content,
-            context.max_result_bytes,
         )
 
 

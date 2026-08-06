@@ -3,9 +3,12 @@ from __future__ import annotations
 import platform as platform_lib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from artcode.agent.modes import AgentMode
 from artcode.tools import ToolExecutionContext
+
+if TYPE_CHECKING:
+    from artcode.agent.modes import AgentMode
 
 
 @dataclass(frozen=True)

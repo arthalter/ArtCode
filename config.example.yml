@@ -12,6 +12,10 @@ thinking:
   enabled: false
   effort: high
 
+# 当前会话使用的模型上下文窗口。允许范围：200000–1000000。
+context:
+  window_tokens: 200000
+
 # 用户级 MCP Server。项目也可以在 <workspace>/.artcode/config.yml 中只声明
 # mcp_servers；同名项目条目会完整替换用户条目。
 mcp_servers:

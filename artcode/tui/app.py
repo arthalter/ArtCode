@@ -140,3 +140,6 @@ class PromptToolkitTui:
 
     def show_agent_stopped(self, reason: str, message: str = "") -> None:
         self.renderer.show_agent_stopped(reason, message)
+
+    def show_context_status(self, payload: dict) -> None:
+        self.renderer.show_context_status(payload)

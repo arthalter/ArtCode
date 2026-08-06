@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from artcode.agent.modes import AgentMode
 from artcode.tools import ToolExecutionContext
+
+if TYPE_CHECKING:
+    from artcode.agent.modes import AgentMode
 
 from .reminder import SystemReminderBuilder, collect_runtime_reminder_context
 

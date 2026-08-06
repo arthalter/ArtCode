@@ -10,15 +10,31 @@ from .errors import ConfigError, mask_secret
 
 
 CONFIG_FILENAME = "config.yml"
-CHAPTER_NAME = "ch07：MCP协议"
+CHAPTER_NAME = "ch08：上下文管理"
 SUPPORTED_PROTOCOL = "openai"
 SUPPORTED_THINKING_EFFORTS = {"low", "medium", "high"}
+DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
+MIN_CONTEXT_WINDOW_TOKENS = 200_000
+MAX_CONTEXT_WINDOW_TOKENS = 1_000_000
 
 
 @dataclass(frozen=True)
 class ThinkingConfig:
     enabled: bool = False
     effort: str = "high"
+
+
+@dataclass(frozen=True)
+class ContextConfig:
+    window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
+
+    @property
+    def automatic_threshold(self) -> int:
+        return self.window_tokens * 167 // 200
+
+    @property
+    def forced_threshold(self) -> int:
+        return self.window_tokens * 177 // 200
 
 
 @dataclass(frozen=True)
@@ -35,6 +51,7 @@ class SafeConfigStatus:
     permission_mode: str = "default"
     shell_policy: str = "auto"
     seatbelt_status: str = "not initialized"
+    context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
 
 
 @dataclass(frozen=True)
@@ -46,6 +63,7 @@ class ArtCodeConfig:
     thinking: ThinkingConfig
     workspace: Path | None = None
     mcp_servers_raw: Mapping[str, Any] | None = None
+    context: ContextConfig = ContextConfig()
 
     def safe_status(self) -> SafeConfigStatus:
         return SafeConfigStatus(
@@ -57,6 +75,7 @@ class ArtCodeConfig:
             thinking_enabled=self.thinking.enabled,
             thinking_effort=self.thinking.effort,
             masked_api_key=mask_secret(self.api_key),
+            context_window_tokens=self.context.window_tokens,
         )
 
 
@@ -97,12 +116,14 @@ def parse_config(raw: Any) -> ArtCodeConfig:
     if "tools" in raw:
         raise ConfigError("ch06 已移除 tools.allowed_dirs；请使用 --workspace 指定项目目录。")
     thinking = _parse_thinking(raw.get("thinking"))
+    context = _parse_context(raw.get("context"))
     return ArtCodeConfig(
         protocol=protocol,
         model=model,
         base_url=base_url,
         api_key=api_key,
         thinking=thinking,
+        context=context,
         mcp_servers_raw=raw.get("mcp_servers") if isinstance(raw.get("mcp_servers"), dict) else None,
     )
 
@@ -137,3 +158,20 @@ def _parse_thinking(raw: Any) -> ThinkingConfig:
         raise ConfigError(f"配置字段 thinking.effort 只能是 {allowed} 之一。")
 
     return ThinkingConfig(enabled=enabled, effort=effort)
+
+
+def _parse_context(raw: Any) -> ContextConfig:
+    if raw is None:
+        return ContextConfig()
+    if not isinstance(raw, dict):
+        raise ConfigError("配置字段 context 必须是对象/map。")
+
+    value = raw.get("window_tokens", DEFAULT_CONTEXT_WINDOW_TOKENS)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError("配置字段 context.window_tokens 必须是整数。")
+    if not MIN_CONTEXT_WINDOW_TOKENS <= value <= MAX_CONTEXT_WINDOW_TOKENS:
+        raise ConfigError(
+            "配置字段 context.window_tokens 必须在 "
+            f"{MIN_CONTEXT_WINDOW_TOKENS} 到 {MAX_CONTEXT_WINDOW_TOKENS} 之间。"
+        )
+    return ContextConfig(window_tokens=value)

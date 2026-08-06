@@ -37,6 +37,27 @@ def test_export_messages_returns_copy() -> None:
     assert len(context.export_messages()) == 1
 
 
+def test_snapshot_has_stable_ids_and_is_isolated() -> None:
+    context = ConversationContext("system")
+    context.append_user("原文\n`code`")
+    snapshot = context.snapshot()
+    exported_id = snapshot.entries[-1].id
+    snapshot.entries[-1].payload["content"] = "changed"
+
+    assert context.snapshot().entries[-1].id == exported_id
+    assert context.export_messages()[-1]["content"] == "原文\n`code`"
+    assert context.user_records([exported_id])[0].content == "原文\n`code`"
+
+
+def test_replace_entries_is_transactional_by_version() -> None:
+    context = ConversationContext("system")
+    snapshot = context.snapshot()
+    context.append_user("new")
+
+    assert context.replace_entries_if_version(snapshot.version, snapshot.entries) is False
+    assert context.export_messages()[-1]["content"] == "new"
+
+
 def test_cancelled_reply_is_not_added_when_not_appended() -> None:
     context = ConversationContext()
     context.append_user("讲一段很长的话")

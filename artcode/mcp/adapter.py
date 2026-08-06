@@ -51,7 +51,7 @@ class McpToolAdapter:
     async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
         try:
             result = await self.manager.call_tool(self.server_name, self.remote_name, prepared.arguments)
-            return convert_call_result(self.name, result, context.max_result_bytes)
+            return convert_call_result(self.name, result)
         except Exception as exc:
             return error_result(self.name, "mcp_call_failed", sanitize_external_text(str(exc)))
 

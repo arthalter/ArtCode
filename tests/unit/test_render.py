@@ -38,6 +38,7 @@ def test_startup_status_contains_non_sensitive_fields() -> None:
     assert "streaming: on" in output
     assert "thinking: on (high)" in output
     assert "/tmp/artcode-sandbox" in output
+    assert "context: 200000 tokens" in output
     assert "sk-test-secret-value" not in output
 
 
@@ -108,3 +109,24 @@ def test_token_usage_rendering_includes_cache_fields() -> None:
     output = console.export_text()
     assert "cached=7" in output
     assert "miss=3" in output
+
+
+def test_context_status_is_compact_and_does_not_print_history() -> None:
+    renderer, console = capture_renderer()
+
+    renderer.show_context_status(
+        {
+            "trigger": "automatic",
+            "status": "success",
+            "before_tokens": 167_420,
+            "after_tokens": 18_430,
+            "persisted_count": 2,
+            "circuit_open": False,
+        }
+    )
+
+    output = console.export_text()
+    assert "automatic / success" in output
+    assert "167420 → 18430" in output
+    assert "存盘 2 个" in output
+    assert "熔断 closed" in output

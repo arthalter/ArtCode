@@ -6,12 +6,11 @@ from artcode.tools.policy import AllowedPathPolicy
 import asyncio
 
 
-def context_for(root, timeout: float = 10.0, max_result_bytes: int = 20_000) -> ToolExecutionContext:
+def context_for(root, timeout: float = 10.0) -> ToolExecutionContext:
     root.mkdir()
     return ToolExecutionContext(
         AllowedPathPolicy((root,)),
         command_timeout_seconds=timeout,
-        max_result_bytes=max_result_bytes,
         default_cwd=root,
     )
 
@@ -91,13 +90,12 @@ async def test_run_command_times_out(tmp_path) -> None:
     assert result.error_code == "command_timeout"
 
 
-async def test_run_command_truncates_large_output(tmp_path) -> None:
-    context = context_for(tmp_path / "sandbox", max_result_bytes=30)
+async def test_run_command_keeps_large_output_complete(tmp_path) -> None:
+    context = context_for(tmp_path / "sandbox")
 
     result = await run_prepared({"command": "printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'"}, context)
 
-    assert result.truncated is True
-    assert len(result.content.encode("utf-8")) <= 30
+    assert "a" * 40 in result.content
 
 
 async def test_shell_environment_does_not_inherit_secrets(tmp_path, monkeypatch) -> None:

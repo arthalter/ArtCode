@@ -38,6 +38,7 @@ class TuiRenderer:
                 f"permission: {status.permission_mode}",
                 f"sandbox: {status.shell_policy}",
                 f"seatbelt: {status.seatbelt_status}",
+                f"context: {status.context_window_tokens} tokens",
                 "input: Enter 发送，Ctrl+Enter 或 Esc Enter 换行",
             ]
         )
@@ -127,8 +128,7 @@ class TuiRenderer:
 
     def show_tool_result_summary(self, result: ToolResult) -> None:
         status = "成功" if result.ok else "失败"
-        truncated = "，已截断" if result.truncated else ""
-        detail = f"工具执行{status}：{result.message}（返回 {result.bytes_returned} bytes{truncated}）"
+        detail = f"工具执行{status}：{result.message}（返回 {result.bytes_returned} bytes）"
         style = "green" if result.ok else "red"
         self.console.print(detail, style=style)
 
@@ -160,3 +160,14 @@ class TuiRenderer:
     def show_agent_stopped(self, reason: str, message: str = "") -> None:
         suffix = f"：{message}" if message else ""
         self.console.print(f"Agent Loop 停止（{reason}）{suffix}", style="cyan")
+
+    def show_context_status(self, payload: dict) -> None:
+        circuit = "open" if payload.get("circuit_open") else "closed"
+        message = f"；{payload['message']}" if payload.get("message") else ""
+        detail = (
+            f"上下文：{payload.get('trigger')} / {payload.get('status')}，"
+            f"{payload.get('before_tokens')} → {payload.get('after_tokens')} Token，"
+            f"存盘 {payload.get('persisted_count')} 个，熔断 {circuit}{message}"
+        )
+        style = "red" if payload.get("status") in {"failed", "blocked"} else "cyan"
+        self.console.print(detail, style=style)
