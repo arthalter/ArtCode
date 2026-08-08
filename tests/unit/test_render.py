@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from io import StringIO
+
 from rich.console import Console
 
 from artcode.config import SafeConfigStatus
 from artcode.tools import ToolPreview
 from artcode.tools.results import success_result
 from artcode.tui.render import TuiRenderer
+from artcode.commands import DisplayMode, RuntimeStatusSnapshot
+from artcode.agent import TokenUsage
 
 
 def capture_renderer() -> tuple[TuiRenderer, Console]:
@@ -130,3 +134,65 @@ def test_context_status_is_compact_and_does_not_print_history() -> None:
     assert "167420 → 18430" in output
     assert "存盘 2 个" in output
     assert "熔断 closed" in output
+
+
+def test_prompt_and_labels_include_display_mode() -> None:
+    renderer, console = capture_renderer()
+
+    assert renderer.prompt_text("deepseek", DisplayMode.DEFAULT) == "[DEFAULT] deepseek > "
+    assert renderer.prompt_text("deepseek", DisplayMode.PLAN) == "[PLAN] deepseek > "
+    renderer.show_user_label(DisplayMode.DEFAULT)
+    renderer.show_assistant_label(DisplayMode.PLAN)
+
+    output = console.export_text()
+    assert "[DEFAULT] User" in output
+    assert "[PLAN] ArtCode" in output
+
+
+def test_clear_screen_emits_terminal_clear_and_home_controls() -> None:
+    stream = StringIO()
+    console = Console(
+        file=stream,
+        force_terminal=True,
+        _environ={"TERM": "xterm-256color"},
+    )
+
+    TuiRenderer(console).clear_screen()
+
+    assert stream.getvalue() == "\x1b[2J\x1b[H"
+
+
+def test_runtime_status_renders_whitelist_and_missing_values_without_secrets() -> None:
+    renderer, console = capture_renderer()
+    snapshot = RuntimeStatusSnapshot(
+        model="deepseek-v4-flash",
+        workspace="/tmp/workspace",
+        display_mode=DisplayMode.DEFAULT,
+        permission_mode="full",
+        shell_policy="auto",
+        seatbelt_status="self-test passed",
+        session_id=None,
+        session_state="不可用",
+        estimated_context_tokens=None,
+        context_window_tokens=200_000,
+        last_token_usage=TokenUsage(
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+            cached_tokens=None,
+            cache_miss_tokens=3,
+        ),
+    )
+
+    renderer.show_runtime_status(snapshot)
+
+    output = console.export_text()
+    assert "运行状态" in output
+    assert "deepseek-v4-flash" in output
+    assert "/tmp/workspace" in output
+    assert "显示模式：DEFAULT" in output
+    assert "当前上下文估算：不可用" in output
+    assert "total=15" in output
+    assert "cached=不可用" in output
+    assert "sk-test-secret" not in output
+    assert "MEMORY_SECRET_BODY" not in output

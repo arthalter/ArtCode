@@ -1,77 +1,216 @@
 from __future__ import annotations
 
-from .base import CommandRegistry, CommandResult
-
-
-HELP_TEXT = (
-    "/exit\n/quit\n/help\n/plan 任务描述\n/do [附加说明]\n/compact\n"
-    "/permission [default|edit|full]\n/sandbox [auto|ask|off]"
-    "\n/sessions\n/memory"
+from .base import (
+    CommandDefinition,
+    CommandExecutionContext,
+    CommandFlow,
+    CommandInvocation,
+    CommandType,
 )
+from .registry import CommandRegistry
 
 
 def create_default_registry() -> CommandRegistry:
     registry = CommandRegistry()
-    registry.register("/exit", _exit)
-    registry.register("/quit", _exit)
-    registry.register("/help", _help)
-    registry.register("/plan", _plan)
-    registry.register("/do", _do)
-    registry.register("/compact", _compact)
-    registry.register("/permission", _permission)
-    registry.register("/sandbox", _sandbox)
-    registry.register("/sessions", _sessions)
-    registry.register("/memory", _memory)
+    definitions = (
+        _definition("/exit", "退出 ArtCode。", ("/exit",), CommandType.LOCAL, _exit),
+        _definition("/quit", "退出 ArtCode。", ("/quit",), CommandType.LOCAL, _exit),
+        _definition(
+            "/help",
+            "显示命令总览或单个命令详情。",
+            ("/help", "/help /命令"),
+            CommandType.LOCAL,
+            _help,
+            "[/命令]",
+        ),
+        _definition(
+            "/plan",
+            "为单行或多行任务生成一次只读计划。",
+            ("/plan 任务描述", "/plan 第一行任务\n第二行约束"),
+            CommandType.AI,
+            _plan,
+            "任务描述",
+        ),
+        _definition(
+            "/do",
+            "执行最近计划，可附加补充说明。",
+            ("/do", "/do 附加说明"),
+            CommandType.AI,
+            _do,
+            "[附加说明]",
+        ),
+        _definition("/compact", "手动压缩当前上下文。", ("/compact",), CommandType.LOCAL, _compact),
+        _definition(
+            "/permission",
+            "查询或切换权限模式。",
+            ("/permission", "/permission default|edit|full"),
+            CommandType.UI_STATE,
+            _permission,
+            "[default|edit|full]",
+        ),
+        _definition(
+            "/sandbox",
+            "查询或切换 Shell 沙箱策略。",
+            ("/sandbox", "/sandbox auto|ask|off"),
+            CommandType.UI_STATE,
+            _sandbox,
+            "[auto|ask|off]",
+        ),
+        _definition("/sessions", "显示当前与最近会话。", ("/sessions",), CommandType.LOCAL, _sessions),
+        _definition("/memory", "显示长期记忆摘要。", ("/memory",), CommandType.LOCAL, _memory),
+        _definition("/clear", "清空当前终端的可见内容。", ("/clear",), CommandType.UI_STATE, _clear),
+        _definition("/status", "显示脱敏运行状态。", ("/status",), CommandType.LOCAL, _status),
+    )
+    for definition in definitions:
+        registry.register(definition)
     return registry
 
 
-def _exit(command: str) -> CommandResult:
-    return CommandResult(action="exit")
+def _definition(
+    name: str,
+    description: str,
+    usage: tuple[str, ...],
+    command_type: CommandType,
+    handler,
+    argument_hint: str | None = None,
+) -> CommandDefinition:
+    return CommandDefinition(
+        name=name,
+        aliases=(),
+        description=description,
+        usage=usage,
+        command_type=command_type,
+        handler=handler,
+        argument_hint=argument_hint,
+    )
 
 
-def _help(command: str) -> CommandResult:
-    return CommandResult(action="help", message=HELP_TEXT)
+async def _exit(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    if _reject_argument(invocation, context):
+        return CommandFlow.CONTINUE
+    return CommandFlow.EXIT
 
 
-def _plan(command: str) -> CommandResult:
-    _, _, argument = command.partition(" ")
-    argument = argument.strip()
-    if not argument:
-        return CommandResult(action="help", message="请使用 /plan 任务描述。")
-    return CommandResult(action="plan", argument=argument)
+async def _help(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    query = invocation.argument.strip()
+    if not query:
+        lines = ["可用命令："]
+        for definition in context.registry.definitions():
+            lines.append(
+                f"{definition.name} [{definition.command_type.value}] — "
+                f"{definition.description} 用法：{definition.usage[0]}"
+            )
+        context.controller.show_command_message("\n".join(lines))
+        return CommandFlow.CONTINUE
+
+    if any(character.isspace() for character in query):
+        context.controller.show_command_message("请使用 /help /命令 查看单个命令详情。")
+        return CommandFlow.CONTINUE
+    definition = context.registry.resolve(query)
+    if definition is None:
+        context.controller.show_command_message(
+            f"未知命令：{query}。请使用 /help 查看可用命令。"
+        )
+        return CommandFlow.CONTINUE
+
+    aliases = "、".join(definition.aliases) if definition.aliases else "无"
+    hint = definition.argument_hint or "无"
+    usages = "\n".join(f"  {usage}" for usage in definition.usage)
+    context.controller.show_command_message(
+        "\n".join(
+            (
+                f"命令：{definition.name}",
+                f"说明：{definition.description}",
+                f"类型：{definition.command_type.value}",
+                f"别名：{aliases}",
+                f"参数：{hint}",
+                f"隐藏：{'是' if definition.hidden else '否'}",
+                "用法：",
+                usages,
+            )
+        )
+    )
+    return CommandFlow.CONTINUE
 
 
-def _do(command: str) -> CommandResult:
-    _, _, argument = command.partition(" ")
-    return CommandResult(action="do", argument=argument.strip())
+async def _plan(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    from artcode.agent.modes import PLAN_MODE
+
+    if not invocation.argument:
+        context.controller.show_command_message("请使用 /plan 任务描述。")
+        return CommandFlow.CONTINUE
+    await context.controller.send_user_message(invocation.argument, PLAN_MODE)
+    return CommandFlow.CONTINUE
 
 
-def _compact(command: str) -> CommandResult:
-    _, _, argument = command.partition(" ")
-    if argument.strip():
-        return CommandResult(action="help", message="/compact 不接受参数。")
-    return CommandResult(action="compact")
+async def _do(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    from artcode.agent.modes import DO_MODE
+
+    plan = context.controller.get_recent_plan()
+    if not plan:
+        context.controller.show_command_message("没有最近计划。请先执行 /plan 任务描述。")
+        return CommandFlow.CONTINUE
+    parts = ["请执行最近计划：", plan]
+    if invocation.argument:
+        parts.extend(("附加说明：", invocation.argument))
+    await context.controller.send_user_message("\n\n".join(parts), DO_MODE)
+    return CommandFlow.CONTINUE
 
 
-def _permission(command: str) -> CommandResult:
-    _, _, argument = command.partition(" ")
-    return CommandResult(action="permission", argument=argument.strip())
+async def _compact(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    if _reject_argument(invocation, context):
+        return CommandFlow.CONTINUE
+    await context.controller.compact_context()
+    return CommandFlow.CONTINUE
 
 
-def _sandbox(command: str) -> CommandResult:
-    _, _, argument = command.partition(" ")
-    return CommandResult(action="sandbox", argument=argument.strip())
+async def _permission(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    context.controller.handle_permission(invocation.argument)
+    return CommandFlow.CONTINUE
 
 
-def _sessions(command: str) -> CommandResult:
-    _, _, argument = command.partition(" ")
-    if argument.strip():
-        return CommandResult(action="help", message="/sessions 不接受参数。")
-    return CommandResult(action="sessions")
+async def _sandbox(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    await context.controller.handle_sandbox(invocation.argument)
+    return CommandFlow.CONTINUE
 
 
-def _memory(command: str) -> CommandResult:
-    _, _, argument = command.partition(" ")
-    if argument.strip():
-        return CommandResult(action="help", message="/memory 不接受参数。")
-    return CommandResult(action="memory")
+async def _sessions(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    if _reject_argument(invocation, context):
+        return CommandFlow.CONTINUE
+    context.controller.show_sessions()
+    return CommandFlow.CONTINUE
+
+
+async def _memory(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    if _reject_argument(invocation, context):
+        return CommandFlow.CONTINUE
+    context.controller.show_memory()
+    return CommandFlow.CONTINUE
+
+
+async def _clear(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    if _reject_argument(invocation, context):
+        return CommandFlow.CONTINUE
+    context.controller.clear_screen()
+    return CommandFlow.CONTINUE
+
+
+async def _status(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    if _reject_argument(invocation, context):
+        return CommandFlow.CONTINUE
+    context.controller.refresh_status()
+    return CommandFlow.CONTINUE
+
+
+def _reject_argument(
+    invocation: CommandInvocation,
+    context: CommandExecutionContext,
+) -> bool:
+    if not invocation.argument:
+        return False
+    definition = context.registry.resolve(invocation.normalized_identifier)
+    usage = definition.usage[0] if definition is not None else invocation.identifier
+    context.controller.show_command_message(
+        f"{invocation.identifier} 不接受参数。用法：{usage}"
+    )
+    return True

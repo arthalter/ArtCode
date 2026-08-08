@@ -7,6 +7,7 @@ from prompt_toolkit import PromptSession
 from artcode.tools import ToolPreview, ToolResult
 from artcode.permissions import ApprovalChoice, ApprovalRequest
 from artcode.mcp.models import McpServerConfig, TransportKind
+from artcode.commands.base import DisplayMode, RuntimeStatusSnapshot
 
 from .keybindings import create_input_keybindings
 from .render import TuiRenderer
@@ -21,6 +22,7 @@ class PromptToolkitTui:
     renderer: TuiRenderer
 
     def __post_init__(self) -> None:
+        self._display_mode = DisplayMode.DEFAULT
         self._session: PromptSession[str] = PromptSession(
             multiline=True,
             key_bindings=create_input_keybindings(),
@@ -29,7 +31,9 @@ class PromptToolkitTui:
 
     async def read_input(self, model: str) -> str:
         try:
-            return await self._session.prompt_async(self.renderer.prompt_text(model))
+            return await self._session.prompt_async(
+                self.renderer.prompt_text(model, self._display_mode)
+            )
         except (KeyboardInterrupt, EOFError) as exc:
             raise UserRequestedExit from exc
 
@@ -49,10 +53,19 @@ class PromptToolkitTui:
         self.renderer.show_exit()
 
     def show_user_label(self) -> None:
-        self.renderer.show_user_label()
+        self.renderer.show_user_label(self._display_mode)
 
     def show_assistant_label(self) -> None:
-        self.renderer.show_assistant_label()
+        self.renderer.show_assistant_label(self._display_mode)
+
+    def set_display_mode(self, mode: DisplayMode) -> None:
+        self._display_mode = mode
+
+    def clear_screen(self) -> None:
+        self.renderer.clear_screen()
+
+    def show_runtime_status(self, snapshot: RuntimeStatusSnapshot) -> None:
+        self.renderer.show_runtime_status(snapshot)
 
     def stream_delta(self, text: str) -> None:
         self.renderer.stream_delta(text)

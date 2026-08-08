@@ -118,10 +118,10 @@ def test_safe_status_masks_api_key() -> None:
     assert config.api_key not in status.masked_api_key
 
 
-def test_chapter_name_is_ch09() -> None:
+def test_chapter_name_is_ch10() -> None:
     status = parse_config(valid_raw()).safe_status()
 
-    assert status.chapter == "ch09：会话恢复与长期记忆"
+    assert status.chapter == "ch10：斜杠命令系统"
 
 
 def test_context_defaults_and_thresholds() -> None:

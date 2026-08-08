@@ -72,8 +72,51 @@ def is_reminder_message(message: dict[str, Any]) -> bool:
     return message.get("role") == "user" and str(message.get("content", "")).startswith("<system-reminder>")
 
 
+class EstimateSpy:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def estimate_request(self, request) -> int:
+        self.requests.append(request)
+        return 4321
+
+
 async def collect(loop: AgentLoop, request: AgentRunRequest):
     return [event async for event in loop.run(request)]
+
+
+def test_estimate_next_request_is_read_only_and_uses_mode_tool_shape(tmp_path) -> None:
+    context = ConversationContext()
+    context.append_user("保留原消息")
+    read_tool = FakeTool("read_file")
+    write_tool = FakeTool("write_file")
+    provider = FakeProvider()
+    spy = EstimateSpy()
+    loop = AgentLoop(
+        provider,
+        context,
+        registry_with(read_tool, write_tool),
+        context_for(tmp_path),
+        context_manager=spy,
+    )
+    before = context.export_messages()
+
+    assert loop.estimate_next_request(NORMAL_AGENT_MODE) == 4321
+    assert loop.estimate_next_request(PLAN_MODE) == 4321
+
+    assert context.export_messages() == before
+    assert provider.messages_seen == []
+    assert read_tool.executions == 0
+    assert write_tool.executions == 0
+    normal_names = [tool["function"]["name"] for tool in spy.requests[0].tools]
+    plan_names = [tool["function"]["name"] for tool in spy.requests[1].tools]
+    assert normal_names == ["read_file", "write_file"]
+    assert plan_names == ["read_file"]
+
+
+def test_estimate_next_request_is_unavailable_without_context_manager(tmp_path) -> None:
+    loop = AgentLoop(FakeProvider(), ConversationContext(), registry_with(), context_for(tmp_path))
+    assert loop.estimate_next_request(NORMAL_AGENT_MODE) is None
 
 
 async def test_agent_loop_natural_completion_writes_assistant(tmp_path) -> None:

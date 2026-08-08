@@ -11,6 +11,7 @@ from artcode.errors import ArtCodeError
 from artcode.tools import ToolPreview, ToolResult
 from artcode.permissions import ApprovalRequest
 from artcode.mcp.models import McpServerConfig, McpStartupReport, TransportKind
+from artcode.commands.base import DisplayMode, RuntimeStatusSnapshot
 
 
 class _PrintableError(Protocol):
@@ -95,14 +96,49 @@ class TuiRenderer:
             lines.append(f"{item.name} [{item.source.value}] {item.state.value} 工具={item.tool_count}{suffix}")
         self.console.print(Panel("\n".join(lines), title="MCP", border_style="magenta"))
 
-    def prompt_text(self, model: str) -> str:
-        return f"{model}> "
+    def prompt_text(
+        self,
+        model: str,
+        mode: DisplayMode = DisplayMode.DEFAULT,
+    ) -> str:
+        return f"[{mode.value}] {model} > "
 
-    def show_user_label(self) -> None:
-        self.console.print(Text("User", style="bold green"))
+    def show_user_label(self, mode: DisplayMode = DisplayMode.DEFAULT) -> None:
+        self.console.print(Text(f"[{mode.value}] User", style="bold green"))
 
-    def show_assistant_label(self) -> None:
-        self.console.print(Text("ArtCode", style="bold cyan"))
+    def show_assistant_label(self, mode: DisplayMode = DisplayMode.DEFAULT) -> None:
+        self.console.print(Text(f"[{mode.value}] ArtCode", style="bold cyan"))
+
+    def clear_screen(self) -> None:
+        self.console.clear()
+
+    def show_runtime_status(self, snapshot: RuntimeStatusSnapshot) -> None:
+        usage = snapshot.last_token_usage
+        usage_text = "不可用"
+        if usage is not None:
+            usage_text = (
+                f"prompt={_available(usage.prompt_tokens)} "
+                f"completion={_available(usage.completion_tokens)} "
+                f"total={_available(usage.total_tokens)} "
+                f"cached={_available(usage.cached_tokens)} "
+                f"miss={_available(usage.cache_miss_tokens)}"
+            )
+        body = "\n".join(
+            (
+                f"模型：{snapshot.model}",
+                f"Workspace：{snapshot.workspace or '不可用'}",
+                f"显示模式：{snapshot.display_mode.value}",
+                f"权限模式：{snapshot.permission_mode}",
+                f"Shell 策略：{snapshot.shell_policy}",
+                f"Seatbelt：{snapshot.seatbelt_status}",
+                f"会话 ID：{snapshot.session_id or '不可用'}",
+                f"会话状态：{snapshot.session_state}",
+                f"当前上下文估算：{_available(snapshot.estimated_context_tokens)}",
+                f"上下文窗口上限：{snapshot.context_window_tokens}",
+                f"最近 Token 用量：{usage_text}",
+            )
+        )
+        self.console.print(Panel(body, title="运行状态", border_style="cyan"))
 
     def stream_delta(self, text: str) -> None:
         self.console.print(text, end="", markup=False, highlight=False, soft_wrap=True)
@@ -189,3 +225,7 @@ class TuiRenderer:
         suffix = f"：{message}" if message else ""
         style = "red" if status in {"failed", "rejected"} else "cyan"
         self.console.print(f"持久状态 [{kind}/{status}]{counts}{suffix}", style=style)
+
+
+def _available(value: int | None) -> str:
+    return str(value) if value is not None else "不可用"

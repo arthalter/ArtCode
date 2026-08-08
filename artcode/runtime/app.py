@@ -7,7 +7,6 @@ from dataclasses import replace
 from typing import Protocol
 
 from artcode.agent import (
-    DO_MODE,
     NORMAL_AGENT_MODE,
     PLAN_MODE,
     AgentEvent,
@@ -15,8 +14,18 @@ from artcode.agent import (
     AgentLoop,
     AgentRunRequest,
     PlanMemory,
+    TokenUsage,
 )
-from artcode.commands import CommandRegistry, create_default_registry
+from artcode.commands import (
+    CommandDispatcher,
+    CommandFlow,
+    CommandRegistry,
+    DisplayMode,
+    InputRoute,
+    RuntimeStatusSnapshot,
+    create_default_registry,
+    parse_input,
+)
 from artcode.config import ArtCodeConfig
 from artcode.conversation import ConversationContext
 from artcode.providers.base import StreamingProvider
@@ -113,6 +122,15 @@ class TuiApp(Protocol):
     def show_persistence_status(self, payload: dict) -> None:
         ...
 
+    def set_display_mode(self, mode: DisplayMode) -> None:
+        ...
+
+    def clear_screen(self) -> None:
+        ...
+
+    def show_runtime_status(self, snapshot: RuntimeStatusSnapshot) -> None:
+        ...
+
 
 @dataclass
 class ArtCodeRuntime:
@@ -132,8 +150,12 @@ class ArtCodeRuntime:
     context_manager: ContextManager | None = None
     request_assembler: PromptRequestAssembler | None = None
     persistence: PersistenceCoordinator | None = None
+    command_dispatcher: CommandDispatcher = field(init=False)
+    _display_mode: DisplayMode = field(init=False, default=DisplayMode.DEFAULT)
+    _last_token_usage: TokenUsage | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
+        self.command_dispatcher = CommandDispatcher(self.commands)
         if self.tool_registry is None:
             self.tool_registry = create_default_tool_registry()
         if self.tool_context is None:
@@ -212,40 +234,87 @@ class ArtCodeRuntime:
                 self.tui.show_exit()
                 return 0
 
-            if not user_input.strip():
+            parsed = parse_input(user_input)
+            if parsed.route is InputRoute.EMPTY:
                 continue
 
-            command_result = self.commands.handle(user_input)
-            if command_result is not None:
-                if command_result.should_exit:
+            if parsed.route is InputRoute.COMMAND:
+                assert parsed.invocation is not None
+                flow = await self.command_dispatcher.dispatch(parsed.invocation, self)
+                if flow is CommandFlow.EXIT:
                     self.tui.show_exit()
                     return 0
-                if command_result.action == "plan":
-                    await self._run_agent(command_result.argument, PLAN_MODE)
-                    continue
-                if command_result.action == "do":
-                    await self._run_do(command_result.argument)
-                    continue
-                if command_result.action == "compact":
-                    await self._run_compact()
-                    continue
-                if command_result.action == "permission":
-                    self._handle_permission_command(command_result.argument)
-                    continue
-                if command_result.action == "sandbox":
-                    await self._handle_sandbox_command(command_result.argument)
-                    continue
-                if command_result.action == "sessions":
-                    self._show_sessions()
-                    continue
-                if command_result.action == "memory":
-                    self._show_memory()
-                    continue
-                if command_result.message:
-                    self.tui.show_help(command_result.message)
                 continue
 
-            await self._run_agent(user_input, NORMAL_AGENT_MODE)
+            await self._run_agent(parsed.message, NORMAL_AGENT_MODE)
+
+    def show_command_message(self, message: str) -> None:
+        self.tui.show_help(message)
+
+    def clear_screen(self) -> None:
+        handler = getattr(self.tui, "clear_screen", None)
+        if callable(handler):
+            handler()
+
+    def set_display_mode(self, mode: DisplayMode) -> None:
+        self._display_mode = mode
+        handler = getattr(self.tui, "set_display_mode", None)
+        if callable(handler):
+            handler(mode)
+
+    def get_token_usage(self) -> TokenUsage | None:
+        return self._last_token_usage
+
+    def refresh_status(self) -> None:
+        persistence_status = self.persistence.status if self.persistence is not None else None
+        session_state = "不可用"
+        if persistence_status is not None:
+            session_state = (
+                "restored"
+                if persistence_status.restored
+                else (
+                    "new (latest locked)"
+                    if persistence_status.default_locked_new_session
+                    else "new"
+                )
+            )
+        seatbelt = self.tool_context.seatbelt if self.tool_context is not None else None
+        if seatbelt is None:
+            seatbelt_status = "not initialized"
+        elif seatbelt.self_tested:
+            seatbelt_status = "self-test passed"
+        else:
+            seatbelt_status = "initialized"
+        estimated = self.agent_loop.estimate_next_request(NORMAL_AGENT_MODE)
+        workspace = self.workspace.root if self.workspace is not None else self.config.workspace
+        snapshot = RuntimeStatusSnapshot(
+            model=self.config.model,
+            workspace=str(workspace) if workspace is not None else "",
+            display_mode=self._display_mode,
+            permission_mode=self.permission_state.mode.value,
+            shell_policy=self.permission_state.shell_policy.value,
+            seatbelt_status=seatbelt_status,
+            session_id=persistence_status.session_id if persistence_status is not None else None,
+            session_state=session_state,
+            estimated_context_tokens=estimated,
+            context_window_tokens=self.config.context.window_tokens,
+            last_token_usage=self._last_token_usage,
+        )
+        handler = getattr(self.tui, "show_runtime_status", None)
+        if callable(handler):
+            handler(snapshot)
+        else:
+            self.tui.show_help(str(snapshot))
+
+    async def send_user_message(self, content: str, mode) -> None:
+        await self._run_agent(content, mode)
+
+    async def compact_context(self) -> None:
+        async for event in self.agent_loop.compact_context():
+            self._handle_agent_event(event)
+
+    def get_recent_plan(self) -> str | None:
+        return self.plan_memory.get() if self.plan_memory is not None else None
 
     async def request_approval(self, request: ApprovalRequest) -> ApprovalChoice:
         handler = getattr(self.tui, "request_approval", None)
@@ -262,7 +331,7 @@ class ArtCodeRuntime:
             return await handler(preview, bool(getattr(executor, "plan_mode", False)))
         return await self.tui.confirm_tool_execution(preview)
 
-    def _handle_permission_command(self, argument: str) -> None:
+    def handle_permission(self, argument: str) -> None:
         if not argument:
             self.tui.show_help(
                 f"当前权限模式：{self.permission_state.mode.value}；可选：default、edit、full"
@@ -275,7 +344,7 @@ class ArtCodeRuntime:
             return
         self.tui.show_help(f"权限模式已切换为：{self.permission_state.mode.value}")
 
-    async def _handle_sandbox_command(self, argument: str) -> None:
+    async def handle_sandbox(self, argument: str) -> None:
         if not argument:
             self.tui.show_help(
                 f"当前 Shell 策略：{self.permission_state.shell_policy.value}；可选：auto、ask、off"
@@ -307,30 +376,9 @@ class ArtCodeRuntime:
             object.__setattr__(self.tool_context, "shell_policy", selected)
         self.tui.show_help(f"Shell 策略已切换为：{selected.value}")
 
-    async def _run_do(self, extra_instruction: str) -> None:
-        plan = self.plan_memory.get() if self.plan_memory is not None else None
-        if not plan:
-            self.tui.show_help("没有最近计划。请先执行 /plan 任务描述。")
-            return
-
-        if extra_instruction.strip():
-            content = "\n\n".join(
-                [
-                    "请执行最近计划：",
-                    plan,
-                    "附加说明：",
-                    extra_instruction.strip(),
-                ]
-            )
-        else:
-            content = "\n\n".join(["请执行最近计划：", plan])
-        await self._run_agent(content, DO_MODE)
-
-    async def _run_compact(self) -> None:
-        async for event in self.agent_loop.compact_context():
-            self._handle_agent_event(event)
-
     async def _run_agent(self, user_content, mode) -> None:
+        display_mode = DisplayMode.PLAN if mode == PLAN_MODE else DisplayMode.DEFAULT
+        self.set_display_mode(display_mode)
         self.tui.show_user_label()
         self.tui.show_assistant_label()
         request = AgentRunRequest(user_content=user_content, mode=mode)
@@ -342,6 +390,7 @@ class ArtCodeRuntime:
             self.tui.show_cancelled()
         finally:
             self._remove_generation_cancel_handler()
+            self.set_display_mode(DisplayMode.DEFAULT)
 
     async def _consume_agent_events(self, request: AgentRunRequest) -> None:
         previous_error = self.conversation.last_observer_error
@@ -372,6 +421,7 @@ class ArtCodeRuntime:
         elif event.type == AgentEventType.TOOL_RESULT:
             self.tui.show_tool_result_summary(event.payload["result"])
         elif event.type == AgentEventType.TOKEN_USAGE:
+            self._last_token_usage = TokenUsage.from_event_payload(event.payload)
             self.tui.show_token_usage(
                 event.payload.get("prompt_tokens"),
                 event.payload.get("completion_tokens"),
@@ -388,7 +438,7 @@ class ArtCodeRuntime:
             if callable(handler):
                 handler(event.payload)
 
-    def _show_sessions(self) -> None:
+    def show_sessions(self) -> None:
         if self.persistence is None:
             self.tui.show_help("会话持久化尚未启用。")
             return
@@ -405,7 +455,7 @@ class ArtCodeRuntime:
             lines.append("（无）")
         self.tui.show_help("\n".join(lines))
 
-    def _show_memory(self) -> None:
+    def show_memory(self) -> None:
         if self.persistence is None:
             self.tui.show_help("长期记忆尚未启用。")
             return

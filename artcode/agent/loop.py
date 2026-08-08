@@ -244,6 +244,13 @@ class AgentLoop:
         )
         yield self._compression_event(report)
 
+    def estimate_next_request(self, mode: AgentMode) -> int | None:
+        """Estimate the next request without mutating conversation or context state."""
+        if self.context_manager is None:
+            return None
+        request = self._assemble_request(mode, include_tools=True)
+        return self.context_manager.estimate_request(request)
+
     async def _collect_contextual_turn(
         self,
         mode: AgentMode | None,

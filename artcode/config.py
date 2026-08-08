@@ -10,7 +10,7 @@ from .errors import ConfigError, mask_secret
 
 
 CONFIG_FILENAME = "config.yml"
-CHAPTER_NAME = "ch09：会话恢复与长期记忆"
+CHAPTER_NAME = "ch10：斜杠命令系统"
 SUPPORTED_PROTOCOL = "openai"
 SUPPORTED_THINKING_EFFORTS = {"low", "medium", "high"}
 DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
