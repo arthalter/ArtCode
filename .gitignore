@@ -10,3 +10,7 @@ venv/
 dist/
 build/
 .DS_Store
+.artcode/context/
+.artcode/sessions/
+.artcode/memory/
+.artcode/instructions.md

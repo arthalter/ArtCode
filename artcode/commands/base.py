@@ -1,44 +1,112 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from enum import StrEnum
+from typing import TYPE_CHECKING, Awaitable, Callable, Protocol
+
+if TYPE_CHECKING:
+    from artcode.agent import AgentMode, TokenUsage
+
+    from .registry import CommandRegistry
 
 
-CommandHandler = Callable[[str], "CommandResult"]
+class CommandType(StrEnum):
+    LOCAL = "local"
+    UI_STATE = "ui_state"
+    AI = "ai"
+
+
+class CommandFlow(StrEnum):
+    CONTINUE = "continue"
+    EXIT = "exit"
+
+
+class DisplayMode(StrEnum):
+    DEFAULT = "DEFAULT"
+    PLAN = "PLAN"
+
+
+class InputRoute(StrEnum):
+    EMPTY = "empty"
+    MESSAGE = "message"
+    COMMAND = "command"
 
 
 @dataclass(frozen=True)
-class CommandResult:
-    action: str
+class CommandInvocation:
+    identifier: str
+    normalized_identifier: str
+    argument: str
+    raw_input: str
+
+
+@dataclass(frozen=True)
+class ParsedInput:
+    route: InputRoute
     message: str = ""
-    argument: str = ""
-
-    @property
-    def should_exit(self) -> bool:
-        return self.action == "exit"
+    invocation: CommandInvocation | None = None
 
 
-class CommandRegistry:
-    def __init__(self) -> None:
-        self._handlers: dict[str, CommandHandler] = {}
+@dataclass(frozen=True)
+class RuntimeStatusSnapshot:
+    model: str
+    workspace: str
+    display_mode: DisplayMode
+    permission_mode: str
+    shell_policy: str
+    seatbelt_status: str
+    session_id: str | None
+    session_state: str
+    estimated_context_tokens: int | None
+    context_window_tokens: int
+    last_token_usage: TokenUsage | None = None
 
-    def register(self, name: str, handler: CommandHandler) -> None:
-        normalized = name.strip()
-        if not normalized.startswith("/"):
-            raise ValueError("Slash command names must start with '/'.")
-        self._handlers[normalized] = handler
 
-    def handle(self, user_input: str) -> CommandResult | None:
-        command = user_input.strip()
-        if "\n" in command:
-            return None
-        if not command.startswith("/"):
-            return None
-        name, _, argument = command.partition(" ")
-        handler = self._handlers.get(name)
-        if handler is None:
-            return None
-        result = handler(command)
-        if result.argument:
-            return result
-        return CommandResult(result.action, result.message, argument.strip())
+class CommandController(Protocol):
+    def show_command_message(self, message: str) -> None: ...
+
+    def clear_screen(self) -> None: ...
+
+    def set_display_mode(self, mode: DisplayMode) -> None: ...
+
+    def get_token_usage(self) -> TokenUsage | None: ...
+
+    def refresh_status(self) -> None: ...
+
+    async def send_user_message(self, content: str, mode: AgentMode) -> None: ...
+
+    async def compact_context(self) -> None: ...
+
+    def get_recent_plan(self) -> str | None: ...
+
+    def handle_permission(self, argument: str) -> None: ...
+
+    async def handle_sandbox(self, argument: str) -> None: ...
+
+    def show_sessions(self) -> None: ...
+
+    def show_memory(self) -> None: ...
+
+
+@dataclass(frozen=True)
+class CommandExecutionContext:
+    registry: CommandRegistry
+    controller: CommandController
+
+
+CommandHandler = Callable[
+    [CommandInvocation, CommandExecutionContext],
+    Awaitable[CommandFlow],
+]
+
+
+@dataclass(frozen=True)
+class CommandDefinition:
+    name: str
+    aliases: tuple[str, ...]
+    description: str
+    usage: tuple[str, ...]
+    command_type: CommandType
+    handler: CommandHandler
+    argument_hint: str | None = None
+    hidden: bool = False

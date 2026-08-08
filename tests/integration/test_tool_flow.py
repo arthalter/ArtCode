@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from artcode.config import ArtCodeConfig, ThinkingConfig, ToolConfig
+from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.conversation import ConversationContext
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
@@ -66,7 +66,14 @@ class FakeTui:
     def show_tool_batch_started(self, batch_index: int, safety: str, count: int) -> None:
         self.output.append(f"batch:{batch_index}:{safety}:{count}")
 
-    def show_token_usage(self, prompt_tokens=None, completion_tokens=None, total_tokens=None) -> None:
+    def show_token_usage(
+        self,
+        prompt_tokens=None,
+        completion_tokens=None,
+        total_tokens=None,
+        cached_tokens=None,
+        cache_miss_tokens=None,
+    ) -> None:
         self.output.append(f"usage:{total_tokens}")
 
     def show_agent_stopped(self, reason: str, message: str = "") -> None:
@@ -99,7 +106,7 @@ def config_for(allowed_dir) -> ArtCodeConfig:
         base_url="https://example.invalid",
         api_key="sk-test",
         thinking=ThinkingConfig(),
-        tools=ToolConfig((allowed_dir,)),
+        workspace=allowed_dir,
     )
 
 

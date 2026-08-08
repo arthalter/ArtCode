@@ -3,6 +3,8 @@ from __future__ import annotations
 from rich.console import Console
 
 from artcode.tools import ToolPreview
+from artcode.commands import DisplayMode, RuntimeStatusSnapshot
+from artcode.agent import TokenUsage
 from artcode.tui.app import PromptToolkitTui
 from artcode.tui.render import TuiRenderer
 
@@ -10,8 +12,10 @@ from artcode.tui.render import TuiRenderer
 class FakeSession:
     def __init__(self, answers: list[str]) -> None:
         self.answers = answers
+        self.prompts: list[str] = []
 
     async def prompt_async(self, prompt: str) -> str:
+        self.prompts.append(prompt)
         return self.answers.pop(0)
 
 
@@ -56,3 +60,45 @@ def test_agent_progress_methods_forward_to_renderer() -> None:
     assert "side_effect" in output
     assert "total=3" in output
     assert "natural" in output
+
+
+async def test_display_mode_controls_prompt_and_labels() -> None:
+    tui = tui_with_answers(["任务"])
+    tui.set_display_mode(DisplayMode.PLAN)
+
+    assert await tui.read_input("deepseek") == "任务"
+    tui.show_user_label()
+    tui.show_assistant_label()
+
+    assert tui._session.prompts == ["[PLAN] deepseek > "]
+    output = tui.renderer.console.export_text()
+    assert "[PLAN] User" in output
+    assert "[PLAN] ArtCode" in output
+
+
+def test_clear_and_status_forward_to_renderer() -> None:
+    tui = PromptToolkitTui(TuiRenderer(Console(record=True)))
+    session_before = tui._session
+    snapshot = RuntimeStatusSnapshot(
+        model="deepseek",
+        workspace="/tmp/workspace",
+        display_mode=DisplayMode.DEFAULT,
+        permission_mode="default",
+        shell_policy="auto",
+        seatbelt_status="self-test passed",
+        session_id="session-1",
+        session_state="new",
+        estimated_context_tokens=123,
+        context_window_tokens=200_000,
+        last_token_usage=TokenUsage(total_tokens=12),
+    )
+
+    tui.clear_screen()
+    tui.show_runtime_status(snapshot)
+
+    assert tui._session is session_before
+    assert tui._session.completer is None
+    output = tui.renderer.console.export_text()
+    assert "运行状态" in output
+    assert "session-1" in output
+    assert "total=12" in output

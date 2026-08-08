@@ -24,7 +24,7 @@ def live_config() -> ArtCodeConfig:
         pytest.skip(f"live DeepSeek config unavailable: {exc.message}")
     if "your-deepseek-api-key" in config.api_key or config.api_key.startswith("<"):
         pytest.skip("artcode.yaml still contains a placeholder API key")
-    return config
+    return replace(config, model="deepseek-v4-flash")
 
 
 async def collect_reply(provider: OpenAICompatibleProvider, messages: list[dict[str, str]]) -> str:
@@ -74,12 +74,12 @@ async def test_live_deepseek_agent_loop_reads_file(tmp_path) -> None:
     allowed_dir.mkdir()
     (allowed_dir / "note.txt").write_text(marker, encoding="utf-8")
     config = live_config()
-    config = replace(config, tools=replace(config.tools, allowed_dirs=(allowed_dir.resolve(),)))
+    config = replace(config, workspace=allowed_dir.resolve())
     provider = OpenAICompatibleProvider(config)
     context = ConversationContext()
     tool_context = ToolExecutionContext(
-        AllowedPathPolicy(config.tools.allowed_dirs),
-        default_cwd=config.tools.allowed_dirs[0],
+        AllowedPathPolicy((allowed_dir.resolve(),)),
+        default_cwd=allowed_dir.resolve(),
     )
     loop = AgentLoop(
         provider=provider,

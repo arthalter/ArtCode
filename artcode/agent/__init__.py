@@ -2,8 +2,11 @@ from .events import (
     AgentEvent,
     AgentEventType,
     ModelTurn,
+    NaturalTurn,
+    NaturalTurnObserver,
     StopReason,
     TokenUsage,
+    context_status_event,
 )
 from .loop import AgentLoop, AgentRunRequest, AgentRunResult
 from .memory import PlanMemory
@@ -21,12 +24,15 @@ __all__ = [
     "DO_MODE",
     "ModelTurn",
     "NORMAL_AGENT_MODE",
+    "NaturalTurn",
+    "NaturalTurnObserver",
     "PLAN_MODE",
     "PlanMemory",
     "READ_ONLY_TOOL_NAMES",
     "StopReason",
     "StreamCollector",
     "TokenUsage",
+    "context_status_event",
     "ToolAccessPolicy",
     "ToolBatchExecutor",
     "ToolExecutionBatch",

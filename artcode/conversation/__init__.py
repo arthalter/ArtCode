@@ -1,3 +1,17 @@
-from .context import ConversationContext
+from .context import (
+    ConversationContext,
+    ConversationEntry,
+    ConversationEntryObserver,
+    ConversationPersistenceRejected,
+    ConversationSnapshot,
+    UserMessageRecord,
+)
 
-__all__ = ["ConversationContext"]
+__all__ = [
+    "ConversationContext",
+    "ConversationEntry",
+    "ConversationEntryObserver",
+    "ConversationPersistenceRejected",
+    "ConversationSnapshot",
+    "UserMessageRecord",
+]

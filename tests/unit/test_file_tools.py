@@ -3,11 +3,15 @@ from __future__ import annotations
 from artcode.tools.base import PreparedToolCall, ToolExecutionContext
 from artcode.tools.file_tools import EditFileTool, FindFilesTool, ReadFileTool, SearchTextTool, WriteFileTool
 from artcode.tools.policy import AllowedPathPolicy
+from artcode.context_management import ContextArtifactStore
+from artcode.conversation import ConversationContext
+from artcode.providers.tool_calls import ToolCall
+from artcode.tools import success_result
 
 
-def context_for(root, max_result_bytes: int = 20_000) -> ToolExecutionContext:
+def context_for(root) -> ToolExecutionContext:
     root.mkdir()
-    return ToolExecutionContext(AllowedPathPolicy((root,)), max_result_bytes=max_result_bytes, default_cwd=root)
+    return ToolExecutionContext(AllowedPathPolicy((root,)), default_cwd=root)
 
 
 async def run_prepared(tool, arguments, context: ToolExecutionContext):
@@ -56,14 +60,69 @@ async def test_read_file_outside_allowed_dir_is_rejected(tmp_path) -> None:
     assert result.error_code == "path_outside_allowed_dirs"
 
 
-async def test_read_file_truncates_large_result(tmp_path) -> None:
-    context = context_for(tmp_path / "sandbox", max_result_bytes=40)
-    (context.default_cwd / "note.txt").write_text("a" * 100, encoding="utf-8")
+async def test_read_file_keeps_large_result_complete(tmp_path) -> None:
+    context = context_for(tmp_path / "sandbox")
+    content = "a" * 25_000 + "UNIQUE_TAIL"
+    (context.default_cwd / "note.txt").write_text(content, encoding="utf-8")
 
     result = await run_prepared(ReadFileTool(), {"path": "note.txt"}, context)
 
-    assert result.truncated is True
-    assert len(result.content.encode("utf-8")) <= 40
+    assert result.content == content
+    assert result.content.endswith("UNIQUE_TAIL")
+
+
+async def test_current_artifact_requires_two_sided_line_range(tmp_path) -> None:
+    context = context_for(tmp_path / "sandbox")
+    store = ContextArtifactStore(context.default_cwd, "session")
+    store.start()
+    conversation = ConversationContext("system")
+    call = ToolCall("call-1", "read_file", "{}")
+    conversation.append_tool_result(call, success_result("read_file", "ok", "one\ntwo\nthree\n"))
+    persisted = store.persist(conversation.snapshot().entries[-1])
+    object.__setattr__(context, "artifact_store", store)
+
+    missing_end = ReadFileTool().prepare(
+        {"path": persisted.relative_path, "start_line": 1},
+        context,
+    )
+    result = await run_prepared(
+        ReadFileTool(),
+        {"path": persisted.relative_path, "start_line": 2, "end_line": 2},
+        context,
+    )
+
+    assert missing_end.error_code == "artifact_range_required"
+    assert result.content == "two\n"
+    store.close()
+
+
+async def test_current_artifact_rejects_oversized_range(tmp_path) -> None:
+    context = context_for(tmp_path / "sandbox")
+    store = ContextArtifactStore(context.default_cwd, "session")
+    store.start()
+    conversation = ConversationContext("system")
+    call = ToolCall("call-1", "read_file", "{}")
+    conversation.append_tool_result(call, success_result("read_file", "ok", "a" * 24_003 + "\n"))
+    persisted = store.persist(conversation.snapshot().entries[-1])
+    object.__setattr__(context, "artifact_store", store)
+
+    result = await run_prepared(
+        ReadFileTool(),
+        {"path": persisted.relative_path, "start_line": 1, "end_line": 1},
+        context,
+    )
+
+    assert result.error_code == "artifact_range_too_large"
+    store.close()
+
+
+async def test_normal_file_still_accepts_one_sided_range(tmp_path) -> None:
+    context = context_for(tmp_path / "sandbox")
+    (context.default_cwd / "note.txt").write_text("one\ntwo\n", encoding="utf-8")
+
+    result = await run_prepared(ReadFileTool(), {"path": "note.txt", "start_line": 2}, context)
+
+    assert result.content == "two\n"
 
 
 async def test_write_file_writes_new_file(tmp_path) -> None:
