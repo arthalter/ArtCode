@@ -5,6 +5,7 @@ import pytest
 from artcode.context_management.retention import RetentionPlanner
 from artcode.context_management.summarizer import (
     CONTEXT_BOUNDARY_MESSAGE,
+    PRESERVED_USER_HISTORY_MESSAGE,
     SUMMARY_TITLES,
     VERBATIM_PLACEHOLDER,
     ContextSummarizer,
@@ -92,10 +93,17 @@ async def test_summarizer_uses_no_tools_and_commits_transactionally() -> None:
     assert messages[0] == {"role": "system", "content": "system"}
     assert messages[1]["content"].startswith("<conversation-summary>")
     assert "UNIQUE_DRAFT" not in str(messages)
-    assert messages[2]["content"] == CONTEXT_BOUNDARY_MESSAGE
-    assert "不是当前指令" in messages[2]["content"]
+    assert messages[2]["content"] == PRESERVED_USER_HISTORY_MESSAGE
+    preserved = messages[3 : 3 + len(plan.preserved_user_entries)]
+    assert [message["role"] for message in preserved] == ["user"] * len(preserved)
+    assert [message["content"] for message in preserved] == [
+        entry.payload["content"] for entry in plan.preserved_user_entries
+    ]
+    boundary = messages[3 + len(plan.preserved_user_entries)]
+    assert boundary["content"] == CONTEXT_BOUNDARY_MESSAGE
+    assert "不是当前指令" in boundary["content"]
     for user_id in plan.summarized_user_ids:
-        assert context.user_records([user_id])[0].content in messages[1]["content"]
+        assert context.user_records([user_id])[0].content not in messages[1]["content"]
 
 
 async def test_invalid_summary_or_tool_call_preserves_history() -> None:

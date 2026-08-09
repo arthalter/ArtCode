@@ -12,6 +12,7 @@ from .models import RECENT_HISTORY_TOKENS, RECENT_MINIMUM_MESSAGES
 @dataclass(frozen=True)
 class RetentionPlan:
     compactable_entries: tuple[ConversationEntry, ...]
+    preserved_user_entries: tuple[ConversationEntry, ...]
     recent_entries: tuple[ConversationEntry, ...]
     summarized_user_ids: tuple[str, ...]
 
@@ -32,7 +33,7 @@ class RetentionPlanner:
     def plan(self, snapshot: ConversationSnapshot) -> RetentionPlan:
         entries = snapshot.entries
         if len(entries) <= 1:
-            return RetentionPlan((), entries[1:], ())
+            return RetentionPlan((), (), entries[1:], ())
 
         units = _history_units(entries)
         tokens = 0
@@ -56,22 +57,38 @@ class RetentionPlanner:
             recent_start = min(recent_start, protected_start)
 
         if recent_start <= 1:
-            return RetentionPlan((), entries[1:], ())
+            return RetentionPlan((), (), entries[1:], ())
 
-        compactable = entries[1:recent_start]
+        historical = entries[1:recent_start]
+        preserved_users = tuple(
+            entry for entry in historical if entry.payload.get("role") == "user"
+        )
+        compactable = tuple(
+            entry for entry in historical if entry.payload.get("role") != "user"
+        )
         recent = entries[recent_start:]
         summarized_ids: list[str] = []
         seen: set[str] = set()
-        for entry in compactable:
+        actual_user_ids = {
+            entry.id for entry in entries if entry.payload.get("role") == "user"
+        }
+        for entry in historical:
             for user_id in entry.summarized_user_ids:
-                if user_id not in seen:
+                if user_id not in actual_user_ids and user_id not in seen:
                     summarized_ids.append(user_id)
                     seen.add(user_id)
             if entry.payload.get("role") == "user" and entry.id not in seen:
                 summarized_ids.append(entry.id)
                 seen.add(entry.id)
 
-        return RetentionPlan(compactable, recent, tuple(summarized_ids))
+        if not compactable:
+            return RetentionPlan((), (), entries[1:], ())
+        return RetentionPlan(
+            compactable,
+            preserved_users,
+            recent,
+            tuple(summarized_ids),
+        )
 
 
 def is_conversation_summary(entry: ConversationEntry) -> bool:

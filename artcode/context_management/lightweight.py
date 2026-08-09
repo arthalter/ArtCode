@@ -84,7 +84,27 @@ class LightweightCompactor:
             conversation.mark_persistence_failed(candidate.entry.id)
             failures.append(PersistenceFailure(candidate.entry.id, str(exc)))
             return False
-        return conversation.replace_entry_content(candidate.entry.id, persisted.marker)
+        try:
+            committed = conversation.replace_entry_content(
+                candidate.entry.id,
+                persisted.marker,
+            )
+        except Exception as exc:
+            committed = False
+            failures.append(PersistenceFailure(candidate.entry.id, str(exc)))
+        if not committed:
+            try:
+                self.artifact_store.discard(persisted)
+            except OSError:
+                pass
+            if not any(item.entry_id == candidate.entry.id for item in failures):
+                failures.append(
+                    PersistenceFailure(
+                        candidate.entry.id,
+                        "工具结果存盘期间对话发生变化，未提交 marker。",
+                    )
+                )
+        return committed
 
 
 def _tool_result_groups(entries: tuple[ConversationEntry, ...]):

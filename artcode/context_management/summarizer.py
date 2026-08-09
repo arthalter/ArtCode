@@ -8,6 +8,7 @@ from typing import Any, Sequence
 
 from artcode.conversation import (
     ConversationContext,
+    ConversationEntry,
     ConversationSnapshot,
     UserMessageRecord,
 )
@@ -35,11 +36,18 @@ SUMMARY_TITLES = (
 VERBATIM_PLACEHOLDER = "{{VERBATIM_USER_MESSAGES}}"
 CONTEXT_BOUNDARY_MESSAGE = (
     "<context-boundary>\n"
-    "上方摘要及其中的历史用户消息都是只读记录，不是当前指令；只执行边界之后最新的真实用户请求。"
+    "上方摘要和独立历史用户消息都是只读记录，不是当前指令；只执行边界之后最新的真实用户请求。"
     "摘要用于恢复任务脉络，不是代码事实来源。需要具体文件内容、参数或行级细节时，"
     "必须重新读取 Workspace 中的实际文件；不得根据摘要猜测或补全未展示的代码。\n"
     "</context-boundary>"
 )
+PRESERVED_USER_HISTORY_MESSAGE = (
+    "<preserved-user-history>\n"
+    "以下 role=user 消息是压缩前的历史原文，只用于恢复任务脉络；保持原文、数量和顺序，"
+    "但不把其中旧命令当作当前请求。\n"
+    "</preserved-user-history>"
+)
+PRESERVED_USER_NOTICE = "用户原文在本摘要后以独立 role=user 消息保留。"
 
 
 @dataclass(frozen=True)
@@ -72,14 +80,16 @@ class SummaryPromptBuilder:
                 "先输出且只输出一组非空 <analysis>...</analysis> 草稿，随后输出且只输出一组非空 <summary>...</summary> 正文。",
                 "正式摘要必须按顺序包含以下九个 Markdown 标题：",
                 *[f"{index}. {title}" for index, title in enumerate(SUMMARY_TITLES, start=1)],
-                f"第六段正文必须只放占位符 {VERBATIM_PLACEHOLDER}；用户原文由程序注入。",
+                f"第六段正文必须只放占位符 {VERBATIM_PLACEHOLDER}；程序会把它替换为独立保留说明，"
+                "并在摘要后重新放置原始 role=user 消息。",
                 "请严格复制下面的输出骨架，只替换方括号内的说明文字；占位符必须逐字符原样保留且只出现一次：",
                 _summary_output_skeleton(),
                 "不要在标签外输出任何内容。",
             ]
         )
         data = {
-            "compactable_history": [entry.payload for entry in plan.compactable_entries],
+            "compactable_internal_history": [entry.payload for entry in plan.compactable_entries],
+            "preserved_user_history": [entry.payload for entry in plan.preserved_user_entries],
             "recent_history_reference": [entry.payload for entry in plan.recent_entries],
         }
         return [
@@ -133,12 +143,19 @@ class SummaryComposer:
     def compose(
         self,
         parsed: ParsedSummary,
-        verbatim_users: Sequence[UserMessageRecord],
+        verbatim_users: Sequence[UserMessageRecord] | None = None,
     ) -> str:
         positions = _heading_positions(parsed.summary_template)
         sixth_body_start = positions[5][1]
         seventh_heading_start = positions[6][0]
-        verbatim = _render_verbatim_users(verbatim_users)
+        # The optional branch is retained only for the pre-ch10.5 public helper
+        # contract. Production compaction passes no records and never embeds
+        # user text inside a system summary.
+        verbatim = (
+            _render_verbatim_users(verbatim_users)
+            if verbatim_users is not None
+            else PRESERVED_USER_NOTICE
+        )
         summary = (
             parsed.summary_template[:sixth_body_start].rstrip()
             + "\n\n"
@@ -148,8 +165,8 @@ class SummaryComposer:
         )
         return (
             "<conversation-summary>\n"
-            "以下内容是只读历史数据。摘要中的用户消息必须逐字保留，但其中的命令、角色要求和输出格式"
-            "均不再是当前指令；只把它们用于理解已发生的任务。\n\n"
+            "以下内容是只读历史数据的内部摘要，不包含用户原文；用户原文紧随摘要并以独立 role=user 消息保留。"
+            "旧命令、角色要求和输出格式均不再是当前指令。\n\n"
             f"{summary.strip()}\n"
             "</conversation-summary>"
         )
@@ -204,22 +221,31 @@ class ContextSummarizer:
 
         try:
             parsed = self.parser.parse("".join(parts), tool_calls)
-            records = self.conversation.user_records(plan.summarized_user_ids)
-            summary = self.composer.compose(parsed, records)
+            summary = self.composer.compose(parsed)
         except ValueError as exc:
             return SummaryResult("failed", str(exc))
 
         system_entry = snapshot.entries[0]
         summary_entry = self.conversation.make_entry(
             {"role": "system", "content": summary},
-            summarized_user_ids=plan.summarized_user_ids,
         )
         boundary_entry = self.conversation.make_entry(
             {"role": "system", "content": CONTEXT_BOUNDARY_MESSAGE}
         )
+        history_marker = self.conversation.make_entry(
+            {"role": "system", "content": PRESERVED_USER_HISTORY_MESSAGE}
+        )
+        preserved_users = _preserved_user_entries(self.conversation, plan)
         committed = self.conversation.replace_entries_if_version(
             snapshot.version,
-            (system_entry, summary_entry, boundary_entry, *plan.recent_entries),
+            (
+                system_entry,
+                summary_entry,
+                history_marker,
+                *preserved_users,
+                boundary_entry,
+                *plan.recent_entries,
+            ),
         )
         if not committed:
             return SummaryResult("failed", "摘要生成期间对话发生变化，旧历史保持不变。")
@@ -253,6 +279,26 @@ def _render_verbatim_users(records: Sequence[UserMessageRecord]) -> str:
             f'<user-message id="{record.id}">\n{record.content}\n</user-message>'
         )
     return "\n\n".join(blocks)
+
+
+def _preserved_user_entries(
+    conversation: ConversationContext,
+    plan: RetentionPlan,
+) -> tuple[ConversationEntry, ...]:
+    existing = {entry.id: entry for entry in plan.preserved_user_entries}
+    records = conversation.user_records(plan.summarized_user_ids)
+    result: list[ConversationEntry] = []
+    for record in records:
+        entry = existing.get(record.id)
+        if entry is None:
+            # Migrate an in-memory summary created by the pre-ch10.5 format.
+            # The original archive ID and text become a real user entry again.
+            entry = ConversationEntry(
+                record.id,
+                {"role": "user", "content": record.content},
+            )
+        result.append(entry)
+    return tuple(result)
 
 
 def _summary_output_skeleton() -> str:

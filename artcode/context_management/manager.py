@@ -9,11 +9,10 @@ if TYPE_CHECKING:
     from artcode.agent.events import TokenUsage
     from artcode.prompting.assembler import PromptRequest
 
-from .estimator import TokenEstimator, estimate_text_tokens
+from .estimator import TokenEstimator
 from .lightweight import LightweightCompactor
 from .models import (
     AUTOMATIC_FAILURE_LIMIT,
-    SUMMARY_MAX_OUTPUT_TOKENS,
     CompressionCircuit,
     CompressionReport,
     CompressionTrigger,
@@ -76,17 +75,6 @@ class ContextManager:
                 message="没有可压缩的较早历史。",
             )
 
-        oversized_user = self._oversized_user_message(conversation, plan.summarized_user_ids)
-        if oversized_user is not None:
-            return CompressionReport(
-                trigger,
-                "blocked",
-                before,
-                before,
-                circuit_open=self.circuit.open,
-                message="单条用户原始消息已超过安全摘要能力，请开始新会话。",
-            )
-
         if trigger is CompressionTrigger.FORCED:
             self.circuit.forced_attempted = True
         result = await self.summarizer.summarize(snapshot, plan)
@@ -135,14 +123,3 @@ class ContextManager:
     ) -> bool:
         has_failure = any(entry.persistence_failed for entry in conversation.snapshot().entries)
         return has_failure and estimated_tokens >= self.config.forced_threshold
-
-    def _oversized_user_message(
-        self,
-        conversation: ConversationContext,
-        user_ids: tuple[str, ...],
-    ) -> str | None:
-        safe_limit = max(self.config.window_tokens - SUMMARY_MAX_OUTPUT_TOKENS, 0)
-        for record in conversation.user_records(user_ids):
-            if estimate_text_tokens(record.content) > safe_limit:
-                return record.id
-        return None

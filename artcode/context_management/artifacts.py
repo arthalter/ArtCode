@@ -121,6 +121,12 @@ class ContextArtifactStore:
             return False
         return resolved.is_file() and root in resolved.parents
 
+    def discard(self, persisted: PersistedToolOutput) -> None:
+        target = self.workspace.root / persisted.relative_path
+        if not self.is_current_artifact(target):
+            return
+        target.unlink(missing_ok=True)
+
     def close(self) -> None:
         if not self._started:
             return

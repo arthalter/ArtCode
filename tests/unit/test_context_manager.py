@@ -116,7 +116,7 @@ def test_persistence_failure_blocks_only_at_forced_safety_line() -> None:
     assert context_manager.unsafe_persistence_failure(context, 885_000) is True
 
 
-async def test_oversized_verbatim_user_message_blocks_without_summarizer_call() -> None:
+async def test_oversized_user_message_uses_normal_compaction_path() -> None:
     context_manager = manager(["success"])
     context = ConversationContext("system")
     context.append_user("中" * 990_001)
@@ -125,6 +125,5 @@ async def test_oversized_verbatim_user_message_blocks_without_summarizer_call() 
 
     report = await context_manager.compact(context, CompressionTrigger.MANUAL)
 
-    assert report.status == "blocked"
-    assert "开始新会话" in report.message
-    assert context_manager.summarizer.calls == 0
+    assert report.status == "success"
+    assert context_manager.summarizer.calls == 1
