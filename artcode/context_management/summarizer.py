@@ -12,8 +12,9 @@ from artcode.conversation import (
     UserMessageRecord,
 )
 from artcode.errors import RequestError
-from artcode.providers import ProviderRequestOptions, StreamingProvider
-from artcode.providers.events import CONTENT_DELTA, TOOL_CALLS
+from artcode.providers import StreamingProvider
+from artcode.providers.base import ProviderRequest, stream_provider
+from artcode.providers.events import ContentDelta, ToolCallsCompleted
 from artcode.providers.tool_calls import ToolCall
 
 from .models import SUMMARY_MAX_OUTPUT_TOKENS
@@ -181,22 +182,19 @@ class ContextSummarizer:
         parts: list[str] = []
         tool_calls: list[ToolCall] = []
         try:
-            async for event in self.provider.stream_chat(
-                request_messages,
-                tools=None,
-                options=ProviderRequestOptions(
+            async for event in stream_provider(
+                self.provider,
+                ProviderRequest.from_parts(
+                    request_messages,
+                    None,
                     max_output_tokens=SUMMARY_MAX_OUTPUT_TOKENS,
                     thinking_enabled=False,
                 ),
             ):
-                if event.get("type") == CONTENT_DELTA:
-                    value = event.get("text")
-                    if isinstance(value, str):
-                        parts.append(value)
-                elif event.get("type") == TOOL_CALLS:
-                    value = event.get("tool_calls")
-                    if isinstance(value, list):
-                        tool_calls.extend(value)
+                if isinstance(event, ContentDelta):
+                    parts.append(event.text)
+                elif isinstance(event, ToolCallsCompleted):
+                    tool_calls.extend(event.tool_calls)
         except asyncio.CancelledError:
             raise
         except RequestError as exc:

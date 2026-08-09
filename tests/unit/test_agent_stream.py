@@ -9,7 +9,7 @@ from artcode.providers.tool_calls import ToolCall
 
 
 class FakeProvider:
-    def __init__(self, events: list[dict] | None = None, error: Exception | None = None) -> None:
+    def __init__(self, events: list | None = None, error: Exception | None = None) -> None:
         self.events = events or []
         self.error = error
 
@@ -40,7 +40,7 @@ async def test_stream_collector_keeps_tool_calls() -> None:
     items = await collect(FakeProvider([tool_calls_event([call]), done_event()]))
 
     assert isinstance(items[-1], ModelTurn)
-    assert items[-1].tool_calls == [call]
+    assert items[-1].tool_calls == (call,)
 
 
 async def test_stream_collector_forwards_token_usage() -> None:

@@ -18,7 +18,7 @@ from artcode.persistence import (
 )
 from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.providers.openai_compatible import OpenAICompatibleProvider
-from artcode.providers.events import CONTENT_DELTA
+from artcode.providers.events import ContentDelta
 from artcode.tools import AllowedPathPolicy, ToolExecutionContext, ToolRegistry
 from artcode.workspace import ArtCodePaths, Workspace
 
@@ -34,8 +34,8 @@ class CapturingProvider:
     async def stream_chat(self, messages, tools=None, *, options=None):
         parts = []
         async for event in self.inner.stream_chat(messages, tools, options=options):
-            if event.get("type") == CONTENT_DELTA:
-                parts.append(event.get("text", ""))
+            if isinstance(event, ContentDelta):
+                parts.append(event.text)
             yield event
         self.responses.append("".join(parts))
 

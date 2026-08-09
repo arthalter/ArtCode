@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
+from artcode.providers.events import TokenUsage
 from artcode.providers.tool_calls import ToolCall
 from artcode.tools import ToolResult
 
@@ -31,38 +32,12 @@ class AgentEventType(StrEnum):
 
 
 @dataclass(frozen=True)
-class TokenUsage:
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    total_tokens: int | None = None
-    cached_tokens: int | None = None
-    cache_miss_tokens: int | None = None
-
-    @classmethod
-    def from_event_payload(cls, payload: dict[str, Any]) -> "TokenUsage":
-        return cls(
-            prompt_tokens=_optional_int(payload.get("prompt_tokens")),
-            completion_tokens=_optional_int(payload.get("completion_tokens")),
-            total_tokens=_optional_int(payload.get("total_tokens")),
-            cached_tokens=_optional_int(payload.get("cached_tokens")),
-            cache_miss_tokens=_optional_int(payload.get("cache_miss_tokens")),
-        )
-
-    def to_payload(self) -> dict[str, int | None]:
-        return {
-            "prompt_tokens": self.prompt_tokens,
-            "completion_tokens": self.completion_tokens,
-            "total_tokens": self.total_tokens,
-            "cached_tokens": self.cached_tokens,
-            "cache_miss_tokens": self.cache_miss_tokens,
-        }
-
-
-@dataclass(frozen=True)
 class ModelTurn:
     text: str
-    tool_calls: list[ToolCall]
+    reasoning_content: str
+    tool_calls: tuple[ToolCall, ...]
     usage: TokenUsage | None = None
+    finish_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -163,10 +138,3 @@ def context_status_event(
 def stopped_event(reason: StopReason, message: str = "") -> AgentEvent:
     return AgentEvent(AgentEventType.STOPPED, {"reason": reason.value, "message": message})
 
-
-def _optional_int(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    return None

@@ -5,7 +5,7 @@ import pytest
 from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.errors import AuthenticationError, ContextWindowExceededError, ModelError, ThinkingModeUnsupportedError
 from artcode.providers import ProviderRequestOptions
-from artcode.providers.events import DONE, TOKEN_USAGE, TOOL_CALLS
+from artcode.providers.events import StreamCompleted, ToolCallsCompleted, UsageReported
 from artcode.providers.openai_compatible import (
     CONNECT_TIMEOUT_SECONDS,
     OpenAICompatibleProvider,
@@ -136,10 +136,10 @@ async def test_provider_stream_parses_tool_calls() -> None:
 
     events = [event async for event in provider._iter_stream_events(FakeStreamResponse(lines))]
 
-    assert events[0]["type"] == TOOL_CALLS
-    assert events[0]["tool_calls"][0].name == "read_file"
-    assert events[0]["tool_calls"][0].arguments_json == '{"path":"a.txt"}'
-    assert events[-1]["type"] == DONE
+    assert isinstance(events[0], ToolCallsCompleted)
+    assert events[0].tool_calls[0].name == "read_file"
+    assert events[0].tool_calls[0].arguments_json == '{"path":"a.txt"}'
+    assert isinstance(events[-1], StreamCompleted)
 
 
 async def test_provider_stream_parses_usage_event() -> None:
@@ -153,11 +153,11 @@ async def test_provider_stream_parses_usage_event() -> None:
 
     events = [event async for event in provider._iter_stream_events(FakeStreamResponse(lines))]
 
-    assert events[0]["type"] == TOKEN_USAGE
-    assert events[0]["total_tokens"] == 7
-    assert events[0]["cached_tokens"] is None
-    assert events[0]["cache_miss_tokens"] is None
-    assert events[-1]["type"] == DONE
+    assert isinstance(events[0], UsageReported)
+    assert events[0].usage.total_tokens == 7
+    assert events[0].usage.cached_tokens is None
+    assert events[0].usage.cache_miss_tokens is None
+    assert isinstance(events[-1], StreamCompleted)
 
 
 async def test_provider_stream_parses_deepseek_cache_usage() -> None:
@@ -171,9 +171,9 @@ async def test_provider_stream_parses_deepseek_cache_usage() -> None:
 
     events = [event async for event in provider._iter_stream_events(FakeStreamResponse(lines))]
 
-    assert events[0]["type"] == TOKEN_USAGE
-    assert events[0]["cached_tokens"] == 7
-    assert events[0]["cache_miss_tokens"] == 3
+    assert isinstance(events[0], UsageReported)
+    assert events[0].usage.cached_tokens == 7
+    assert events[0].usage.cache_miss_tokens == 3
 
 
 async def test_provider_stream_parses_openai_cached_tokens() -> None:
@@ -187,6 +187,6 @@ async def test_provider_stream_parses_openai_cached_tokens() -> None:
 
     events = [event async for event in provider._iter_stream_events(FakeStreamResponse(lines))]
 
-    assert events[0]["type"] == TOKEN_USAGE
-    assert events[0]["cached_tokens"] == 6
-    assert events[0]["cache_miss_tokens"] == 4
+    assert isinstance(events[0], UsageReported)
+    assert events[0].usage.cached_tokens == 6
+    assert events[0].usage.cache_miss_tokens == 4

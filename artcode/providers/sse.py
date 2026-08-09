@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 from dataclasses import dataclass
 from typing import Iterable, Iterator
 
@@ -13,6 +14,8 @@ class SSEEvent:
 class SSEDecoder:
     def __init__(self) -> None:
         self._data_lines: list[str] = []
+        self._utf8_decoder = codecs.getincrementaldecoder("utf-8")()
+        self._byte_buffer = ""
 
     def feed(self, raw_line: str | bytes) -> list[SSEEvent]:
         line = _normalize_line(raw_line)
@@ -26,6 +29,23 @@ class SSEDecoder:
 
     def close(self) -> list[SSEEvent]:
         return self._flush()
+
+    def feed_bytes(self, chunk: bytes) -> list[SSEEvent]:
+        self._byte_buffer += self._utf8_decoder.decode(chunk, final=False)
+        events: list[SSEEvent] = []
+        while "\n" in self._byte_buffer:
+            line, self._byte_buffer = self._byte_buffer.split("\n", 1)
+            events.extend(self.feed(line))
+        return events
+
+    def close_bytes(self) -> list[SSEEvent]:
+        self._byte_buffer += self._utf8_decoder.decode(b"", final=True)
+        events: list[SSEEvent] = []
+        if self._byte_buffer:
+            events.extend(self.feed(self._byte_buffer))
+            self._byte_buffer = ""
+        events.extend(self.close())
+        return events
 
     def _flush(self) -> list[SSEEvent]:
         if not self._data_lines:

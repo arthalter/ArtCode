@@ -9,8 +9,8 @@ from typing import Any
 
 from artcode.agent.events import NaturalTurn
 from artcode.errors import RequestError, scrub_secrets
-from artcode.providers.base import ProviderRequestOptions, StreamingProvider
-from artcode.providers.events import CONTENT_DELTA, TOOL_CALLS
+from artcode.providers.base import ProviderRequest, StreamingProvider, stream_provider
+from artcode.providers.events import ContentDelta, ToolCallsCompleted
 from artcode.providers.tool_calls import ToolCall
 
 from .models import (
@@ -212,18 +212,19 @@ class MemoryUpdater:
         tool_calls: list[ToolCall] = []
         try:
             async with asyncio.timeout(self.timeout_seconds):
-                async for event in self.provider.stream_chat(
-                    messages,
-                    tools=None,
-                    options=ProviderRequestOptions(
+                async for event in stream_provider(
+                    self.provider,
+                    ProviderRequest.from_parts(
+                        messages,
+                        None,
                         max_output_tokens=MEMORY_MAX_OUTPUT_TOKENS,
                         thinking_enabled=False,
                     ),
                 ):
-                    if event.get("type") == CONTENT_DELTA and isinstance(event.get("text"), str):
-                        parts.append(event["text"])
-                    elif event.get("type") == TOOL_CALLS and isinstance(event.get("tool_calls"), list):
-                        tool_calls.extend(event["tool_calls"])
+                    if isinstance(event, ContentDelta):
+                        parts.append(event.text)
+                    elif isinstance(event, ToolCallsCompleted):
+                        tool_calls.extend(event.tool_calls)
         except asyncio.CancelledError:
             raise
         except TimeoutError:

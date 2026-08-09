@@ -395,7 +395,7 @@ class AgentLoop:
             raise
         except RequestError as exc:
             return _CollectedTurn(events, None, exc.user_message, exc)
-        return _CollectedTurn(events, ModelTurn("", []))
+        return _CollectedTurn(events, ModelTurn("", "", ()))
 
 
 @dataclass(frozen=True)

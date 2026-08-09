@@ -9,7 +9,7 @@ pytestmark = pytest.mark.live
 
 from artcode.config import ArtCodeConfig, ConfigError, load_config
 from artcode.prompting import build_system_prompt
-from artcode.providers.events import TOKEN_USAGE
+from artcode.providers.events import UsageReported
 from artcode.providers.openai_compatible import OpenAICompatibleProvider
 
 
@@ -30,9 +30,9 @@ async def collect_cached_tokens(provider: OpenAICompatibleProvider, messages: li
     cached_tokens = 0
     usage_events = 0
     async for event in provider.stream_chat(messages):
-        if event["type"] == TOKEN_USAGE:
+        if isinstance(event, UsageReported):
             usage_events += 1
-            value = event.get("cached_tokens")
+            value = event.usage.cached_tokens
             if isinstance(value, int):
                 cached_tokens = max(cached_tokens, value)
     if usage_events == 0:

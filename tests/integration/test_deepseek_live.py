@@ -11,7 +11,7 @@ from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE
 from artcode.config import ArtCodeConfig, ThinkingConfig, load_config
 from artcode.conversation import ConversationContext
 from artcode.errors import ConfigError
-from artcode.providers.events import CONTENT_DELTA
+from artcode.providers.events import ContentDelta
 from artcode.providers.openai_compatible import OpenAICompatibleProvider
 from artcode.tools import AllowedPathPolicy, ToolExecutionContext, create_default_tool_registry
 
@@ -32,8 +32,8 @@ def live_config() -> ArtCodeConfig:
 async def collect_reply(provider: OpenAICompatibleProvider, messages: list[dict[str, str]]) -> str:
     parts: list[str] = []
     async for event in provider.stream_chat(messages):
-        if event["type"] == CONTENT_DELTA:
-            parts.append(event["text"])
+        if isinstance(event, ContentDelta):
+            parts.append(event.text)
     return "".join(parts)
 
 
