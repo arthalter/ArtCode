@@ -6,4 +6,13 @@ __all__ = [
     "PromptSection",
     "build_system_prompt",
     "default_fixed_sections",
+    "DurablePromptSource",
 ]
+
+
+def __getattr__(name: str):
+    if name == "DurablePromptSource":
+        from .durable import DurablePromptSource
+
+        return DurablePromptSource
+    raise AttributeError(name)

@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from artcode.agent.memory import PlanMemory
+    from artcode.conversation import ConversationContext
 
 
 class InstructionScope(StrEnum):
@@ -97,6 +101,16 @@ class SessionSelection:
     @classmethod
     def resume(cls, session_id: str) -> "SessionSelection":
         return cls(SessionSelectionMode.RESUME, session_id)
+
+
+@dataclass(frozen=True)
+class SessionContext:
+    """The complete, session-owned state returned by :class:`SessionService`."""
+
+    conversation: "ConversationContext"
+    plan_memory: "PlanMemory"
+    status: "PersistenceStatus"
+    resume_reminder_required: bool = False
 
 
 class MemoryScope(StrEnum):

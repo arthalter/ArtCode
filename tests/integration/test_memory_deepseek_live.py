@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -8,7 +7,7 @@ import pytest
 pytestmark = pytest.mark.live
 
 from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, NaturalTurn, RequestPreparer
-from artcode.config import ArtCodeConfig, ConfigError, load_config
+from artcode.config import ArtCodeConfig
 from artcode.persistence import (
     MemoryNoteStore,
     MemoryScope,
@@ -21,6 +20,7 @@ from artcode.providers.openai_compatible import OpenAICompatibleProvider
 from artcode.providers.events import ContentDelta
 from artcode.tools import AllowedPathPolicy, ToolExecutionContext, ToolRegistry
 from artcode.workspace import ArtCodePaths, Workspace
+from tests.live.conftest import load_live_config
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,13 +41,7 @@ class CapturingProvider:
 
 
 def required_live_config() -> ArtCodeConfig:
-    try:
-        config = load_config(ROOT / "artcode.yaml")
-    except ConfigError as exc:
-        pytest.fail(f"ch09 live memory validation requires real API config: {exc.message}")
-    if "your-deepseek-api-key" in config.api_key or config.api_key.startswith("<"):
-        pytest.fail("ch09 live memory validation requires a real API key in artcode.yaml")
-    return replace(config, model="deepseek-v4-flash")
+    return load_live_config()
 
 
 async def test_live_memory_extracts_cross_project_preference_and_deduplicates(tmp_path: Path) -> None:

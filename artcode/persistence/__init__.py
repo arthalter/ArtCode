@@ -18,6 +18,7 @@ from .models import (
     SessionRecoveryReport,
     SessionSelectionMode,
     SessionSelection,
+    SessionContext,
     PersistenceStatus,
     RestorePreparationReport,
 )
@@ -52,6 +53,9 @@ from .updater import (
     MemoryUpdater,
     MemoryUpdateWorker,
 )
+from .memory_service import MemoryService
+from .session_service import SessionService
+from artcode.prompting.durable import DurablePromptSource
 from .coordinator import DurablePromptContext, PersistenceCoordinator
 
 __all__ = [
@@ -91,6 +95,8 @@ __all__ = [
     "SessionRecoveryReport",
     "SessionSelectionMode",
     "SessionSelection",
+    "SessionContext",
+    "SessionService",
     "PersistenceStatus",
     "RestorePreparationReport",
     "ENTRY_ID_RE",
@@ -103,6 +109,8 @@ __all__ = [
     "MemoryUpdateParser",
     "MemoryUpdater",
     "MemoryUpdateWorker",
+    "MemoryService",
+    "DurablePromptSource",
     "DurablePromptContext",
     "PersistenceCoordinator",
 ]

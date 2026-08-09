@@ -6,6 +6,7 @@ from pathlib import Path
 from artcode.agent import NORMAL_AGENT_MODE, RequestPreparer
 from artcode.conversation import ConversationContext
 from artcode.persistence import (
+    DurablePromptSource,
     DurablePaths,
     DurablePromptContext,
     InstructionLoader,
@@ -17,6 +18,8 @@ from artcode.persistence import (
 from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.tools import AllowedPathPolicy, ToolExecutionContext, ToolRegistry
 from artcode.workspace import ArtCodePaths, Workspace
+
+import pytest
 
 
 def _setup(tmp_path: Path):
@@ -112,3 +115,18 @@ async def test_resume_reminder_is_committed_only_after_dispatch_and_not_persiste
     assert "超过 24 小时" in str(second.messages)
     assert "超过 24 小时" not in str(third.messages)
     assert "超过 24 小时" not in str(conversation.export_messages())
+
+
+@pytest.mark.ch10_5
+def test_durable_prompt_source_reads_latest_indexes_without_owning_stores(tmp_path: Path) -> None:
+    _, paths, user, project = _setup(tmp_path)
+    source = DurablePromptSource(paths)
+    first = source.build_system_prompt()
+    project.index_path.write_text("# LATEST PROJECT INDEX\n", encoding="utf-8")
+    second = source.build_system_prompt()
+
+    assert "LOCAL UNIQUE" in first
+    assert "LATEST PROJECT INDEX" not in first
+    assert "LATEST PROJECT INDEX" in second
+    assert not hasattr(source, "conversation")
+    assert not hasattr(source, "memory_worker")

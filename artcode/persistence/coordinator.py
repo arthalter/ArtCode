@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -7,6 +8,7 @@ from artcode.agent.memory import PlanMemory
 from artcode.context_management.models import CompressionTrigger
 from artcode.conversation import ConversationContext
 from artcode.prompting.builder import PromptBuilder
+from artcode.prompting.durable import DurablePromptSource
 from artcode.prompting.sections import (
     default_fixed_sections,
     durable_instruction_sections,
@@ -19,24 +21,17 @@ from artcode.workspace import ArtCodePaths, Workspace
 from .instructions import InstructionLoader
 from .models import (
     InstructionBundle,
-    MemoryScope,
     MemoryUpdateReport,
     PersistenceStatus,
     RestorePreparationReport,
     SessionSelection,
-    SessionSelectionMode,
 )
+from .memory_service import MemoryService
 from .notes import MemoryNoteStore
 from .paths import DurablePaths
-from .sessions import (
-    SESSION_ID_RE,
-    SessionCatalog,
-    SessionError,
-    SessionJournal,
-    SessionLockedError,
-    SessionRecovery,
-)
-from .updater import MemoryUpdater, MemoryUpdateWorker
+from .session_service import SessionService
+from .sessions import SessionCatalog, SessionJournal
+from .updater import MemoryUpdateWorker
 
 if TYPE_CHECKING:
     from artcode.agent.modes import AgentMode
@@ -82,6 +77,9 @@ class PersistenceCoordinator:
         memory_worker: MemoryUpdateWorker,
         status: PersistenceStatus,
         gap_reminder_required: bool,
+        session_service: SessionService,
+        memory_service: MemoryService,
+        prompt_source: DurablePromptSource,
     ) -> None:
         self.paths = paths
         self.catalog = catalog
@@ -95,6 +93,9 @@ class PersistenceCoordinator:
         self.memory_worker = memory_worker
         self.status = status
         self.gap_reminder_required = gap_reminder_required
+        self.session_service = session_service
+        self.memory_service = memory_service
+        self.prompt_source = prompt_source
         self.last_memory_report: MemoryUpdateReport | None = None
         self._memory_callbacks: list[Any] = []
         self._restore_prepared = False
@@ -114,80 +115,48 @@ class PersistenceCoordinator:
         current = now or datetime.now(timezone.utc)
         selected = selection or SessionSelection.latest()
         paths = DurablePaths.from_context(app_paths, workspace)
-        catalog = SessionCatalog(paths.sessions_dir)
-        catalog.cleanup_expired(current)
-        instructions = InstructionLoader(paths).load()
-        user_notes = MemoryNoteStore(paths.user_memory_dir, MemoryScope.USER)
-        project_notes = MemoryNoteStore(paths.project_memory_dir, MemoryScope.PROJECT)
-        user_index = user_notes.rebuild_index()
-        project_index = project_notes.rebuild_index()
-
-        journal, recovery, restored, default_locked_new = _select_session(
-            catalog, paths, selected, current
-        )
-
+        session_service = SessionService(paths)
         try:
-            if recovery is None:
-                conversation = ConversationContext(observer=journal)
-                plan_memory = PlanMemory()
-                recovered_messages = bad_lines = 0
-                truncated = False
-                truncated_reason = ""
-                gap_required = False
-            else:
-                conversation = ConversationContext.from_persisted_records(
-                    recovery.records, observer=journal
-                )
-                plan_memory = PlanMemory(recovery.recovered_plan)
-                recovered_messages = len(recovery.records)
-                bad_lines = recovery.bad_line_count
-                truncated = recovery.truncated
-                truncated_reason = recovery.truncated_reason
-                gap_required = recovery.gap_reminder_required
-            prompt_context = DurablePromptContext(instructions, user_notes, project_notes)
-            updater = MemoryUpdater(
+            session = session_service.start(selected, current)
+            memory_service = MemoryService(
+                paths,
                 provider,
-                user_notes,
-                project_notes,
                 secrets=secrets,
             )
-            worker = MemoryUpdateWorker(updater)
-            status = PersistenceStatus(
-                journal.session_id,
-                restored,
-                recovered_messages,
-                bad_lines,
-                truncated,
-                truncated_reason,
-                instructions.total_bytes,
-                len(instructions.issues),
-                user_index.active_count,
-                project_index.active_count,
-                default_locked_new,
+            prompt_source = DurablePromptSource(paths)
+            status = replace(
+                session.status,
+                instruction_bytes=prompt_source.instructions.total_bytes,
+                instruction_issues=len(prompt_source.instructions.issues),
+                user_active_notes=memory_service.user_index_report.active_count,
+                project_active_notes=memory_service.project_index_report.active_count,
             )
             coordinator = cls(
                 paths=paths,
-                catalog=catalog,
-                instructions=instructions,
-                user_notes=user_notes,
-                project_notes=project_notes,
-                journal=journal,
-                conversation=conversation,
-                plan_memory=plan_memory,
-                prompt_context=prompt_context,
-                memory_worker=worker,
+                catalog=session_service.catalog,
+                instructions=prompt_source.instructions,
+                user_notes=memory_service.user_store,
+                project_notes=memory_service.project_store,
+                journal=session_service.journal,
+                conversation=session.conversation,
+                plan_memory=session.plan_memory,
+                prompt_context=prompt_source,
+                memory_worker=memory_service.worker,
                 status=status,
-                gap_reminder_required=gap_required,
+                gap_reminder_required=session.resume_reminder_required,
+                session_service=session_service,
+                memory_service=memory_service,
+                prompt_source=prompt_source,
             )
-            worker.callback = coordinator._on_memory_report
+            memory_service.add_callback(coordinator._on_memory_report)
             return coordinator
         except Exception:
-            journal.close()
+            session_service.close()
             raise
 
     @property
-    def turn_observer(self) -> MemoryUpdateWorker:
-        return self.memory_worker
+    def turn_observer(self) -> MemoryService:
+        return self.memory_service
 
     async def prepare_restored_context(
         self,
@@ -223,29 +192,17 @@ class PersistenceCoordinator:
         return report
 
     def sessions_summary(self, limit: int = 20) -> tuple[Any, ...]:
-        return self.catalog.list_recent(limit)
+        return self.session_service.sessions_summary(limit)
 
     def memory_summary(self) -> dict[str, Any]:
-        user = self.user_notes.scan()
-        project = self.project_notes.scan()
-        return {
-            "user_path": self.user_notes.root,
-            "project_path": self.project_notes.root,
-            "user_active": sum(note.status.value == "active" for note in user.notes),
-            "project_active": sum(note.status.value == "active" for note in project.notes),
-            "user_superseded": sum(note.status.value == "superseded" for note in user.notes),
-            "project_superseded": sum(note.status.value == "superseded" for note in project.notes),
-            "user_issues": len(user.issues),
-            "project_issues": len(project.issues),
-            "last_report": self.last_memory_report,
-        }
+        return self.memory_service.summary()
 
     async def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        await self.memory_worker.close()
-        self.journal.close()
+        await self.memory_service.close()
+        self.session_service.close()
 
     def add_memory_callback(self, callback: Any) -> None:
         self._memory_callbacks.append(callback)
@@ -257,45 +214,3 @@ class PersistenceCoordinator:
                 callback(report)
             except Exception:
                 continue
-
-
-def _select_session(
-    catalog: SessionCatalog,
-    paths: DurablePaths,
-    selected: SessionSelection,
-    current: datetime,
-) -> tuple[SessionJournal, Any, bool, bool]:
-    journal: SessionJournal | None = None
-    try:
-        if selected.mode is SessionSelectionMode.NEW:
-            journal = SessionJournal.create(paths.sessions_dir, current)
-            return journal, None, False, False
-        if selected.mode is SessionSelectionMode.RESUME:
-            session_id = selected.session_id or ""
-            if not SESSION_ID_RE.fullmatch(session_id):
-                raise SessionError("显式恢复的会话 ID 格式非法。")
-            descriptor = catalog.get(session_id)
-            if descriptor is None:
-                raise SessionError(f"找不到会话：{session_id}")
-            journal = SessionJournal.open_existing(descriptor.path)
-            recovery = SessionRecovery().recover(journal, current)
-            return journal, recovery, True, False
-
-        recent = catalog.list_recent(limit=1)
-        if not recent:
-            journal = SessionJournal.create(paths.sessions_dir, current)
-            return journal, None, False, False
-        if recent[0].locked:
-            journal = SessionJournal.create(paths.sessions_dir, current)
-            return journal, None, False, True
-        try:
-            journal = SessionJournal.open_existing(recent[0].path)
-        except SessionLockedError:
-            journal = SessionJournal.create(paths.sessions_dir, current)
-            return journal, None, False, True
-        recovery = SessionRecovery().recover(journal, current)
-        return journal, recovery, True, False
-    except Exception:
-        if journal is not None:
-            journal.close()
-        raise

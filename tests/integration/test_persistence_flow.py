@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, RequestPreparer
-from artcode.persistence import PersistenceCoordinator, SessionSelection
+from artcode.persistence import (
+    DurablePaths,
+    DurablePromptSource,
+    PersistenceCoordinator,
+    SessionSelection,
+    SessionService,
+)
 from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
@@ -157,3 +166,106 @@ async def test_persistence_end_to_end_restores_session_and_new_memory(tmp_path: 
 async def _drain(iterator) -> None:
     async for _ in iterator:
         pass
+
+
+@pytest.mark.ch10_5
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "fresh-new",
+        "default-resume",
+        "exact-resume",
+        "plan-resume",
+        "complete-bad-line",
+        "incomplete-tail",
+        "locked-default",
+        "long-gap",
+        "instruction-layers",
+        "latest-memory-index",
+    ],
+)
+def test_split_session_and_prompt_services_flow(tmp_path: Path, scenario: str) -> None:
+    project = tmp_path / "split-project"
+    project.mkdir()
+    workspace = Workspace.from_path(project)
+    paths = DurablePaths.from_context(ArtCodePaths.create(tmp_path / "split-home"), workspace)
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
+
+    if scenario == "fresh-new":
+        service = SessionService(paths)
+        context = service.start(SessionSelection.new(), now)
+        assert not context.status.restored
+        assert service.sessions_summary(1)[0].locked
+        service.close()
+        return
+
+    if scenario in {"instruction-layers", "latest-memory-index"}:
+        paths.local_instruction.write_text("LOCAL FLOW", encoding="utf-8")
+        paths.project_instruction.write_text("PROJECT FLOW", encoding="utf-8")
+        paths.user_instruction.write_text("USER FLOW", encoding="utf-8")
+        source = DurablePromptSource(paths)
+        if scenario == "latest-memory-index":
+            first = source.build_system_prompt()
+            (paths.project_memory_dir / "index.md").write_text(
+                "# INDEX AFTER START\n", encoding="utf-8"
+            )
+            second = source.build_system_prompt()
+            assert "INDEX AFTER START" not in first
+            assert "INDEX AFTER START" in second
+        else:
+            prompt = source.build_system_prompt()
+            assert prompt.index("LOCAL FLOW") < prompt.index("PROJECT FLOW") < prompt.index("USER FLOW")
+        return
+
+    first = SessionService(paths)
+    original = first.start(SessionSelection.new(), now)
+    original.conversation.append_user("SAFE USER BEFORE", mode="plan")
+    original.conversation.append_assistant("SAFE PLAN", mode="plan")
+    original.conversation.append_user("SAFE USER AFTER")
+    session_id = original.status.session_id
+    path = first.journal.path
+
+    if scenario == "locked-default":
+        contender = SessionService(paths)
+        fallback = contender.start(SessionSelection.latest(), now)
+        assert fallback.status.default_locked_new_session
+        assert fallback.status.session_id != session_id
+        contender.close()
+        first.close()
+        return
+
+    first.close()
+    lines = path.read_bytes().splitlines(keepends=True)
+    if scenario == "complete-bad-line":
+        path.write_bytes(lines[0] + b"complete-but-bad\n" + b"".join(lines[1:]))
+    elif scenario == "incomplete-tail":
+        path.write_bytes(b"".join(lines) + b'{"message":')
+    elif scenario == "long-gap":
+        rewritten = []
+        for line in lines:
+            payload = json.loads(line)
+            payload["timestamp"] = (now - timedelta(hours=25)).isoformat().replace("+00:00", "Z")
+            rewritten.append((json.dumps(payload) + "\n").encode())
+        path.write_bytes(b"".join(rewritten))
+
+    resumed = SessionService(paths)
+    selection = (
+        SessionSelection.latest()
+        if scenario == "default-resume"
+        else SessionSelection.resume(session_id)
+    )
+    restored = resumed.start(selection, now)
+    try:
+        users = [
+            message["content"]
+            for message in restored.conversation.export_messages()
+            if message["role"] == "user"
+        ]
+        assert users == ["SAFE USER BEFORE", "SAFE USER AFTER"]
+        assert restored.status.restored
+        assert restored.plan_memory.get() == "SAFE PLAN"
+        assert restored.status.bad_line_count == int(scenario == "complete-bad-line")
+        assert restored.status.truncated is (scenario == "incomplete-tail")
+        assert restored.resume_reminder_required is (scenario == "long-gap")
+    finally:
+        resumed.close()

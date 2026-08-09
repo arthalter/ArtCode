@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
-from artcode.agent.events import NaturalTurn
+from artcode.agent.events import CompletedTurn
 from artcode.errors import RequestError, scrub_secrets
 from artcode.providers.base import ProviderRequest, StreamingProvider, stream_provider
 from artcode.providers.events import ContentDelta, ToolCallsCompleted
@@ -37,7 +37,7 @@ class MemoryPromptBuilder:
 
     def build(
         self,
-        turn: NaturalTurn,
+        turn: CompletedTurn,
         user_index: str,
         project_index: str,
     ) -> list[dict[str, Any]]:
@@ -202,7 +202,7 @@ class MemoryUpdater:
         self.parser = parser or MemoryUpdateParser()
         self.timeout_seconds = timeout_seconds
 
-    async def update(self, turn: NaturalTurn) -> MemoryUpdateReport:
+    async def update(self, turn: CompletedTurn) -> MemoryUpdateReport:
         messages = self.prompt_builder.build(
             turn,
             self.user_store.read_index(),
@@ -280,48 +280,123 @@ class MemoryUpdateWorker:
     ) -> None:
         self.updater = updater
         self.callback = callback
-        self._queue: asyncio.Queue[NaturalTurn] = asyncio.Queue()
+        self._queue: asyncio.Queue[CompletedTurn] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
         self._last_report: MemoryUpdateReport | None = None
+        self._closed = False
+        self._active = False
 
     @property
     def last_report(self) -> MemoryUpdateReport | None:
         return self._last_report
 
-    def submit(self, turn: NaturalTurn) -> None:
-        self._queue.put_nowait(turn)
+    @property
+    def pending_count(self) -> int:
+        return self._queue.qsize() + int(self._active)
+
+    def submit(self, turn: CompletedTurn) -> None:
+        if self._closed:
+            return
+        try:
+            snapshot = _snapshot_turn(turn)
+        except Exception:
+            self._report(MemoryUpdateReport("failed", message="记忆轮次复制失败，已跳过。"))
+            return
+        self._queue.put_nowait(snapshot)
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._run())
 
+    async def wait_idle(self) -> None:
+        await self._queue.join()
+
     async def close(self) -> None:
-        if self._task is None:
+        if self._closed:
             return
-        self._task.cancel()
-        try:
-            await self._task
-        except asyncio.CancelledError:
-            pass
-        self._task = None
+        self._closed = True
+        task = self._task
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+        while True:
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            else:
+                self._queue.task_done()
 
     async def _run(self) -> None:
         while True:
             turn = await self._queue.get()
+            self._active = True
             try:
                 try:
-                    self._last_report = await self.updater.update(turn)
+                    report = await self.updater.update(turn)
                 except asyncio.CancelledError:
                     raise
-                except Exception as exc:
-                    self._last_report = MemoryUpdateReport(
-                        "failed", message=f"记忆后台任务失败：{exc}"
+                except Exception:
+                    report = MemoryUpdateReport(
+                        "failed", message="记忆后台任务失败，已隔离。"
                     )
-                if self.callback is not None:
-                    try:
-                        self.callback(self._last_report)
-                    except Exception:
-                        pass
+                self._report(report)
             finally:
+                self._active = False
                 self._queue.task_done()
+
+    def _report(self, report: MemoryUpdateReport) -> None:
+        self._last_report = report
+        if self.callback is not None:
+            try:
+                self.callback(report)
+            except Exception:
+                pass
+
+
+def _snapshot_turn(turn: CompletedTurn) -> CompletedTurn:
+    """Detach queued memory work from live mutable Agent data."""
+
+    summaries: list[Mapping[str, Any]] = []
+    for item in turn.tool_summaries:
+        summaries.append(_freeze(dict(item)))
+    return CompletedTurn(
+        session_id=str(turn.session_id),
+        mode=str(turn.mode),
+        user_content=str(turn.user_content),
+        final_text=str(turn.final_text),
+        entry_ids=tuple(str(item) for item in turn.entry_ids),
+        tool_summaries=tuple(summaries),
+    )
+
+
+class _FrozenMapping(dict[str, Any]):
+    """A JSON-friendly mapping that rejects mutation after construction."""
+
+    def _immutable(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("completed turn snapshots are immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return _FrozenMapping({str(key): _freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(_freeze(item) for item in value)
+    if isinstance(value, (str, int, float, bool, bytes, type(None))):
+        return value
+    raise TypeError(f"unsupported completed turn value: {type(value).__name__}")
 
 
 def _rendered_operation_size(operation: MemoryOperation) -> int:

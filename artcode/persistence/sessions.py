@@ -79,6 +79,7 @@ class SessionJournal:
         handle = path.open("r+b", buffering=0)
         try:
             _lock(handle, path)
+            handle.seek(0, os.SEEK_END)
         except Exception:
             handle.close()
             raise
