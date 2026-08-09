@@ -22,6 +22,7 @@ from .filesystem import (
     WorkspaceFileAccess,
     WorkspaceFileError,
 )
+from .process import ProcessResult, ProcessSupervisor
 
 __all__ = [
     "AllowedPathPolicy",
@@ -35,6 +36,8 @@ __all__ = [
     "WorkspaceBoundaryError",
     "WorkspaceFileAccess",
     "WorkspaceFileError",
+    "ProcessResult",
+    "ProcessSupervisor",
     "PreparedToolCall",
     "Tool",
     "ToolDescriptor",

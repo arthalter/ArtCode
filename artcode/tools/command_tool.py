@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import os
 import re
-import signal
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +15,7 @@ from .base import (
 )
 from .policy import AllowedPathPolicy
 from .results import ToolResult, error_result, success_result
+from .process import ProcessSupervisor
 
 
 class RunCommandTool(DescriptorBackedTool):
@@ -38,6 +37,9 @@ class RunCommandTool(DescriptorBackedTool):
         },
         effect=ToolEffect.SHELL,
     )
+
+    def __init__(self, supervisor: ProcessSupervisor | None = None) -> None:
+        self.supervisor = supervisor or ProcessSupervisor()
 
     def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:
         command = arguments.get("command")
@@ -78,52 +80,42 @@ class RunCommandTool(DescriptorBackedTool):
             except Exception as exc:
                 return error_result(self.name, "sandbox_error", str(exc))
         environment = _safe_environment(context)
-        process: asyncio.subprocess.Process | None = None
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *argv,
-                cwd=str(cwd),
-                env=environment,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                start_new_session=True,
+        result = await self.supervisor.run(
+            argv,
+            cwd,
+            environment,
+            context.command_timeout_seconds,
+        )
+        if result.start_error is not None:
+            return error_result(
+                self.name,
+                "command_error",
+                f"命令执行失败：{result.start_error}",
             )
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(),
-                timeout=context.command_timeout_seconds,
-            )
-        except TimeoutError:
-            if process is not None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    await process.wait()
-                except ProcessLookupError:
-                    pass
+        if result.timed_out:
             return error_result(
                 self.name,
                 "command_timeout",
                 f"命令超过 {int(context.command_timeout_seconds)} 秒未结束。",
             )
-        except OSError as exc:
-            return error_result(self.name, "command_error", f"命令执行失败：{exc}")
 
-        stdout = stdout_bytes.decode("utf-8", errors="replace")
-        stderr = stderr_bytes.decode("utf-8", errors="replace")
+        stdout = result.stdout.decode("utf-8", errors="replace")
+        stderr = result.stderr.decode("utf-8", errors="replace")
         content = "\n".join(
             [
-                f"exit_code: {process.returncode}",
+                f"exit_code: {result.returncode}",
                 "stdout:",
                 stdout,
                 "stderr:",
                 stderr,
             ]
         )
-        if process.returncode == 0:
+        if result.returncode == 0:
             return success_result(self.name, "命令执行成功。", content)
         return error_result(
             self.name,
             "command_failed",
-            f"命令退出码为 {process.returncode}。",
+            f"命令退出码为 {result.returncode}。",
             content,
         )
 
