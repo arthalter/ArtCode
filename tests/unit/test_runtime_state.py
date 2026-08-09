@@ -7,7 +7,6 @@ from artcode.commands import DisplayMode
 from artcode.permissions import PermissionMode, PermissionSnapshot, PermissionState, ShellPolicy
 from artcode.runtime.state import RuntimeState
 from artcode.tools import (
-    AllowedPathPolicy,
     DescriptorBackedTool,
     ToolDescriptor,
     ToolEffect,
@@ -186,7 +185,7 @@ def test_registry_exports_internal_policy_metadata_from_descriptor_only(
 @pytest.mark.parametrize("mode", [NORMAL_AGENT_MODE, PLAN_MODE], ids=("normal", "plan"))
 def test_tool_run_context_combines_stable_environment_with_permission_snapshot(tmp_path, mode) -> None:
     environment = ToolEnvironment(
-        AllowedPathPolicy((tmp_path,)),
+        ToolEnvironment.from_workspace(tmp_path).path_policy,
         default_cwd=tmp_path,
         artifact_store=object(),
     )

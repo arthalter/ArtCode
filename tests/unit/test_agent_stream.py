@@ -13,7 +13,7 @@ class FakeProvider:
         self.events = events or []
         self.error = error
 
-    async def stream_chat(self, messages, tools=None):
+    async def stream(self, request):
         if self.error is not None:
             raise self.error
         for event in self.events:

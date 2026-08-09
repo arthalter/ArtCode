@@ -30,7 +30,7 @@ class ResponseProvider:
         self.response = response
         self.include_tool_call = include_tool_call
 
-    async def stream_chat(self, messages, tools=None, *, options=None):
+    async def stream(self, request):
         yield content_delta_event(self.response)
         if self.include_tool_call:
             yield tool_calls_event([ToolCall("memory-tool", "read_file", "{}")])
@@ -41,7 +41,7 @@ class FailingProvider:
     def __init__(self, mode: str) -> None:
         self.mode = mode
 
-    async def stream_chat(self, messages, tools=None, *, options=None):
+    async def stream(self, request):
         if self.mode == "timeout":
             await asyncio.Event().wait()
         raise RuntimeError("provider exploded")

@@ -29,7 +29,7 @@ class SummaryProvider:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def stream_chat(self, messages, tools=None, *, options=None):
+    async def stream(self, request):
         self.calls += 1
         yield content_delta_event(valid_summary())
         yield done_event()

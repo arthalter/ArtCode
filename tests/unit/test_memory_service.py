@@ -22,7 +22,7 @@ pytestmark = pytest.mark.ch10_5
 
 
 class UnusedProvider:
-    async def stream_chat(self, messages, tools=None, *, options=None):
+    async def stream(self, request):
         if False:
             yield {}
 
@@ -211,9 +211,9 @@ def test_memory_summary_reflects_durable_note_state(
                     )
                 ]
             )
-    summary = service.summary()
-    assert summary["project_active"] == int(summary_state == "active")
-    assert summary["project_superseded"] == int(summary_state == "superseded")
+    snapshot = service.status_snapshot()
+    assert snapshot.project_active == int(summary_state == "active")
+    assert snapshot.project_superseded == int(summary_state == "superseded")
 
 
 @pytest.mark.parametrize(

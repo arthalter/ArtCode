@@ -3,7 +3,7 @@ from __future__ import annotations
 from artcode.prompting import build_system_prompt, default_fixed_sections
 
 
-def test_default_fixed_sections_are_the_ch05_seven_modules() -> None:
+def test_default_fixed_sections_are_the_seven_fixed_modules() -> None:
     sections = default_fixed_sections()
 
     assert [section.title for section in sections] == [
@@ -21,7 +21,6 @@ def test_default_fixed_sections_are_the_ch05_seven_modules() -> None:
 def test_default_system_prompt_contains_system_reminder_rule() -> None:
     prompt = build_system_prompt()
 
-    assert "ch09" in prompt
     assert "<system-reminder>" in prompt
     assert "系统级补充约束" in prompt
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from artcode.agent import AgentEventType, PLAN_MODE, ToolAccessPolicy
+from artcode.agent import AgentEventType, NORMAL_AGENT_MODE, PLAN_MODE, ToolAccessPolicy
 from artcode.permissions import (
     ApprovalChoice,
     PermissionAction,
@@ -20,19 +20,18 @@ from artcode.permissions.service import PermissionService
 from artcode.providers.tool_calls import ToolCall
 from artcode.security import DangerousCommandValidator
 from artcode.tools import (
-    AllowedPathPolicy,
     DescriptorBackedTool,
     PreparedToolCall,
     ToolDescriptor,
     ToolEffect,
-    ToolExecutionContext,
+    ToolEnvironment,
     ToolOrigin,
     ToolPreview,
     ToolRegistry,
     create_default_tool_registry,
     success_result,
 )
-from artcode.tools.execution import ToolExecutionBlocked, ToolExecutionService, ToolSafety
+from artcode.tools.execution import ToolExecutionBlocked, ToolExecutionService as _ToolExecutionService, ToolSafety
 
 pytestmark = pytest.mark.ch10_5
 
@@ -74,7 +73,7 @@ class IntegrationTool(DescriptorBackedTool):
 
     def prepare(self, arguments, context):
         target = arguments.get("target", self.name)
-        return PreparedToolCall(self, arguments, ToolPreview(self.name, self.name, target, True))
+        return PreparedToolCall(self, arguments, ToolPreview(self.name, self.name, target))
 
     async def execute(self, prepared, context):
         self.executed = True
@@ -83,8 +82,16 @@ class IntegrationTool(DescriptorBackedTool):
         return success_result(self.name, f"{self.name} ok", prepared.arguments.get("content", ""))
 
 
-def execution_context(tmp_path: Path) -> ToolExecutionContext:
-    return ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path)
+def execution_context(tmp_path: Path) -> ToolEnvironment:
+    return ToolEnvironment.from_workspace(tmp_path)
+
+
+def ToolExecutionService(registry, environment, permission=None) -> _ToolExecutionService:
+    return _ToolExecutionService(
+        registry,
+        environment,
+        permission or PermissionService(PermissionState()),
+    )
 
 
 def engine(tmp_path: Path, *, allowed_names=None):
@@ -95,11 +102,11 @@ def engine(tmp_path: Path, *, allowed_names=None):
     return PermissionEngine(loader, DangerousCommandValidator.load()), loader
 
 
-async def execute(service: ToolExecutionService, calls: list[ToolCall], policy=None, mode=None):
+async def execute(service: _ToolExecutionService, calls: list[ToolCall], policy=None, mode=None):
     plan = service.build_plan(calls, policy or ToolAccessPolicy())
     if isinstance(plan, ToolExecutionBlocked):
         return plan, []
-    events = [event async for event in service.execute_plan(plan, mode=mode)]
+    events = [event async for event in service.execute_plan(plan, mode=mode or NORMAL_AGENT_MODE)]
     results = [event.payload["result"] for event in events if event.type is AgentEventType.TOOL_RESULT]
     return plan, results
 
@@ -171,7 +178,11 @@ async def test_plan_policy_blocks_side_effects_but_confirms_mcp(tmp_path, effect
     registry = ToolRegistry()
     registry.register(tool)
     approver = ChoiceApprover(mcp=True)
-    service = ToolExecutionService(registry, execution_context(tmp_path), approver=approver)
+    service = ToolExecutionService(
+        registry,
+        execution_context(tmp_path),
+        PermissionService(PermissionState(), approver=approver),
+    )
 
     plan, results = await execute(
         service,
@@ -216,9 +227,8 @@ async def test_concurrent_batch_retains_successes_around_failure(tmp_path, failu
 async def test_rule_layer_decision_flows_into_real_write(tmp_path, layer, action, expected_ok, approval_count) -> None:
     permission_engine, loader = engine(tmp_path)
     selected_path = getattr(loader.paths, layer)
-    target = tmp_path / "note.txt"
     selected_path.write_text(
-        yaml.safe_dump({"rules": [{"match": f"write_file({target})", "action": action.value}]}),
+        yaml.safe_dump({"rules": [{"match": "write_file(note.txt)", "action": action.value}]}),
         encoding="utf-8",
     )
     approver = ChoiceApprover(ApprovalChoice.ALLOW_ONCE)

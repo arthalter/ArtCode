@@ -22,7 +22,7 @@ NOW = datetime(2026, 8, 10, 15, 0, tzinfo=timezone.utc)
 
 
 class UnusedProvider:
-    async def stream_chat(self, messages, tools=None, *, options=None):
+    async def stream(self, request):
         if False:
             yield {}
 

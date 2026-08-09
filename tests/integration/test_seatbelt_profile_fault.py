@@ -4,24 +4,27 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from artcode.permissions import ShellPolicy
+from artcode.agent import NORMAL_AGENT_MODE
+from artcode.permissions import PermissionState, ShellPolicy
 from artcode.sandbox import SeatbeltSession
-from artcode.tools import PreparedToolCall, ToolExecutionContext, WorkspacePathPolicy
+from artcode.tools import PreparedToolCall, ToolEnvironment, ToolRunContext
 from artcode.tools.command_tool import RunCommandTool
-from artcode.workspace import Workspace
 
 
-def command_context(workspace: Path, session: SeatbeltSession) -> ToolExecutionContext:
-    return ToolExecutionContext(
-        WorkspacePathPolicy(Workspace.from_path(workspace)),
-        default_cwd=workspace,
-        shell_policy=ShellPolicy.SANDBOX_AUTO,
+def command_context(workspace: Path, session: SeatbeltSession) -> ToolRunContext:
+    environment = ToolEnvironment.from_workspace(
+        workspace,
         seatbelt=session,
+    )
+    return ToolRunContext(
+        environment,
+        NORMAL_AGENT_MODE,
+        PermissionState(shell_policy=ShellPolicy.SANDBOX_AUTO).snapshot(),
     )
 
 
 async def execute_probe(
-    context: ToolExecutionContext,
+    context: ToolRunContext,
     filename: str,
     content: str = "executed",
 ):

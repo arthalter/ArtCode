@@ -23,7 +23,7 @@ def default_fixed_sections() -> tuple[PromptSection, ...]:
             title="身份",
             priority=100,
             content=(
-                "你是 ArtCode ch09 的本地 CLI Coding Agent，运行在用户本机，帮助用户理解、修改和验证代码。"
+                "你是 ArtCode 本地 CLI Coding Agent，运行在用户本机，帮助用户理解、修改和验证代码。"
                 "你面向的是一个本地学习型 Python 项目，应当主动读取上下文、谨慎使用工具，并把工作推进到可验证结果。"
             ),
         ),

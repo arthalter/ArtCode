@@ -32,8 +32,8 @@ class FakeProvider:
         self.events = events
         self.calls = []
 
-    async def stream_chat(self, messages, tools=None, *, options=None):
-        self.calls.append((messages, tools, options))
+    async def stream(self, request):
+        self.calls.append(request)
         for event in self.events:
             yield event
 
@@ -86,10 +86,10 @@ async def test_summarizer_uses_no_tools_and_commits_transactionally() -> None:
     messages = context.export_messages()
 
     assert result.succeeded
-    assert provider.calls[0][1] is None
-    assert provider.calls[0][2].max_output_tokens == 20_000
-    assert provider.calls[0][2].thinking_enabled is False
-    assert VERBATIM_PLACEHOLDER in provider.calls[0][0][0]["content"]
+    assert provider.calls[0].tools is None
+    assert provider.calls[0].max_output_tokens == 20_000
+    assert provider.calls[0].thinking_enabled is False
+    assert VERBATIM_PLACEHOLDER in provider.calls[0].messages[0]["content"]
     assert messages[0] == {"role": "system", "content": "system"}
     assert messages[1]["content"].startswith("<conversation-summary>")
     assert "UNIQUE_DRAFT" not in str(messages)
@@ -127,7 +127,7 @@ async def test_version_change_while_summarizing_rejects_commit() -> None:
     context, snapshot, plan = compressible_context()
 
     class MutatingProvider(FakeProvider):
-        async def stream_chat(self, messages, tools=None, *, options=None):
+        async def stream(self, request):
             context.append_user("并发新消息")
             yield content_delta_event(valid_summary())
             yield done_event()

@@ -3,20 +3,25 @@ from __future__ import annotations
 from pathlib import Path
 
 from artcode.agent.modes import DO_MODE, NORMAL_AGENT_MODE, PLAN_MODE
+from artcode.permissions import PermissionState
 from artcode.prompting.reminder import SystemReminderBuilder, collect_runtime_reminder_context
-from artcode.tools import AllowedPathPolicy, ToolExecutionContext
+from artcode.tools import ToolEnvironment, ToolRunContext
 
 
 ALL_TOOLS = ("read_file", "write_file", "edit_file", "run_command", "find_files", "search_text")
 
 
-def tool_context(root: Path) -> ToolExecutionContext:
-    return ToolExecutionContext(AllowedPathPolicy((root,)), default_cwd=root)
+def tool_context(root: Path, mode=NORMAL_AGENT_MODE) -> ToolRunContext:
+    return ToolRunContext(
+        ToolEnvironment.from_workspace(root),
+        mode,
+        PermissionState().snapshot(),
+    )
 
 
 def test_plan_mode_reminder_contains_read_only_boundaries(tmp_path) -> None:
     allowed = ("read_file", "find_files", "search_text")
-    context = collect_runtime_reminder_context(PLAN_MODE, ALL_TOOLS, allowed, tool_context(tmp_path))
+    context = collect_runtime_reminder_context(PLAN_MODE, ALL_TOOLS, allowed, tool_context(tmp_path, PLAN_MODE))
 
     message = SystemReminderBuilder().build_message(context)
 
@@ -44,7 +49,7 @@ def test_normal_mode_reminder_lists_all_tools(tmp_path) -> None:
 
 
 def test_do_mode_reminder_uses_do_purpose(tmp_path) -> None:
-    context = collect_runtime_reminder_context(DO_MODE, ALL_TOOLS, ALL_TOOLS, tool_context(tmp_path))
+    context = collect_runtime_reminder_context(DO_MODE, ALL_TOOLS, ALL_TOOLS, tool_context(tmp_path, DO_MODE))
 
     message = SystemReminderBuilder().build_message(context)["content"]
 

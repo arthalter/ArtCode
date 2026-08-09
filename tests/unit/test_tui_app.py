@@ -31,21 +31,21 @@ def tui_with_answers(answers: list[str]) -> PromptToolkitTui:
 
 
 async def test_confirm_tool_execution_accepts_yes_and_y() -> None:
-    preview = ToolPreview("write_file", "写入", "note.txt", True)
+    preview = ToolPreview("write_file", "写入", "note.txt")
 
     assert await tui_with_answers(["yes"]).confirm_tool_execution(preview) is True
     assert await tui_with_answers(["y"]).confirm_tool_execution(preview) is True
 
 
 async def test_confirm_tool_execution_accepts_no_and_n() -> None:
-    preview = ToolPreview("write_file", "写入", "note.txt", True)
+    preview = ToolPreview("write_file", "写入", "note.txt")
 
     assert await tui_with_answers(["no"]).confirm_tool_execution(preview) is False
     assert await tui_with_answers(["n"]).confirm_tool_execution(preview) is False
 
 
 async def test_confirm_tool_execution_reprompts_invalid_answer() -> None:
-    preview = ToolPreview("write_file", "写入", "note.txt", True)
+    preview = ToolPreview("write_file", "写入", "note.txt")
 
     assert await tui_with_answers(["maybe", "y"]).confirm_tool_execution(preview) is True
 
@@ -113,7 +113,7 @@ def test_clear_and_status_forward_to_renderer() -> None:
 @pytest.mark.parametrize("plan_mode", [False, True])
 async def test_mcp_confirmation_receives_explicit_plan_mode(plan_mode: bool) -> None:
     tui = tui_with_answers(["yes"])
-    preview = ToolPreview("mcp__s__t", "{}", "s/t", True)
+    preview = ToolPreview("mcp__s__t", "{}", "s/t")
 
     assert await tui.confirm_mcp_tool(preview, plan_mode)
     assert f"Plan 模式：{'是' if plan_mode else '否'}" in tui.renderer.console.export_text()

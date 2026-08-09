@@ -5,12 +5,11 @@ from .base import (
     ToolDescriptor,
     ToolEffect,
     ToolEnvironment,
-    ToolExecutionContext,
     ToolOrigin,
     ToolPreview,
     ToolRunContext,
 )
-from .policy import AllowedPathPolicy, PathPolicyError, WorkspacePathPolicy
+from .policy import PathPolicyError, WorkspacePathPolicy
 from .registry import ToolRegistry, create_default_tool_registry
 from .results import ToolResult, denied_result, error_result, success_result
 from .filesystem import (
@@ -25,7 +24,6 @@ from .filesystem import (
 from .process import ProcessResult, ProcessSupervisor
 
 __all__ = [
-    "AllowedPathPolicy",
     "DescriptorBackedTool",
     "PathPolicyError",
     "WorkspacePathPolicy",
@@ -43,7 +41,6 @@ __all__ = [
     "ToolDescriptor",
     "ToolEffect",
     "ToolEnvironment",
-    "ToolExecutionContext",
     "ToolOrigin",
     "ToolPreview",
     "ToolRunContext",

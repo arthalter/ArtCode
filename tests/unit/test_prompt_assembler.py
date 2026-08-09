@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from artcode.agent.modes import NORMAL_AGENT_MODE, PLAN_MODE
+from artcode.permissions import PermissionState
 from artcode.prompting.assembler import PromptRequestAssembler
-from artcode.tools import AllowedPathPolicy, ToolExecutionContext
+from artcode.tools import ToolEnvironment, ToolRunContext
 
 
 def tool_context(tmp_path):
-    return ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path)
+    return ToolRunContext(
+        ToolEnvironment.from_workspace(tmp_path),
+        NORMAL_AGENT_MODE,
+        PermissionState().snapshot(),
+    )
 
 
 def openai_tool(name: str) -> dict:

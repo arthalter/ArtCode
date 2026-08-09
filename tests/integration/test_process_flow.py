@@ -6,7 +6,7 @@ import pytest
 
 from artcode.agent import NORMAL_AGENT_MODE
 from artcode.permissions import PermissionState, ShellPolicy
-from artcode.tools import AllowedPathPolicy, PreparedToolCall, ToolExecutionContext
+from artcode.tools import PreparedToolCall, ToolEnvironment, ToolRunContext
 from artcode.tools.command_tool import RunCommandTool
 from artcode.tools.process import ProcessResult
 
@@ -14,12 +14,15 @@ pytestmark = pytest.mark.ch10_5
 
 
 def context_for(root, *, timeout=2):
-    return ToolExecutionContext(
-        AllowedPathPolicy((root,)),
-        default_cwd=root,
+    environment = ToolEnvironment.from_workspace(
+        root,
         command_timeout_seconds=timeout,
-        shell_policy=ShellPolicy.UNSANDBOXED_ASK,
-    ).to_run_context(NORMAL_AGENT_MODE, PermissionState(shell_policy=ShellPolicy.UNSANDBOXED_ASK))
+    )
+    return ToolRunContext(
+        environment,
+        NORMAL_AGENT_MODE,
+        PermissionState(shell_policy=ShellPolicy.UNSANDBOXED_ASK).snapshot(),
+    )
 
 
 async def run_command(root, command, *, timeout=2, tool=None):

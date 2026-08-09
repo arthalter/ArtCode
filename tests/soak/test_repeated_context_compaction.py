@@ -27,7 +27,7 @@ def valid_summary() -> str:
 
 
 class Provider:
-    async def stream_chat(self, messages, tools=None, *, options=None):
+    async def stream(self, request):
         yield content_delta_event(valid_summary())
         yield done_event()
 

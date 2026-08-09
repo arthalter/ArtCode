@@ -6,7 +6,10 @@ from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, Request
 from artcode.context_management.models import CompressionCircuit, CompressionTrigger, LightweightReport
 from artcode.conversation import ConversationContext
 from artcode.prompting.assembler import PromptRequestAssembler
-from artcode.tools import AllowedPathPolicy, ToolExecutionContext, ToolRegistry
+from artcode.permissions import PermissionState
+from artcode.permissions.service import PermissionService
+from artcode.tools import ToolEnvironment, ToolRegistry
+from artcode.tools.execution import ToolExecutionService
 
 pytestmark = [pytest.mark.ch10_5, pytest.mark.fault]
 
@@ -67,13 +70,15 @@ class FaultyContextManager:
 async def test_every_pre_dispatch_preparation_fault_preserves_resume_reminder(tmp_path, stage: str) -> None:
     conversation = ConversationContext()
     registry = ToolRegistry()
-    context = ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path)
+    environment = ToolEnvironment.from_workspace(tmp_path)
+    permission = PermissionState()
     provider = NeverProvider()
     preparer = RequestPreparer(
         conversation,
         FaultyAssembler() if stage == "assembler" else PromptRequestAssembler(),
         registry,
-        context,
+        environment,
+        permission,
         context_manager=(
             FaultyContextManager(stage)
             if stage in {"lightweight", "estimate", "compact"}
@@ -86,7 +91,12 @@ async def test_every_pre_dispatch_preparation_fault_preserves_resume_reminder(tm
         provider,
         conversation,
         registry,
-        context,
+        environment,
+        tool_executor=ToolExecutionService(
+            registry,
+            environment,
+            PermissionService(permission),
+        ),
         request_preparer=preparer,
     )
 

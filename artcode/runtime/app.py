@@ -29,7 +29,7 @@ from artcode.permissions import (
     ShellPolicy,
 )
 from artcode.tools import (
-    ToolExecutionContext,
+    ToolEnvironment,
     ToolResult,
 )
 from artcode.tui import UserRequestedExit
@@ -124,7 +124,7 @@ class ArtCodeRuntime:
     tui: TuiApp
     workspace: Workspace
     state: RuntimeState
-    tool_context: ToolExecutionContext
+    tool_environment: ToolEnvironment
     plan_memory: PlanMemory
     agent_loop: AgentLoop
     command_dispatcher: CommandDispatcher
@@ -181,7 +181,7 @@ class ArtCodeRuntime:
                 else "new"
             )
         )
-        seatbelt = self.tool_context.seatbelt
+        seatbelt = self.tool_environment.seatbelt
         if seatbelt is None:
             seatbelt_status = "not initialized"
         elif seatbelt.self_tested:

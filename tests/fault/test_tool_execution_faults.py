@@ -9,12 +9,11 @@ from artcode.permissions import ApprovalChoice, PermissionAction, PermissionStat
 from artcode.permissions.service import PermissionService
 from artcode.providers.tool_calls import ToolCall
 from artcode.tools import (
-    AllowedPathPolicy,
     DescriptorBackedTool,
     PreparedToolCall,
     ToolDescriptor,
     ToolEffect,
-    ToolExecutionContext,
+    ToolEnvironment,
     ToolPreview,
     ToolRegistry,
     success_result,
@@ -34,7 +33,7 @@ class FaultTool(DescriptorBackedTool):
     def prepare(self, arguments, context):
         if self.prepare_cancel:
             raise asyncio.CancelledError
-        return PreparedToolCall(self, arguments, ToolPreview(self.name, self.name, self.name, False))
+        return PreparedToolCall(self, arguments, ToolPreview(self.name, self.name, self.name))
 
     async def execute(self, prepared, context):
         if self.execute_cancel:
@@ -49,7 +48,8 @@ def service(tmp_path, *tools) -> ToolExecutionService:
     registry.register_many(list(tools))
     return ToolExecutionService(
         registry,
-        ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path),
+        ToolEnvironment.from_workspace(tmp_path),
+        PermissionService(PermissionState()),
     )
 
 
@@ -58,7 +58,7 @@ async def consume(selected: ToolExecutionService, names: list[str]):
         [ToolCall(str(index), name, "{}") for index, name in enumerate(names)],
         ToolAccessPolicy(),
     )
-    return [event async for event in selected.execute_plan(plan)]
+    return [event async for event in selected.execute_plan(plan, mode=NORMAL_AGENT_MODE)]
 
 
 async def test_prepare_cancellation_propagates_to_agent_boundary(tmp_path) -> None:
@@ -117,7 +117,7 @@ async def test_rule_write_failure_is_atomic_and_returns_structured_error(tmp_pat
     )
     selected = ToolExecutionService(
         registry,
-        ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path),
+        ToolEnvironment.from_workspace(tmp_path),
         permission,
     )
 

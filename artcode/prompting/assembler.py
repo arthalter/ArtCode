@@ -5,7 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from artcode.tools import ToolExecutionContext, ToolRunContext
+from artcode.tools import ToolEnvironment, ToolRunContext
 
 if TYPE_CHECKING:
     from artcode.agent.modes import AgentMode
@@ -30,7 +30,7 @@ class PromptRequestAssembler:
         conversation_messages: Sequence[dict[str, Any]],
         mode: AgentMode | None,
         all_tools: Sequence[dict[str, Any]] | None,
-        tool_context: ToolExecutionContext | ToolRunContext,
+        tool_context: ToolEnvironment | ToolRunContext,
         *,
         durable_system_prompt: str | None = None,
         include_resume_reminder: bool = False,

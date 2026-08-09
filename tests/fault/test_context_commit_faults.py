@@ -35,7 +35,7 @@ def compressible():
 
 async def test_provider_failure_preserves_exact_conversation_snapshot() -> None:
     class FailedProvider:
-        async def stream_chat(self, messages, tools=None, *, options=None):
+        async def stream(self, request):
             raise NetworkError("failed", "retry")
             yield
 
@@ -50,7 +50,7 @@ async def test_provider_failure_preserves_exact_conversation_snapshot() -> None:
 
 async def test_parser_failure_preserves_exact_conversation_snapshot() -> None:
     class InvalidProvider:
-        async def stream_chat(self, messages, tools=None, *, options=None):
+        async def stream(self, request):
             yield content_delta_event("not a summary")
             yield done_event()
 
@@ -67,7 +67,7 @@ async def test_concurrent_version_change_rejects_summary_commit_without_lost_ent
     context, snapshot, plan = compressible()
 
     class MutatingProvider:
-        async def stream_chat(self, messages, tools=None, *, options=None):
+        async def stream(self, request):
             context.append_user("concurrent-user")
             yield content_delta_event(valid_summary())
             yield done_event()
@@ -82,7 +82,7 @@ async def test_summary_cancellation_propagates_and_preserves_snapshot() -> None:
     gate = asyncio.Event()
 
     class BlockingProvider:
-        async def stream_chat(self, messages, tools=None, *, options=None):
+        async def stream(self, request):
             await gate.wait()
             yield content_delta_event(valid_summary())
 

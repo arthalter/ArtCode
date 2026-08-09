@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Sequence
 from typing import Any, Callable
 
 from artcode.errors import StreamInterruptedError
-from artcode.providers.base import ProviderRequest, StreamingProvider, stream_provider
+from artcode.providers.base import ProviderRequest, StreamingProvider
 from artcode.providers.events import (
     ContentDelta,
     ReasoningDelta,
@@ -34,7 +34,7 @@ class StreamCollector:
         if on_dispatch is not None:
             on_dispatch()
 
-        async for event in stream_provider(provider, request):
+        async for event in provider.stream(request):
             if isinstance(event, ContentDelta):
                 parts.append(event.text)
                 yield text_delta_event(event.text)

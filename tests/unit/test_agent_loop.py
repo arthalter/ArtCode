@@ -5,22 +5,25 @@ import json
 from pathlib import Path
 from typing import Any
 
-from artcode.agent import AgentEventType, AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, PLAN_MODE, StopReason
+from artcode.agent import AgentEventType, AgentLoop as _AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, PLAN_MODE, RequestPreparer, StopReason
 from artcode.conversation import ConversationContext
 from artcode.persistence import SessionJournal, MAX_RECORD_BYTES
 from artcode.errors import StreamInterruptedError
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
+from artcode.permissions import PermissionState
+from artcode.permissions.service import PermissionService
+from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.tools import (
-    AllowedPathPolicy,
     DescriptorBackedTool,
     PreparedToolCall,
     ToolDescriptor,
     ToolEffect,
-    ToolExecutionContext,
+    ToolEnvironment,
     ToolPreview,
     ToolRegistry,
 )
+from artcode.tools.execution import ToolExecutionService
 from artcode.tools.results import ToolResult, error_result, success_result
 
 
@@ -31,9 +34,9 @@ class FakeProvider:
         self.tools_seen: list[list[dict] | None] = []
         self.messages_seen: list[list[dict]] = []
 
-    async def stream_chat(self, messages, tools=None):
-        self.messages_seen.append(list(messages))
-        self.tools_seen.append(tools)
+    async def stream(self, request):
+        self.messages_seen.append(list(request.messages))
+        self.tools_seen.append(None if request.tools is None else list(request.tools))
         if self.error is not None:
             raise self.error
         for event in self.responses.pop(0):
@@ -52,24 +55,60 @@ class FakeTool(DescriptorBackedTool):
         self.result = result
         self.executions = 0
 
-    def prepare(self, arguments: dict[str, Any], context: ToolExecutionContext) -> PreparedToolCall | ToolResult:
+    def prepare(self, arguments: dict[str, Any], context) -> PreparedToolCall | ToolResult:
         if arguments.get("prepare_error"):
             return error_result(self.name, "prepare_error", "预检失败。")
-        return PreparedToolCall(self, arguments, ToolPreview(self.name, self.name, self.name, False))
+        return PreparedToolCall(self, arguments, ToolPreview(self.name, self.name, self.name))
 
-    async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
+    async def execute(self, prepared: PreparedToolCall, context) -> ToolResult:
         self.executions += 1
         return self.result or success_result(self.name, f"{self.name} ok")
 
 
 class CancellingTool(FakeTool):
-    async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
+    async def execute(self, prepared: PreparedToolCall, context) -> ToolResult:
         self.executions += 1
         raise asyncio.CancelledError
 
 
-def context_for(tmp_path: Path) -> ToolExecutionContext:
-    return ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path)
+def context_for(tmp_path: Path) -> ToolEnvironment:
+    return ToolEnvironment.from_workspace(tmp_path)
+
+
+def AgentLoop(
+    provider,
+    conversation,
+    registry,
+    environment,
+    *,
+    context_manager=None,
+    natural_turn_observer=None,
+    session_id="ephemeral",
+):
+    permission = PermissionState()
+    preparer = RequestPreparer(
+        conversation,
+        PromptRequestAssembler(),
+        registry,
+        environment,
+        permission,
+        context_manager=context_manager,
+    )
+    return _AgentLoop(
+        provider,
+        conversation,
+        registry,
+        environment,
+        tool_executor=ToolExecutionService(
+            registry,
+            environment,
+            PermissionService(permission),
+        ),
+        request_preparer=preparer,
+        context_manager=context_manager,
+        natural_turn_observer=natural_turn_observer,
+        session_id=session_id,
+    )
 
 
 def registry_with(*tools: FakeTool) -> ToolRegistry:
@@ -92,7 +131,7 @@ class EstimateSpy:
         return 4321
 
 
-async def collect(loop: AgentLoop, request: AgentRunRequest):
+async def collect(loop: _AgentLoop, request: AgentRunRequest):
     return [event async for event in loop.run(request)]
 
 

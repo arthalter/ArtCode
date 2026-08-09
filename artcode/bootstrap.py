@@ -38,7 +38,7 @@ from artcode.providers import DeepSeekChatProvider
 from artcode.runtime import ArtCodeRuntime, RuntimeState
 from artcode.sandbox import SeatbeltSession
 from artcode.security import DangerousCommandValidator
-from artcode.tools import ToolExecutionContext, ToolPreview, WorkspacePathPolicy
+from artcode.tools import ToolEnvironment, ToolPreview
 from artcode.tools import create_default_tool_registry
 from artcode.tools.execution import ToolExecutionService
 from artcode.tui import PromptToolkitTui, TuiRenderer
@@ -140,11 +140,10 @@ class Bootstrap:
         resources.push_async_callback(memory_service.close)
 
         state = RuntimeState(PermissionState())
-        tool_context = ToolExecutionContext(
-            WorkspacePathPolicy(workspace, sensitive_paths),
-            default_cwd=workspace.root,
+        tool_environment = ToolEnvironment.from_workspace(
+            workspace,
+            sensitive_paths=sensitive_paths,
             seatbelt=seatbelt,
-            permission_state=state.permission,
             artifact_store=artifact_store,
         )
         tool_registry = create_default_tool_registry()
@@ -160,7 +159,8 @@ class Bootstrap:
             session.conversation,
             PromptRequestAssembler(),
             tool_registry,
-            tool_context,
+            tool_environment,
+            state.permission,
             context_manager=context_manager,
             durable_prompt=prompt_source,
         )
@@ -182,14 +182,14 @@ class Bootstrap:
         )
         tool_executor = ToolExecutionService(
             tool_registry,
-            tool_context,
+            tool_environment,
             permission_service,
         )
         agent_loop = AgentLoop(
             provider=provider,
             conversation=session.conversation,
             tool_registry=tool_registry,
-            tool_context=tool_context,
+            tool_environment=tool_environment,
             plan_memory=session.plan_memory,
             tool_executor=tool_executor,
             context_manager=context_manager,
@@ -212,7 +212,7 @@ class Bootstrap:
             tui=tui,
             workspace=workspace,
             state=state,
-            tool_context=tool_context,
+            tool_environment=tool_environment,
             plan_memory=session.plan_memory,
             agent_loop=agent_loop,
             command_dispatcher=CommandDispatcher(create_default_registry()),

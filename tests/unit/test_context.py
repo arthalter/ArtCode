@@ -10,7 +10,6 @@ def test_context_starts_with_system_prompt() -> None:
     messages = context.export_messages()
 
     assert messages[0]["role"] == "system"
-    assert "ch09" in messages[0]["content"]
     assert "Agent Loop" in messages[0]["content"]
     assert "# 身份" in messages[0]["content"]
     assert "# 系统约束" in messages[0]["content"]

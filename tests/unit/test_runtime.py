@@ -13,12 +13,15 @@ from artcode.providers.events import (
     tool_calls_event,
 )
 from artcode.providers.tool_calls import ToolCall
-from tests.runtime_factory import build_test_runtime as ArtCodeRuntime
+from tests.runtime_factory import (
+    build_test_runtime as ArtCodeRuntime,
+    register_test_workspace,
+)
 from artcode.context_management import ContextManager, ContextSummarizer
 from artcode.context_management.retention import RetentionPlanner
 from artcode.context_management.summarizer import SUMMARY_TITLES, VERBATIM_PLACEHOLDER
 from artcode.errors import NetworkError
-from artcode.persistence import PersistenceCoordinator, SessionSelection
+from artcode.persistence import DurablePaths, MemoryService, SessionSelection, SessionService
 from artcode.permissions import ApprovalChoice, PermissionMode, ShellPolicy
 from artcode.workspace import ArtCodePaths, Workspace
 
@@ -132,15 +135,15 @@ class FakeProvider:
         self.tools_seen: list[list[dict] | None] = []
         self.messages_seen: list[list[dict]] = []
 
-    async def stream_chat(self, messages, tools=None, *, options=None):
-        self.messages_seen.append(list(messages))
-        self.tools_seen.append(tools)
+    async def stream(self, request):
+        self.messages_seen.append(list(request.messages))
+        self.tools_seen.append(None if request.tools is None else list(request.tools))
         for event in self.responses.pop(0):
             yield event
 
 
 class FailingProvider:
-    async def stream_chat(self, messages, tools=None, *, options=None):
+    async def stream(self, request):
         raise NetworkError("模拟网络失败")
         yield
 
@@ -155,14 +158,13 @@ def valid_summary() -> str:
 
 def fake_config(root: Path) -> ArtCodeConfig:
     root.mkdir(exist_ok=True)
-    return ArtCodeConfig(
+    return register_test_workspace(ArtCodeConfig(
         protocol="openai",
         model="deepseek-v4-flash",
         base_url="https://api.deepseek.com",
         api_key="sk-test",
         thinking=ThinkingConfig(),
-        workspace=root,
-    )
+    ), root)
 
 
 async def test_runtime_routes_plain_input_through_agent_loop(tmp_path) -> None:
@@ -469,29 +471,29 @@ async def test_runtime_persistence_commands_show_metadata_without_becoming_messa
     root.mkdir()
     workspace = Workspace.from_path(root)
     provider = FakeProvider([])
-    persistence = PersistenceCoordinator.start(
-        ArtCodePaths.create(tmp_path / "home"),
-        workspace,
-        provider,
-        SessionSelection.new(),
-    )
+    paths = DurablePaths.from_context(ArtCodePaths.create(tmp_path / "home"), workspace)
+    sessions = SessionService(paths)
+    session = sessions.start(SessionSelection.new())
+    memory = MemoryService(paths, provider)
     tui = FakeTui(["/sessions", "/memory", "/exit"])
     runtime = ArtCodeRuntime(
         fake_config(root),
         provider,
-        persistence.conversation,
+        session.conversation,
         tui,
         workspace=workspace,
-        plan_memory=persistence.plan_memory,
-        persistence=persistence,
+        plan_memory=session.plan_memory,
+        session_service=sessions,
+        memory_service=memory,
     )
     try:
         await runtime.run()
         output = "\n".join(tui.output)
-        assert persistence.status.session_id in output
+        assert sessions.status.session_id in output
         assert "用户级记忆" in output
         assert "项目级记忆" in output
         assert "superseded=0" in output
-        assert len(persistence.conversation.export_messages()) == 1
+        assert len(session.conversation.export_messages()) == 1
     finally:
-        await persistence.close()
+        await memory.close()
+        sessions.close()

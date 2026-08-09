@@ -9,7 +9,7 @@ from typing import Any
 
 from artcode.agent.events import CompletedTurn
 from artcode.errors import RequestError, scrub_secrets
-from artcode.providers.base import ProviderRequest, StreamingProvider, stream_provider
+from artcode.providers.base import ProviderRequest, StreamingProvider
 from artcode.providers.events import ContentDelta, ToolCallsCompleted
 from artcode.providers.tool_calls import ToolCall
 
@@ -212,8 +212,7 @@ class MemoryUpdater:
         tool_calls: list[ToolCall] = []
         try:
             async with asyncio.timeout(self.timeout_seconds):
-                async for event in stream_provider(
-                    self.provider,
+                async for event in self.provider.stream(
                     ProviderRequest.from_parts(
                         messages,
                         None,

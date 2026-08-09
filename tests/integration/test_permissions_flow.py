@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from artcode.agent import ToolAccessPolicy
-from artcode.agent.tools import ToolBatchExecutor
+from artcode.agent import NORMAL_AGENT_MODE, ToolAccessPolicy
 from artcode.permissions import (
     ApprovalChoice,
     PermissionEngine,
@@ -12,9 +11,11 @@ from artcode.permissions import (
     RulePaths,
     RuleWriter,
 )
+from artcode.permissions.service import PermissionService
 from artcode.providers.tool_calls import ToolCall
 from artcode.security import DangerousCommandValidator
-from artcode.tools import ToolExecutionContext, WorkspacePathPolicy, create_default_tool_registry
+from artcode.tools import ToolEnvironment, create_default_tool_registry
+from artcode.tools.execution import ToolExecutionService
 from artcode.workspace import Workspace
 
 
@@ -36,17 +37,20 @@ async def test_default_hitl_persists_exact_local_rule_and_hot_reloads(tmp_path: 
     rules = RuleLoader(paths)
     approver = FakeApprover([ApprovalChoice.ALLOW_ALWAYS])
     registry = create_default_tool_registry()
-    executor = ToolBatchExecutor(
+    state = PermissionState()
+    executor = ToolExecutionService(
         registry,
-        ToolExecutionContext(WorkspacePathPolicy(workspace), default_cwd=root),
-        permission_engine=PermissionEngine(rules, DangerousCommandValidator.load()),
-        permission_state=PermissionState(),
-        approver=approver,
-        rule_writer=RuleWriter(rules),
+        ToolEnvironment.from_workspace(workspace),
+        PermissionService(
+            state,
+            engine=PermissionEngine(rules, DangerousCommandValidator.load()),
+            approver=approver,
+            rule_writer=RuleWriter(rules),
+        ),
     )
     calls = [ToolCall("one", "write_file", '{"path":"note.txt","content":"one"}')]
     plan = executor.build_plan(calls, ToolAccessPolicy())
-    events = [event async for event in executor.execute_plan(plan)]
+    events = [event async for event in executor.execute_plan(plan, mode=NORMAL_AGENT_MODE)]
     assert events[-1].payload["result"].ok
     assert (root / "note.txt").read_text(encoding="utf-8") == "one"
     assert "write_file(note.txt)" in workspace.local_permissions_file.read_text(encoding="utf-8")
@@ -59,7 +63,7 @@ async def test_default_hitl_persists_exact_local_rule_and_hot_reloads(tmp_path: 
         )
     ]
     second_plan = executor.build_plan(second_calls, ToolAccessPolicy())
-    second_events = [event async for event in executor.execute_plan(second_plan)]
+    second_events = [event async for event in executor.execute_plan(second_plan, mode=NORMAL_AGENT_MODE)]
     assert second_events[-1].payload["result"].ok
     assert len(approver.requests) == 1
     assert (root / "note.txt").read_text(encoding="utf-8") == "two"

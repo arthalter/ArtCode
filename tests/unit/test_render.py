@@ -74,7 +74,7 @@ def test_stream_delta_outputs_raw_text() -> None:
 
 def test_tool_preview_is_rendered() -> None:
     renderer, console = capture_renderer()
-    preview = ToolPreview("write_file", "写入文件 /tmp/a.txt", "/tmp/a.txt", True)
+    preview = ToolPreview("write_file", "写入文件 /tmp/a.txt", "/tmp/a.txt")
 
     renderer.show_tool_preview(preview)
 

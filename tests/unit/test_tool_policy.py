@@ -4,12 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from artcode.tools.policy import AllowedPathPolicy
+from artcode.tools.policy import WorkspacePathPolicy
+from artcode.workspace import Workspace
 
 
-def policy_for(root: Path) -> AllowedPathPolicy:
+def policy_for(root: Path) -> WorkspacePathPolicy:
     root.mkdir()
-    return AllowedPathPolicy((root,))
+    return WorkspacePathPolicy(Workspace.from_path(root))
 
 
 def test_allowed_path_inside_root_resolves(tmp_path) -> None:
@@ -25,7 +26,7 @@ def test_absolute_path_outside_root_is_rejected(tmp_path) -> None:
     outside = tmp_path / "outside.txt"
     outside.write_text("secret", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="不在允许目录"):
+    with pytest.raises(ValueError, match="Workspace 外"):
         policy.resolve_existing_path(str(outside))
 
 
@@ -34,19 +35,20 @@ def test_parent_traversal_outside_root_is_rejected(tmp_path) -> None:
     outside = tmp_path / "outside.txt"
     outside.write_text("secret", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="不在允许目录"):
+    with pytest.raises(ValueError, match="Workspace 外"):
         policy.resolve_existing_path("../outside.txt")
 
 
 def test_new_file_parent_must_be_inside_root(tmp_path) -> None:
     policy = policy_for(tmp_path / "sandbox")
 
-    with pytest.raises(ValueError, match="不在允许目录"):
+    with pytest.raises(ValueError, match="Workspace 外"):
         policy.resolve_new_file_path("../outside.txt")
 
 
 def test_new_file_inside_root_resolves_parent(tmp_path) -> None:
     policy = policy_for(tmp_path / "sandbox")
+    (tmp_path / "sandbox" / "nested").mkdir()
 
     resolved = policy.resolve_new_file_path("nested/new.txt")
 

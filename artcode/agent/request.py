@@ -7,7 +7,8 @@ from artcode.context_management.models import CompressionReport, CompressionTrig
 from artcode.conversation import ConversationContext
 from artcode.prompting.assembler import PromptRequest, PromptRequestAssembler
 from artcode.providers.events import TokenUsage
-from artcode.tools import ToolExecutionContext, ToolRegistry
+from artcode.permissions import PermissionState
+from artcode.tools import ToolEnvironment, ToolRegistry, ToolRunContext
 
 from .events import AgentEvent, context_status_event
 
@@ -53,7 +54,8 @@ class RequestPreparer:
         conversation: ConversationContext,
         assembler: PromptRequestAssembler,
         tool_registry: ToolRegistry,
-        tool_context: ToolExecutionContext,
+        tool_environment: ToolEnvironment,
+        permission_state: PermissionState,
         *,
         context_manager: ContextManager | None = None,
         durable_prompt: DurableSystemPromptSource | None = None,
@@ -62,7 +64,8 @@ class RequestPreparer:
         self.conversation = conversation
         self.assembler = assembler
         self.tool_registry = tool_registry
-        self.tool_context = tool_context
+        self.tool_environment = tool_environment
+        self.permission_state = permission_state
         self.context_manager = context_manager
         self.durable_prompt = durable_prompt
         self._resume_reminder_pending = resume_reminder_required
@@ -174,9 +177,13 @@ class RequestPreparer:
         )
         durable = self.durable_prompt.build_system_prompt() if self.durable_prompt else None
         run_context = (
-            self.tool_context.to_run_context(mode)
+            ToolRunContext(
+                self.tool_environment,
+                mode,
+                self.permission_state.snapshot(),
+            )
             if mode is not None
-            else self.tool_context
+            else self.tool_environment
         )
         return self.assembler.assemble(
             self.conversation.export_messages(),

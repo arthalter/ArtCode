@@ -78,22 +78,6 @@ class MemoryService:
             last_report=self.last_report,
         )
 
-    def summary(self) -> dict[str, Any]:
-        """Transitional mapping compatibility; production uses an immutable snapshot."""
-
-        snapshot = self.status_snapshot()
-        return {
-            "user_path": snapshot.user_path,
-            "project_path": snapshot.project_path,
-            "user_active": snapshot.user_active,
-            "project_active": snapshot.project_active,
-            "user_superseded": snapshot.user_superseded,
-            "project_superseded": snapshot.project_superseded,
-            "user_issues": snapshot.user_issues,
-            "project_issues": snapshot.project_issues,
-            "last_report": snapshot.last_report,
-        }
-
     def _publish(self, report: MemoryUpdateReport) -> None:
         self._last_report = report
         for callback in tuple(self._callbacks):

@@ -4,13 +4,13 @@ import pytest
 
 from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.errors import AuthenticationError, ContextWindowExceededError, ModelError, ThinkingModeUnsupportedError
-from artcode.providers import ProviderRequestOptions
+from artcode.providers import ProviderRequest
 from artcode.providers.events import StreamCompleted, ToolCallsCompleted, UsageReported
-from artcode.providers.openai_compatible import (
+from artcode.providers.deepseek import (
     CONNECT_TIMEOUT_SECONDS,
-    OpenAICompatibleProvider,
+    DeepSeekChatProvider,
     READ_TIMEOUT_SECONDS,
-    build_request_payload,
+    build_provider_payload,
     chat_completions_url,
     map_http_error,
     provider_timeout,
@@ -32,7 +32,7 @@ def test_chat_completions_url_does_not_double_slash() -> None:
 
 
 def test_payload_without_thinking_explicitly_disables_thinking() -> None:
-    payload = build_request_payload(config(False), [{"role": "user", "content": "hi"}])
+    payload = build_provider_payload(config(False), ProviderRequest.from_parts([{"role": "user", "content": "hi"}]))
 
     assert payload["stream"] is True
     assert payload["stream_options"] == {"include_usage": True}
@@ -41,7 +41,7 @@ def test_payload_without_thinking_explicitly_disables_thinking() -> None:
 
 
 def test_payload_with_thinking_maps_effort() -> None:
-    payload = build_request_payload(config(True), [{"role": "user", "content": "hi"}])
+    payload = build_provider_payload(config(True), ProviderRequest.from_parts([{"role": "user", "content": "hi"}]))
 
     assert payload["thinking"] == {"type": "enabled"}
     assert payload["reasoning_effort"] == "high"
@@ -50,25 +50,28 @@ def test_payload_with_thinking_maps_effort() -> None:
 def test_payload_with_tools_adds_tool_choice() -> None:
     tools = [{"type": "function", "function": {"name": "read_file", "description": "read", "parameters": {}}}]
 
-    payload = build_request_payload(config(False), [{"role": "user", "content": "hi"}], tools)
+    payload = build_provider_payload(config(False), ProviderRequest.from_parts([{"role": "user", "content": "hi"}], tools))
 
     assert payload["tools"] == tools
     assert payload["tool_choice"] == "auto"
 
 
 def test_payload_without_tools_omits_tool_fields() -> None:
-    payload = build_request_payload(config(False), [{"role": "user", "content": "hi"}], None)
+    payload = build_provider_payload(config(False), ProviderRequest.from_parts([{"role": "user", "content": "hi"}], None))
 
     assert "tools" not in payload
     assert "tool_choice" not in payload
 
 
 def test_summary_options_limit_output_and_disable_thinking() -> None:
-    payload = build_request_payload(
+    payload = build_provider_payload(
         config(True),
-        [{"role": "user", "content": "hi"}],
-        None,
-        options=ProviderRequestOptions(max_output_tokens=20_000, thinking_enabled=False),
+        ProviderRequest.from_parts(
+            [{"role": "user", "content": "hi"}],
+            None,
+            max_output_tokens=20_000,
+            thinking_enabled=False,
+        ),
     )
 
     assert payload["max_tokens"] == 20_000
@@ -124,7 +127,7 @@ class FakeStreamResponse:
 
 
 async def test_provider_stream_parses_tool_calls() -> None:
-    provider = OpenAICompatibleProvider(config(False))
+    provider = DeepSeekChatProvider(config(False))
     lines = [
         'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read_file","arguments":"{\\"pa"}}]}}]}',
         "",
@@ -143,7 +146,7 @@ async def test_provider_stream_parses_tool_calls() -> None:
 
 
 async def test_provider_stream_parses_usage_event() -> None:
-    provider = OpenAICompatibleProvider(config(False))
+    provider = DeepSeekChatProvider(config(False))
     lines = [
         'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":4,"total_tokens":7}}',
         "",
@@ -161,7 +164,7 @@ async def test_provider_stream_parses_usage_event() -> None:
 
 
 async def test_provider_stream_parses_deepseek_cache_usage() -> None:
-    provider = OpenAICompatibleProvider(config(False))
+    provider = DeepSeekChatProvider(config(False))
     lines = [
         'data: {"choices":[],"usage":{"prompt_tokens":10,"prompt_cache_hit_tokens":7,"prompt_cache_miss_tokens":3,"completion_tokens":4,"total_tokens":14}}',
         "",
@@ -177,7 +180,7 @@ async def test_provider_stream_parses_deepseek_cache_usage() -> None:
 
 
 async def test_provider_stream_parses_openai_cached_tokens() -> None:
-    provider = OpenAICompatibleProvider(config(False))
+    provider = DeepSeekChatProvider(config(False))
     lines = [
         'data: {"choices":[],"usage":{"prompt_tokens":10,"prompt_tokens_details":{"cached_tokens":6},"completion_tokens":4,"total_tokens":14}}',
         "",

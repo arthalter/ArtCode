@@ -8,7 +8,10 @@ from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.conversation import ConversationContext
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
-from tests.runtime_factory import build_test_runtime as ArtCodeRuntime
+from tests.runtime_factory import (
+    build_test_runtime as ArtCodeRuntime,
+    register_test_workspace,
+)
 from artcode.permissions import ApprovalChoice
 
 
@@ -112,23 +115,22 @@ class FakeProvider:
         self.tools_seen: list[list[dict] | None] = []
         self.messages_seen: list[list[dict]] = []
 
-    async def stream_chat(self, messages, tools=None):
-        self.messages_seen.append(list(messages))
-        self.tools_seen.append(tools)
+    async def stream(self, request):
+        self.messages_seen.append(list(request.messages))
+        self.tools_seen.append(None if request.tools is None else list(request.tools))
         for event in self.responses.pop(0):
             yield event
 
 
 def config_for(allowed_dir: Path) -> ArtCodeConfig:
     allowed_dir.mkdir(exist_ok=True)
-    return ArtCodeConfig(
+    return register_test_workspace(ArtCodeConfig(
         protocol="openai",
         model="fake-model",
         base_url="https://example.invalid",
         api_key="sk-test",
         thinking=ThinkingConfig(),
-        workspace=allowed_dir,
-    )
+    ), allowed_dir)
 
 
 def tool_payloads(context: ConversationContext) -> list[dict]:

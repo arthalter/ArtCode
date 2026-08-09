@@ -9,8 +9,8 @@ pytestmark = pytest.mark.live
 
 from artcode.config import ArtCodeConfig, ConfigError, load_config
 from artcode.prompting import build_system_prompt
+from artcode.providers import DeepSeekChatProvider, ProviderRequest
 from artcode.providers.events import UsageReported
-from artcode.providers.openai_compatible import OpenAICompatibleProvider
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,16 +20,16 @@ def required_live_config() -> ArtCodeConfig:
     try:
         config = load_config(ROOT / "artcode.yaml")
     except ConfigError as exc:
-        pytest.fail(f"ch06 cache validation requires real API config: {exc.message}")
+        pytest.fail(f"prompt cache validation requires real API config: {exc.message}")
     if "your-deepseek-api-key" in config.api_key or config.api_key.startswith("<"):
-        pytest.fail("ch06 cache validation requires a real API key in artcode.yaml")
+        pytest.fail("prompt cache validation requires a real API key in artcode.yaml")
     return replace(config, model="deepseek-v4-flash")
 
 
-async def collect_cached_tokens(provider: OpenAICompatibleProvider, messages: list[dict[str, str]]) -> int:
+async def collect_cached_tokens(provider: DeepSeekChatProvider, messages: list[dict[str, str]]) -> int:
     cached_tokens = 0
     usage_events = 0
-    async for event in provider.stream_chat(messages):
+    async for event in provider.stream(ProviderRequest.from_parts(messages)):
         if isinstance(event, UsageReported):
             usage_events += 1
             value = event.usage.cached_tokens
@@ -41,12 +41,12 @@ async def collect_cached_tokens(provider: OpenAICompatibleProvider, messages: li
 
 
 async def test_live_prompt_cache_hit_tokens_are_positive() -> None:
-    provider = OpenAICompatibleProvider(required_live_config())
+    provider = DeepSeekChatProvider(required_live_config())
     stable_block = "\n".join(
         [
             build_system_prompt(),
             "稳定缓存验证片段：",
-            *[f"cache-line-{index}: ArtCode ch06 keeps stable prompt prefixes for cache validation." for index in range(300)],
+            *[f"cache-line-{index}: ArtCode keeps stable prompt prefixes for cache validation." for index in range(300)],
         ]
     )
     messages = [

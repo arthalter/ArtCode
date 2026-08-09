@@ -19,7 +19,7 @@ from artcode.errors import (
     scrub_secrets,
 )
 
-from .base import ProviderRequest, ProviderRequestOptions
+from .base import ProviderRequest
 from .events import (
     ContentDelta,
     ProviderEvent,
@@ -87,24 +87,6 @@ class DeepSeekChatProvider:
             raise NetworkError("无法连接 DeepSeek API。", "请检查网络、代理或 base_url。") from exc
         except (httpx.RemoteProtocolError, httpx.ReadError, httpx.DecodingError) as exc:
             raise StreamInterruptedError("流式响应中途断开。", "本轮回复没有写入上下文，请稍后重试。") from exc
-
-    async def stream_chat(
-        self,
-        messages: Sequence[dict[str, Any]],
-        tools: Sequence[dict[str, Any]] | None = None,
-        *,
-        options: ProviderRequestOptions | None = None,
-    ) -> AsyncIterator[ProviderEvent]:
-        """Transitional compatibility entry; production callers use stream(request)."""
-
-        request = ProviderRequest.from_parts(
-            messages,
-            tools,
-            max_output_tokens=options.max_output_tokens if options else None,
-            thinking_enabled=options.thinking_enabled if options else None,
-        )
-        async for event in self.stream(request):
-            yield event
 
     async def close(self) -> None:
         if self._closed:
@@ -186,24 +168,6 @@ def build_provider_payload(config: ArtCodeConfig, request: ProviderRequest) -> d
     if request.max_output_tokens is not None:
         payload["max_tokens"] = request.max_output_tokens
     return payload
-
-
-def build_request_payload(
-    config: ArtCodeConfig,
-    messages: Sequence[dict[str, Any]],
-    tools: Sequence[dict[str, Any]] | None = None,
-    *,
-    options: ProviderRequestOptions | None = None,
-) -> dict[str, Any]:
-    return build_provider_payload(
-        config,
-        ProviderRequest.from_parts(
-            messages,
-            tools,
-            max_output_tokens=options.max_output_tokens if options else None,
-            thinking_enabled=options.thinking_enabled if options else None,
-        ),
-    )
 
 
 def map_http_error(status_code: int, response_body: str, secrets: Sequence[str]) -> Exception:

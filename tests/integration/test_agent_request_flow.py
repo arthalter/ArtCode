@@ -12,20 +12,22 @@ from artcode.agent import (
 )
 from artcode.conversation import ConversationContext
 from artcode.errors import NetworkError
+from artcode.permissions import PermissionState
+from artcode.permissions.service import PermissionService
 from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
 from artcode.tools import (
-    AllowedPathPolicy,
     DescriptorBackedTool,
     PreparedToolCall,
     ToolDescriptor,
     ToolEffect,
-    ToolExecutionContext,
+    ToolEnvironment,
     ToolPreview,
     ToolRegistry,
     success_result,
 )
+from artcode.tools.execution import ToolExecutionService
 
 pytestmark = pytest.mark.ch10_5
 
@@ -56,7 +58,7 @@ class CountingTool(DescriptorBackedTool):
         self.executions = 0
 
     def prepare(self, arguments, context):
-        return PreparedToolCall(self, arguments, ToolPreview(self.name, "read", "read", False))
+        return PreparedToolCall(self, arguments, ToolPreview(self.name, "read", "read"))
 
     async def execute(self, prepared, context):
         self.executions += 1
@@ -75,7 +77,8 @@ class DurableSource:
 
 def build(tmp_path, provider, *, reminder=False, durable=None):
     conversation = ConversationContext()
-    context = ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path)
+    environment = ToolEnvironment.from_workspace(tmp_path)
+    permission_state = PermissionState()
     registry = ToolRegistry()
     tool = CountingTool()
     registry.register(tool)
@@ -83,7 +86,8 @@ def build(tmp_path, provider, *, reminder=False, durable=None):
         conversation,
         PromptRequestAssembler(),
         registry,
-        context,
+        environment,
+        permission_state,
         durable_prompt=durable,
         resume_reminder_required=reminder,
     )
@@ -91,7 +95,12 @@ def build(tmp_path, provider, *, reminder=False, durable=None):
         provider,
         conversation,
         registry,
-        context,
+        environment,
+        tool_executor=ToolExecutionService(
+            registry,
+            environment,
+            PermissionService(permission_state),
+        ),
         request_preparer=preparer,
     )
     return loop, preparer, conversation, tool

@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from artcode.agent.events import CompletedTurn, ModelTurn, NaturalTurn
+from artcode.agent.events import CompletedTurn, ModelTurn
 from artcode.conversation import ConversationContext
 from artcode.persistence.sessions import _valid_message
 from artcode.providers.events import TokenUsage
@@ -87,9 +87,9 @@ def test_model_turn_preserves_finish_reason(finish: str | None) -> None:
 
 
 @pytest.mark.parametrize("mode", ["normal", "plan", "do", "NORMAL", "custom"])
-def test_completed_turn_is_the_natural_turn_compatibility_type(mode: str) -> None:
+def test_completed_turn_preserves_the_explicit_mode(mode: str) -> None:
     turn = CompletedTurn("session", mode, "user", "final", ("msg-1",), ())
-    assert isinstance(turn, NaturalTurn)
+    assert turn.mode == mode
     with pytest.raises(FrozenInstanceError):
         turn.mode = "changed"  # type: ignore[misc]
 

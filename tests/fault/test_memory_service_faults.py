@@ -17,7 +17,7 @@ pytestmark = [pytest.mark.ch10_5, pytest.mark.fault]
 
 
 class UnusedProvider:
-    async def stream_chat(self, messages, tools=None, *, options=None):
+    async def stream(self, request):
         if False:
             yield done_event()
 
@@ -26,7 +26,7 @@ class TextProvider:
     def __init__(self, text: str) -> None:
         self.text = text
 
-    async def stream_chat(self, messages, tools=None, *, options=None):
+    async def stream(self, request):
         yield content_delta_event(self.text)
         yield done_event()
 

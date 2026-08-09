@@ -9,8 +9,11 @@ pytestmark = pytest.mark.live
 
 from artcode.config import ArtCodeConfig, ConfigError, load_config
 from artcode.conversation import ConversationContext
-from artcode.providers.openai_compatible import OpenAICompatibleProvider
-from tests.runtime_factory import build_test_runtime as ArtCodeRuntime
+from artcode.providers import DeepSeekChatProvider
+from tests.runtime_factory import (
+    build_test_runtime as ArtCodeRuntime,
+    register_test_workspace,
+)
 from artcode.permissions import ApprovalChoice
 
 
@@ -21,10 +24,13 @@ def required_live_config(workspace: Path) -> ArtCodeConfig:
     try:
         config = load_config(ROOT / "artcode.yaml")
     except ConfigError as exc:
-        pytest.fail(f"ch10 live validation requires real API config: {exc.message}")
+        pytest.fail(f"runtime command validation requires real API config: {exc.message}")
     if "your-deepseek-api-key" in config.api_key or config.api_key.startswith("<"):
-        pytest.fail("ch10 live validation requires a real API key in artcode.yaml")
-    return replace(config, model="deepseek-v4-flash", workspace=workspace)
+        pytest.fail("runtime command validation requires a real API key in artcode.yaml")
+    return register_test_workspace(
+        replace(config, model="deepseek-v4-flash"),
+        workspace,
+    )
 
 
 class LiveTui:
@@ -124,12 +130,12 @@ async def test_live_deepseek_plan_do_keeps_command_routing_and_creates_file(tmp_
     tui = LiveTui(
         [
             (
-                "/plan 规划一个极小任务：在当前 Workspace 新建 ch10_live.txt，"
+                "/plan 规划一个极小任务：在当前 Workspace 新建 runtime_live.txt，"
                 f"文件内容必须恰好为 {marker} 加一个换行。"
                 "只输出可执行计划，不要声称已经完成。"
             ),
             (
-                "/do 必须实际调用 write_file 创建 ch10_live.txt；"
+                "/do 必须实际调用 write_file 创建 runtime_live.txt；"
                 f"内容必须恰好是 {marker} 加一个换行。完成后简短确认。"
             ),
             "/status",
@@ -139,14 +145,14 @@ async def test_live_deepseek_plan_do_keeps_command_routing_and_creates_file(tmp_
     context = ConversationContext()
     runtime = ArtCodeRuntime(
         config,
-        OpenAICompatibleProvider(config),
+        DeepSeekChatProvider(config),
         context,
         tui,
     )
 
     assert await runtime.run() == 0
 
-    target = workspace / "ch10_live.txt"
+    target = workspace / "runtime_live.txt"
     assert target.read_text(encoding="utf-8") == f"{marker}\n"
     assert [mode.value for mode in tui.modes] == [
         "PLAN",

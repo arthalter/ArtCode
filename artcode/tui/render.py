@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from rich.console import Console
 from rich.panel import Panel
@@ -11,7 +11,9 @@ from artcode.tools import ToolPreview, ToolResult
 from artcode.permissions import ApprovalRequest
 from artcode.mcp.models import McpServerConfig, McpStartupReport, TransportKind
 from artcode.commands.base import DisplayMode
-from artcode.runtime.state import RuntimeStatusSnapshot, StartupStatusSnapshot
+
+if TYPE_CHECKING:
+    from artcode.runtime.state import RuntimeStatusSnapshot, StartupStatusSnapshot
 
 
 class _PrintableError(Protocol):

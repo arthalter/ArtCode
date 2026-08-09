@@ -44,7 +44,7 @@ class McpToolAdapter(DescriptorBackedTool):
         return PreparedToolCall(
             self,
             arguments,
-            ToolPreview(self.name, safe_json_preview(arguments), f"{self.server_name}/{self.remote_name}", True),
+            ToolPreview(self.name, safe_json_preview(arguments), f"{self.server_name}/{self.remote_name}"),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:

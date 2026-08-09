@@ -48,9 +48,6 @@ class ArtCodeConfig:
     base_url: str
     api_key: str
     thinking: ThinkingConfig
-    # Transitional compatibility for callers that predate explicit Workspace injection.
-    # parse_config never populates it; T13 removes the final callers and T14 deletes it.
-    workspace: Path | None = None
     mcp_servers_raw: Mapping[str, Any] = field(
         default_factory=lambda: MappingProxyType({})
     )

@@ -336,7 +336,7 @@ async def test_adapter_boundary_is_detached_and_structured(behavior: str) -> Non
     prepared = PreparedToolCall(
         adapter,
         {},
-        ToolPreview(adapter.name, "{}", "server/echo", True),
+        ToolPreview(adapter.name, "{}", "server/echo"),
     )
     if behavior == "cancel":
         with pytest.raises(asyncio.CancelledError):

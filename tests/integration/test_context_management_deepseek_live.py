@@ -7,15 +7,19 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE
+from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, RequestPreparer
 from artcode.config import ArtCodeConfig, ConfigError, load_config
 from artcode.context_management import ContextManager, ContextSummarizer
 from artcode.context_management.models import CompressionTrigger
 from artcode.context_management.retention import RetentionPlanner
 from artcode.context_management.summarizer import SUMMARY_TITLES
 from artcode.conversation import ConversationContext
-from artcode.providers.openai_compatible import OpenAICompatibleProvider
-from artcode.tools import AllowedPathPolicy, ToolExecutionContext, ToolRegistry
+from artcode.permissions import PermissionState
+from artcode.permissions.service import PermissionService
+from artcode.prompting.assembler import PromptRequestAssembler
+from artcode.providers import DeepSeekChatProvider
+from artcode.tools import ToolEnvironment, ToolRegistry
+from artcode.tools.execution import ToolExecutionService
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,7 +38,7 @@ def required_live_config() -> ArtCodeConfig:
 async def test_live_deepseek_summary_and_followup_preserve_user_intent(tmp_path) -> None:
     marker = "CH08-LIVE-CONTEXT-7429"
     config = required_live_config()
-    provider = OpenAICompatibleProvider(config)
+    provider = DeepSeekChatProvider(config)
     conversation = ConversationContext("你是简洁的上下文连续性测试助手。")
     conversation.append_user(f"请逐字记住暗号 {marker}，只回复已记住。")
     conversation.append_assistant("已记住。")
@@ -62,11 +66,27 @@ async def test_live_deepseek_summary_and_followup_preserve_user_intent(tmp_path)
     assert marker in summary
     assert all(title in summary for title in SUMMARY_TITLES)
 
+    registry = ToolRegistry()
+    environment = ToolEnvironment.from_workspace(tmp_path)
+    permission_state = PermissionState()
     loop = AgentLoop(
         provider,
         conversation,
-        ToolRegistry(),
-        ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path),
+        registry,
+        environment,
+        tool_executor=ToolExecutionService(
+            registry,
+            environment,
+            PermissionService(permission_state),
+        ),
+        request_preparer=RequestPreparer(
+            conversation,
+            PromptRequestAssembler(),
+            registry,
+            environment,
+            permission_state,
+            context_manager=manager,
+        ),
         context_manager=manager,
     )
     events = [

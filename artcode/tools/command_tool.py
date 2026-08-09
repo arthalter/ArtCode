@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +12,6 @@ from .base import (
     ToolPreview,
     ToolRunContext,
 )
-from .policy import AllowedPathPolicy
 from .results import ToolResult, error_result, success_result
 from .process import ProcessSupervisor
 
@@ -52,18 +50,10 @@ class RunCommandTool(DescriptorBackedTool):
             return cwd_result
         cwd = cwd_result
 
-        # ch05 compatibility tests still exercise the old policy directly.
-        # The ch06 runtime uses WorkspacePathPolicy and delegates hard command
-        # checks to PermissionEngine before any process is started.
-        if isinstance(context.path_policy, AllowedPathPolicy):
-            dangerous = validate_shell_command(command, context.path_policy)
-            if dangerous is not None:
-                return dangerous
-
         return PreparedToolCall(
             tool=self,
             arguments={"command": command, "cwd": cwd},
-            preview=ToolPreview(self.name, f"执行命令：{command}", f"{cwd}$ {command}", True),
+            preview=ToolPreview(self.name, f"执行命令：{command}", f"{cwd}$ {command}"),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
@@ -120,21 +110,6 @@ class RunCommandTool(DescriptorBackedTool):
         )
 
 
-def validate_shell_command(command: str, policy: AllowedPathPolicy) -> ToolResult | None:
-    lowered = command.lower()
-    if re.search(r"(^|[;&|]\s*)sudo(\s|$)", lowered):
-        return error_result("run_command", "dangerous_command", "ch03 不允许执行 sudo 命令。")
-    if "rm -rf /" in lowered or "rm -fr /" in lowered or re.search(r"\brm\s+-[^\s]*[rf][^\s]*\s+/\s*($|[;&|])", lowered):
-        return error_result("run_command", "dangerous_command", "拒绝执行明显危险的删除命令。")
-    if ":(){" in lowered:
-        return error_result("run_command", "dangerous_command", "拒绝执行明显危险的 shell 函数命令。")
-
-    for redirected_path in re.findall(r"(?:^|\s)(?:>|>>)\s*(/[^\s;&|]+)", command):
-        if not policy.is_allowed(Path(redirected_path)):
-            return error_result("run_command", "dangerous_command", f"拒绝重定向写入允许目录外路径：{redirected_path}")
-    return None
-
-
 def _resolve_cwd(raw_cwd: Any, context: ToolRunContext) -> Path | ToolResult:
     if raw_cwd is None:
         return context.default_cwd or context.path_policy.allowed_roots[0]
@@ -143,7 +118,7 @@ def _resolve_cwd(raw_cwd: Any, context: ToolRunContext) -> Path | ToolResult:
     try:
         cwd = context.path_policy.resolve_existing_path(raw_cwd, context.default_cwd)
     except Exception as exc:
-        code = "path_outside_allowed_dirs" if "不在允许目录" in str(exc) else "invalid_arguments"
+        code = "path_outside_workspace" if "Workspace 外" in str(exc) else "invalid_arguments"
         return error_result("run_command", code, str(exc))
     if not cwd.is_dir():
         return error_result("run_command", "invalid_arguments", f"cwd 不是目录：{cwd}")

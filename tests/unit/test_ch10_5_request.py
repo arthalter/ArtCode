@@ -6,15 +6,20 @@ import pytest
 
 from artcode.agent import AgentRunRequest, NORMAL_AGENT_MODE, PLAN_MODE, RequestPreparer
 from artcode.conversation import ConversationContext
+from artcode.permissions import PermissionState
 from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.prompting.reminder import build_resume_reminder_message
-from artcode.tools import AllowedPathPolicy, ToolExecutionContext, ToolRegistry
+from artcode.tools import ToolEnvironment, ToolRunContext, ToolRegistry
 
 pytestmark = pytest.mark.ch10_5
 
 
-def tool_context(tmp_path) -> ToolExecutionContext:
-    return ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path)
+def tool_context(tmp_path, mode=NORMAL_AGENT_MODE) -> ToolRunContext:
+    return ToolRunContext(
+        ToolEnvironment.from_workspace(tmp_path),
+        mode,
+        PermissionState().snapshot(),
+    )
 
 
 def schema(name: str) -> dict:
@@ -168,7 +173,8 @@ def test_request_previews_never_consume_pending_resume_reminder(tmp_path, previe
         conversation,
         PromptRequestAssembler(),
         ToolRegistry(),
-        tool_context(tmp_path),
+        ToolEnvironment.from_workspace(tmp_path),
+        PermissionState(),
         resume_reminder_required=True,
     )
 

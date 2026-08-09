@@ -7,13 +7,17 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE
+from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, RequestPreparer
 from artcode.config import ArtCodeConfig, ThinkingConfig, load_config
 from artcode.conversation import ConversationContext
 from artcode.errors import ConfigError
+from artcode.permissions import PermissionState
+from artcode.permissions.service import PermissionService
+from artcode.prompting.assembler import PromptRequestAssembler
+from artcode.providers import DeepSeekChatProvider, ProviderRequest
 from artcode.providers.events import ContentDelta
-from artcode.providers.openai_compatible import OpenAICompatibleProvider
-from artcode.tools import AllowedPathPolicy, ToolExecutionContext, create_default_tool_registry
+from artcode.tools import ToolEnvironment, create_default_tool_registry
+from artcode.tools.execution import ToolExecutionService
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,9 +33,9 @@ def live_config() -> ArtCodeConfig:
     return replace(config, model="deepseek-v4-flash")
 
 
-async def collect_reply(provider: OpenAICompatibleProvider, messages: list[dict[str, str]]) -> str:
+async def collect_reply(provider: DeepSeekChatProvider, messages: list[dict[str, str]]) -> str:
     parts: list[str] = []
-    async for event in provider.stream_chat(messages):
+    async for event in provider.stream(ProviderRequest.from_parts(messages)):
         if isinstance(event, ContentDelta):
             parts.append(event.text)
     return "".join(parts)
@@ -39,7 +43,7 @@ async def collect_reply(provider: OpenAICompatibleProvider, messages: list[dict[
 
 async def test_live_deepseek_stream_returns_content_delta() -> None:
     config = live_config()
-    provider = OpenAICompatibleProvider(config)
+    provider = DeepSeekChatProvider(config)
 
     reply = await collect_reply(provider, [{"role": "user", "content": "只回复 OK"}])
 
@@ -48,7 +52,7 @@ async def test_live_deepseek_stream_returns_content_delta() -> None:
 
 async def test_live_deepseek_multi_turn_context() -> None:
     config = live_config()
-    provider = OpenAICompatibleProvider(config)
+    provider = DeepSeekChatProvider(config)
     context = ConversationContext(system_prompt="你是一个只做简短回答的助手。")
     context.append_user("请记住暗号是 blue42，只回复已记住。")
     first_reply = await collect_reply(provider, context.export_messages())
@@ -63,7 +67,7 @@ async def test_live_deepseek_multi_turn_context() -> None:
 async def test_live_deepseek_accepts_thinking_mode_payload() -> None:
     config = live_config()
     thinking_config = replace(config, thinking=ThinkingConfig(enabled=True))
-    provider = OpenAICompatibleProvider(thinking_config)
+    provider = DeepSeekChatProvider(thinking_config)
 
     reply = await collect_reply(provider, [{"role": "user", "content": "用一句话回答：1+1 等于几？"}])
 
@@ -76,18 +80,29 @@ async def test_live_deepseek_agent_loop_reads_file(tmp_path) -> None:
     allowed_dir.mkdir()
     (allowed_dir / "note.txt").write_text(marker, encoding="utf-8")
     config = live_config()
-    config = replace(config, workspace=allowed_dir.resolve())
-    provider = OpenAICompatibleProvider(config)
+    config = replace(config)
+    provider = DeepSeekChatProvider(config)
     context = ConversationContext()
-    tool_context = ToolExecutionContext(
-        AllowedPathPolicy((allowed_dir.resolve(),)),
-        default_cwd=allowed_dir.resolve(),
-    )
+    environment = ToolEnvironment.from_workspace(allowed_dir)
+    permission_state = PermissionState()
+    registry = create_default_tool_registry()
     loop = AgentLoop(
         provider=provider,
         conversation=context,
-        tool_registry=create_default_tool_registry(),
-        tool_context=tool_context,
+        tool_registry=registry,
+        tool_environment=environment,
+        tool_executor=ToolExecutionService(
+            registry,
+            environment,
+            PermissionService(permission_state),
+        ),
+        request_preparer=RequestPreparer(
+            context,
+            PromptRequestAssembler(),
+            registry,
+            environment,
+            permission_state,
+        ),
     )
 
     events = [

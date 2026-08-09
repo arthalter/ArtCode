@@ -5,16 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from artcode.agent import AgentEventType, ToolAccessPolicy
+from artcode.agent import AgentEventType, NORMAL_AGENT_MODE, ToolAccessPolicy
 from artcode.permissions import PermissionState
+from artcode.permissions.service import PermissionService
 from artcode.providers.tool_calls import ToolCall
 from artcode.tools import (
-    ToolExecutionContext,
-    WorkspacePathPolicy,
+    ToolEnvironment,
     create_default_tool_registry,
 )
 from artcode.tools.execution import ToolExecutionService
-from artcode.workspace import Workspace
 
 pytestmark = pytest.mark.ch10_5
 
@@ -32,11 +31,10 @@ class MutatingPermissionService:
         return None
 
 
-def context_for(root: Path, *sensitive: Path) -> ToolExecutionContext:
-    workspace = Workspace.from_path(root)
-    return ToolExecutionContext(
-        WorkspacePathPolicy(workspace, tuple(sensitive)),
-        default_cwd=workspace.root,
+def context_for(root: Path, *sensitive: Path) -> ToolEnvironment:
+    return ToolEnvironment.from_workspace(
+        root,
+        sensitive_paths=tuple(sensitive),
     )
 
 
@@ -51,11 +49,11 @@ async def run_tool(
     service = ToolExecutionService(
         create_default_tool_registry(),
         context_for(root, *sensitive),
-        permission_service,
+        permission_service or PermissionService(PermissionState()),
     )
     call = ToolCall("one", tool_name, json.dumps(arguments, ensure_ascii=False))
     plan = service.build_plan([call], ToolAccessPolicy())
-    events = [event async for event in service.execute_plan(plan)]
+    events = [event async for event in service.execute_plan(plan, mode=NORMAL_AGENT_MODE)]
     return next(
         event.payload["result"]
         for event in events

@@ -128,7 +128,7 @@ class ReadFileTool(DescriptorBackedTool):
                 "end_line": end_line,
                 "is_artifact": is_artifact,
             },
-            preview=ToolPreview(self.name, f"读取文件 {path}", _target(context, path), False),
+            preview=ToolPreview(self.name, f"读取文件 {path}", _target(context, path)),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
@@ -209,7 +209,7 @@ class WriteFileTool(DescriptorBackedTool):
                 "content": content,
                 "overwrite": overwrite,
             },
-            preview=ToolPreview(self.name, f"{action}文件 {path}", _target(context, path), True),
+            preview=ToolPreview(self.name, f"{action}文件 {path}", _target(context, path)),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
@@ -274,7 +274,7 @@ class EditFileTool(DescriptorBackedTool):
                 "old_text": old_text,
                 "new_text": new_text,
             },
-            preview=ToolPreview(self.name, f"修改文件 {path}", _target(context, path), True),
+            preview=ToolPreview(self.name, f"修改文件 {path}", _target(context, path)),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
@@ -338,7 +338,7 @@ class FindFilesTool(DescriptorBackedTool):
         return PreparedToolCall(
             tool=self,
             arguments={"pattern": pattern},
-            preview=ToolPreview(self.name, f"查找文件 {pattern}", ".", False),
+            preview=ToolPreview(self.name, f"查找文件 {pattern}", "."),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
@@ -388,7 +388,7 @@ class SearchTextTool(DescriptorBackedTool):
         return PreparedToolCall(
             tool=self,
             arguments={"query": query, "target": target},
-            preview=ToolPreview(self.name, f"搜索文本 {query}", display_target, False),
+            preview=ToolPreview(self.name, f"搜索文本 {query}", display_target),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:

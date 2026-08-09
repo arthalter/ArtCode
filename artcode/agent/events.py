@@ -56,11 +56,6 @@ class CompletedTurnObserver(Protocol):
         ...
 
 
-# Transitional compatibility until persistence callers finish migrating in T11.
-NaturalTurn = CompletedTurn
-NaturalTurnObserver = CompletedTurnObserver
-
-
 @dataclass(frozen=True)
 class AgentEvent:
     type: AgentEventType

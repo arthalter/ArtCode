@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from prompt_toolkit import PromptSession
 
@@ -8,7 +9,9 @@ from artcode.tools import ToolPreview, ToolResult
 from artcode.permissions import ApprovalChoice, ApprovalRequest
 from artcode.mcp.models import McpServerConfig, McpStartupReport
 from artcode.commands.base import DisplayMode
-from artcode.runtime.state import RuntimeStatusSnapshot
+
+if TYPE_CHECKING:
+    from artcode.runtime.state import RuntimeStatusSnapshot
 
 from .keybindings import create_input_keybindings
 from .render import TuiRenderer

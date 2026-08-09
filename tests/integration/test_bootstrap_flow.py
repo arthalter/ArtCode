@@ -150,7 +150,8 @@ async def test_build_returns_one_explicit_runtime_graph(
         assert runtime.session_service.context.conversation is runtime.conversation
         assert runtime.agent_loop.conversation is runtime.conversation
         assert runtime.agent_loop.plan_memory is runtime.plan_memory
-        assert runtime.tool_context.permission_state is runtime.state.permission
+        assert runtime.agent_loop.tool_environment is runtime.tool_environment
+        assert runtime.agent_loop.request_preparer.permission_state is runtime.state.permission
 
     context_root = options.workspace_path / ".artcode" / "context"
     assert list(context_root.iterdir()) == []

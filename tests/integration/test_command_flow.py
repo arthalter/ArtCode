@@ -10,11 +10,21 @@ from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.conversation import ConversationContext
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
-from tests.runtime_factory import build_test_runtime as ArtCodeRuntime
+from tests.runtime_factory import (
+    build_test_runtime as ArtCodeRuntime,
+    register_test_workspace,
+)
 from artcode.context_management import ContextManager, ContextSummarizer
-from artcode.persistence import PersistenceCoordinator, SessionSelection
+from artcode.permissions import PermissionState
+from artcode.persistence import (
+    DurablePaths,
+    DurablePromptSource,
+    MemoryService,
+    SessionSelection,
+    SessionService,
+)
 from artcode.prompting.assembler import PromptRequestAssembler
-from artcode.tools import AllowedPathPolicy, ToolExecutionContext, ToolRegistry
+from artcode.tools import ToolEnvironment, ToolRegistry
 from artcode.workspace import ArtCodePaths, Workspace
 import pytest
 from artcode.tui import PromptToolkitTui, TuiRenderer
@@ -36,9 +46,9 @@ class FakeProvider:
         self.messages_seen: list[list[dict]] = []
         self.tools_seen: list[list[dict] | None] = []
 
-    async def stream_chat(self, messages, tools=None, *, options=None):
-        self.messages_seen.append(list(messages))
-        self.tools_seen.append(tools)
+    async def stream(self, request):
+        self.messages_seen.append(list(request.messages))
+        self.tools_seen.append(None if request.tools is None else list(request.tools))
         for event in self.responses.pop(0):
             yield event
 
@@ -55,14 +65,13 @@ class RecordingRenderer(TuiRenderer):
 
 def config_for(root: Path) -> ArtCodeConfig:
     root.mkdir()
-    return ArtCodeConfig(
+    return register_test_workspace(ArtCodeConfig(
         protocol="openai",
         model="deepseek-v4-flash",
         base_url="https://api.deepseek.com",
         api_key="sk-integration-secret",
         thinking=ThinkingConfig(),
-        workspace=root,
-    )
+    ), root)
 
 
 def tui_for(inputs: list[str]) -> tuple[PromptToolkitTui, RecordingRenderer, FakeSession]:
@@ -178,49 +187,54 @@ async def test_repeated_status_has_zero_model_context_and_persistence_side_effec
     config = config_for(root)
     workspace = Workspace.from_path(root)
     provider = FakeProvider([])
-    persistence = PersistenceCoordinator.start(
+    paths = DurablePaths.from_context(
         ArtCodePaths.create(tmp_path / "status-home"),
         workspace,
-        provider,
-        SessionSelection.new(),
     )
-    persistence.conversation.append_user("stable conversation")
+    sessions = SessionService(paths)
+    session = sessions.start(SessionSelection.new())
+    memory = MemoryService(paths, provider)
+    session.conversation.append_user("stable conversation")
     context_manager = ContextManager(
         config.context,
-        ContextSummarizer(provider, persistence.conversation),
+        ContextSummarizer(provider, session.conversation),
     )
     context_manager.estimator.record_usage(
         123,
-        persistence.conversation.export_messages(),
+        session.conversation.export_messages(),
         None,
     )
     registry = ToolRegistry()
-    tool_context = ToolExecutionContext(
-        AllowedPathPolicy((workspace.root,)), default_cwd=workspace.root
-    )
+    environment = ToolEnvironment.from_workspace(workspace)
+    permission_state = PermissionState()
+    prompt_source = DurablePromptSource(paths)
     preparer = RequestPreparer(
-        persistence.conversation,
+        session.conversation,
         PromptRequestAssembler(),
         registry,
-        tool_context,
+        environment,
+        permission_state,
         context_manager=context_manager,
-        durable_prompt=persistence.prompt_context,
+        durable_prompt=prompt_source,
         resume_reminder_required=True,
     )
     tui, _renderer, _session = tui_for([*(["/status"] * repeat), "/exit"])
     runtime = ArtCodeRuntime(
         config,
         provider,
-        persistence.conversation,
+        session.conversation,
         tui,
         tool_registry=registry,
-        tool_context=tool_context,
+        tool_environment=environment,
         workspace=workspace,
+        permission_state=permission_state,
         context_manager=context_manager,
         request_preparer=preparer,
-        persistence=persistence,
+        session_service=sessions,
+        memory_service=memory,
+        durable_prompt=prompt_source,
     )
-    before_messages = persistence.conversation.export_messages()
+    before_messages = session.conversation.export_messages()
     before_reminder = preparer.resume_reminder_pending
     before_anchor = context_manager.estimator.anchor
     before_circuit = (
@@ -228,20 +242,20 @@ async def test_repeated_status_has_zero_model_context_and_persistence_side_effec
         context_manager.circuit.open,
         context_manager.circuit.forced_attempted,
     )
-    before_session = persistence.journal.path.read_bytes()
+    before_session = sessions.journal.path.read_bytes()
     before_memory = {
         path: path.read_bytes()
-        for root_path in (persistence.paths.user_memory_dir, persistence.paths.project_memory_dir)
+        for root_path in (paths.user_memory_dir, paths.project_memory_dir)
         for path in root_path.iterdir()
         if path.is_file()
     }
-    before_pending = persistence.memory_service.pending_count
+    before_pending = memory.pending_count
 
     try:
         assert await runtime.run() == 0
         assert len(runtime.tui.renderer.console.export_text()) > 0
         assert provider.messages_seen == []
-        assert persistence.conversation.export_messages() == before_messages
+        assert session.conversation.export_messages() == before_messages
         assert preparer.resume_reminder_pending is before_reminder
         assert context_manager.estimator.anchor == before_anchor
         assert (
@@ -249,13 +263,14 @@ async def test_repeated_status_has_zero_model_context_and_persistence_side_effec
             context_manager.circuit.open,
             context_manager.circuit.forced_attempted,
         ) == before_circuit
-        assert persistence.journal.path.read_bytes() == before_session
+        assert sessions.journal.path.read_bytes() == before_session
         assert {
             path: path.read_bytes()
-            for root_path in (persistence.paths.user_memory_dir, persistence.paths.project_memory_dir)
+            for root_path in (paths.user_memory_dir, paths.project_memory_dir)
             for path in root_path.iterdir()
             if path.is_file()
         } == before_memory
-        assert persistence.memory_service.pending_count == before_pending
+        assert memory.pending_count == before_pending
     finally:
-        await persistence.close()
+        await memory.close()
+        sessions.close()

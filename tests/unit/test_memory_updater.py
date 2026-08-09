@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from artcode.agent import NaturalTurn
+from artcode.agent import CompletedTurn
 from artcode.persistence import (
     MemoryCategory,
     MemoryNoteStore,
@@ -26,16 +26,16 @@ class FakeProvider:
         self.tool_calls = tool_calls
         self.calls = []
 
-    async def stream_chat(self, messages, tools=None, *, options=None):
-        self.calls.append((messages, tools, options))
+    async def stream(self, request):
+        self.calls.append(request)
         yield content_delta_event(self.text)
         if self.tool_calls:
             yield tool_calls_event(self.tool_calls)
         yield done_event()
 
 
-def _turn() -> NaturalTurn:
-    return NaturalTurn(
+def _turn() -> CompletedTurn:
+    return CompletedTurn(
         session_id="20260806-163000-a1b2",
         mode="normal",
         user_content="以后默认用中文",
@@ -109,16 +109,16 @@ async def test_updater_uses_no_tools_disables_thinking_and_applies_both_scopes(t
     assert report.created == 2
     assert len(user.scan().notes) == 1
     assert len(project.scan().notes) == 1
-    messages, tools, options = provider.calls[0]
-    assert tools is None
-    assert options.max_output_tokens == 4000
-    assert options.thinking_enabled is False
-    assert len(json.loads(messages[1]["content"].split("\n", 1)[1].rsplit("\n", 1)[0])["tool_summaries"][0]["content"]) == 2000
+    request = provider.calls[0]
+    assert request.tools is None
+    assert request.max_output_tokens == 4000
+    assert request.thinking_enabled is False
+    assert len(json.loads(request.messages[1]["content"].split("\n", 1)[1].rsplit("\n", 1)[0])["tool_summaries"][0]["content"]) == 2000
 
 
 async def test_updater_scrubs_known_secret_from_prompt_output_and_disk(tmp_path: Path) -> None:
     secret = "sk-super-secret-value"
-    turn = NaturalTurn(**{**_turn().__dict__, "user_content": f"token={secret}"})
+    turn = CompletedTurn(**{**_turn().__dict__, "user_content": f"token={secret}"})
     provider = FakeProvider(
         _response([_operation(summary=f"secret {secret}", body=f"body {secret}")])
     )
@@ -128,13 +128,13 @@ async def test_updater_scrubs_known_secret_from_prompt_output_and_disk(tmp_path:
     report = await MemoryUpdater(provider, user, project, secrets=[secret]).update(turn)
 
     assert report.created == 1
-    assert secret not in str(provider.calls[0][0])
+    assert secret not in str(provider.calls[0].messages)
     assert secret not in next((tmp_path / "user").glob("mem-*.md")).read_text(encoding="utf-8")
 
 
 async def test_updater_timeout_leaves_notes_unchanged(tmp_path: Path) -> None:
     class HangingProvider:
-        async def stream_chat(self, messages, tools=None, *, options=None):
+        async def stream(self, request):
             await asyncio.Event().wait()
             if False:
                 yield done_event()
@@ -165,7 +165,7 @@ async def test_worker_submit_is_nonblocking_fifo_and_close_cancels(tmp_path: Pat
     reports = []
     worker = MemoryUpdateWorker(FakeUpdater(), reports.append)
     first = _turn()
-    second = NaturalTurn(**{**first.__dict__, "user_content": "second"})
+    second = CompletedTurn(**{**first.__dict__, "user_content": "second"})
 
     worker.submit(first)
     worker.submit(second)

@@ -4,20 +4,22 @@ import pytest
 
 from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, RequestPreparer, StopReason
 from artcode.conversation import ConversationContext
+from artcode.permissions import PermissionState
+from artcode.permissions.service import PermissionService
 from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
 from artcode.tools import (
-    AllowedPathPolicy,
     DescriptorBackedTool,
     PreparedToolCall,
     ToolDescriptor,
     ToolEffect,
-    ToolExecutionContext,
+    ToolEnvironment,
     ToolPreview,
     ToolRegistry,
     success_result,
 )
+from artcode.tools.execution import ToolExecutionService
 
 pytestmark = [pytest.mark.ch10_5, pytest.mark.soak, pytest.mark.slow]
 
@@ -53,7 +55,7 @@ class FastTool(DescriptorBackedTool):
         self.calls = 0
 
     def prepare(self, arguments, context):
-        return PreparedToolCall(self, arguments, ToolPreview(self.name, "read", "read", False))
+        return PreparedToolCall(self, arguments, ToolPreview(self.name, "read", "read"))
 
     async def execute(self, prepared, context):
         self.calls += 1
@@ -62,7 +64,8 @@ class FastTool(DescriptorBackedTool):
 
 def build(tmp_path, provider, *, reminder=False):
     conversation = ConversationContext()
-    context = ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path)
+    environment = ToolEnvironment.from_workspace(tmp_path)
+    permission = PermissionState()
     registry = ToolRegistry()
     tool = FastTool()
     registry.register(tool)
@@ -70,11 +73,23 @@ def build(tmp_path, provider, *, reminder=False):
         conversation,
         PromptRequestAssembler(),
         registry,
-        context,
+        environment,
+        permission,
         resume_reminder_required=reminder,
     )
     return (
-        AgentLoop(provider, conversation, registry, context, request_preparer=preparer),
+        AgentLoop(
+            provider,
+            conversation,
+            registry,
+            environment,
+            tool_executor=ToolExecutionService(
+                registry,
+                environment,
+                PermissionService(permission),
+            ),
+            request_preparer=preparer,
+        ),
         preparer,
         tool,
     )

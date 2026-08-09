@@ -14,7 +14,7 @@ from artcode.conversation import (
 )
 from artcode.errors import RequestError
 from artcode.providers import StreamingProvider
-from artcode.providers.base import ProviderRequest, stream_provider
+from artcode.providers.base import ProviderRequest
 from artcode.providers.events import ContentDelta, ToolCallsCompleted
 from artcode.providers.tool_calls import ToolCall
 
@@ -148,7 +148,7 @@ class SummaryComposer:
         positions = _heading_positions(parsed.summary_template)
         sixth_body_start = positions[5][1]
         seventh_heading_start = positions[6][0]
-        # The optional branch is retained only for the pre-ch10.5 public helper
+        # The optional branch supports an already-composed summary without a live snapshot.
         # contract. Production compaction passes no records and never embeds
         # user text inside a system summary.
         verbatim = (
@@ -199,8 +199,7 @@ class ContextSummarizer:
         parts: list[str] = []
         tool_calls: list[ToolCall] = []
         try:
-            async for event in stream_provider(
-                self.provider,
+            async for event in self.provider.stream(
                 ProviderRequest.from_parts(
                     request_messages,
                     None,
@@ -291,7 +290,7 @@ def _preserved_user_entries(
     for record in records:
         entry = existing.get(record.id)
         if entry is None:
-            # Migrate an in-memory summary created by the pre-ch10.5 format.
+            # Migrate an in-memory summary created by the earlier archive format.
             # The original archive ID and text become a real user entry again.
             entry = ConversationEntry(
                 record.id,

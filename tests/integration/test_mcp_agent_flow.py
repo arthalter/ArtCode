@@ -7,8 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, PLAN_MODE
-from artcode.agent.tools import ToolBatchExecutor
+from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, PLAN_MODE, RequestPreparer
 from artcode.conversation import ConversationContext
 from artcode.mcp.config import load_mcp_configuration
 from artcode.mcp.manager import McpManager
@@ -17,7 +16,8 @@ from artcode.permissions import PermissionState
 from artcode.permissions.service import PermissionService
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
-from artcode.tools import AllowedPathPolicy, ToolExecutionContext, create_default_tool_registry
+from artcode.prompting.assembler import PromptRequestAssembler
+from artcode.tools import ToolEnvironment, create_default_tool_registry
 from artcode.tools.execution import ToolExecutionService
 
 
@@ -36,8 +36,8 @@ class Provider:
         self.messages = []
         self.turn = 0
 
-    async def stream_chat(self, messages, tools=None):
-        self.messages.append(messages)
+    async def stream(self, request):
+        self.messages.append(list(request.messages))
         self.turn += 1
         if self.turn == 1:
             yield tool_calls_event([ToolCall("mcp-call-1", self.tool_name, '{"text":"agent"}')])
@@ -64,12 +64,31 @@ async def test_agent_discovers_confirms_calls_and_reinjects_result(tmp_path: Pat
         registry = create_default_tool_registry()
         registry.register_many(manager.adapters)
         echo = next(tool for tool in manager.adapters if tool.remote_name == "echo")
-        context = ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path)
+        environment = ToolEnvironment.from_workspace(tmp_path)
         approver = Approver()
         provider = Provider(echo.name)
         conversation = ConversationContext()
-        executor = ToolBatchExecutor(registry, context, approver=approver)
-        loop = AgentLoop(provider, conversation, registry, context, tool_executor=executor)
+        permission = PermissionState()
+        executor = ToolExecutionService(
+            registry,
+            environment,
+            PermissionService(permission, approver=approver),
+        )
+        preparer = RequestPreparer(
+            conversation,
+            PromptRequestAssembler(),
+            registry,
+            environment,
+            permission,
+        )
+        loop = AgentLoop(
+            provider,
+            conversation,
+            registry,
+            environment,
+            tool_executor=executor,
+            request_preparer=preparer,
+        )
 
         events = [event async for event in loop.run(AgentRunRequest("调用 echo", NORMAL_AGENT_MODE))]
 
@@ -131,14 +150,10 @@ async def test_mcp_adapter_permission_and_explicit_mode_isolation(
     )
     registry = create_default_tool_registry()
     registry.register(adapter)
-    context = ToolExecutionContext(
-        AllowedPathPolicy((tmp_path,)),
-        default_cwd=tmp_path,
-        permission_state=PermissionState(),
-    )
+    environment = ToolEnvironment.from_workspace(tmp_path)
     approver = ExplicitApprover()
     permissions = PermissionService(PermissionState(), approver=approver)
-    service = ToolExecutionService(registry, context, permissions)
+    service = ToolExecutionService(registry, environment, permissions)
     mode = PLAN_MODE if scenario.startswith("plan") else NORMAL_AGENT_MODE
 
     plan = service.build_plan(

@@ -11,7 +11,7 @@ from artcode.permissions.service import PermissionService
 from artcode.persistence import MemoryStatusSnapshot, PersistenceStatus
 from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.runtime import ArtCodeRuntime, RuntimeState
-from artcode.tools import AllowedPathPolicy, ToolExecutionContext, create_default_tool_registry
+from artcode.tools import ToolEnvironment, create_default_tool_registry
 from artcode.tools.execution import ToolExecutionService
 from artcode.workspace import Workspace
 
@@ -53,6 +53,14 @@ class _MemoryService:
         )
 
 
+_WORKSPACES: dict[int, Path] = {}
+
+
+def register_test_workspace(config, root: Path):
+    _WORKSPACES[id(config)] = root
+    return config
+
+
 def build_test_runtime(
     config,
     provider,
@@ -60,7 +68,7 @@ def build_test_runtime(
     tui,
     *,
     tool_registry=None,
-    tool_context=None,
+    tool_environment=None,
     commands=None,
     plan_memory=None,
     agent_loop=None,
@@ -72,28 +80,23 @@ def build_test_runtime(
     context_manager=None,
     request_assembler=None,
     request_preparer=None,
-    persistence=None,
+    session_service=None,
+    memory_service=None,
+    durable_prompt=None,
 ):
-    selected_workspace = workspace or Workspace.from_path(config.workspace)
+    selected_workspace = workspace or Workspace.from_path(_WORKSPACES[id(config)])
     selected_state = state or RuntimeState(permission_state or PermissionState())
     registry = tool_registry or create_default_tool_registry()
-    context = tool_context or ToolExecutionContext(
-        AllowedPathPolicy((selected_workspace.root,)),
-        default_cwd=selected_workspace.root,
-        permission_state=selected_state.permission,
-    )
-    memory = plan_memory or (
-        persistence.plan_memory if persistence is not None else PlanMemory()
-    )
+    environment = tool_environment or ToolEnvironment.from_workspace(selected_workspace)
+    memory = plan_memory or PlanMemory()
     preparer = request_preparer or RequestPreparer(
         conversation,
         request_assembler or PromptRequestAssembler(),
         registry,
-        context,
+        environment,
+        selected_state.permission,
         context_manager=context_manager,
-        durable_prompt=(
-            persistence.prompt_context if persistence is not None else None
-        ),
+        durable_prompt=durable_prompt,
     )
     permission_service = PermissionService(
         selected_state.permission,
@@ -105,35 +108,23 @@ def build_test_runtime(
         provider=provider,
         conversation=conversation,
         tool_registry=registry,
-        tool_context=context,
+        tool_environment=environment,
         plan_memory=memory,
-        tool_executor=ToolExecutionService(registry, context, permission_service),
+        tool_executor=ToolExecutionService(registry, environment, permission_service),
         context_manager=context_manager,
         request_preparer=preparer,
-        natural_turn_observer=(
-            persistence.memory_service if persistence is not None else None
-        ),
-        session_id=(
-            persistence.status.session_id if persistence is not None else "test-session"
-        ),
+        natural_turn_observer=memory_service,
+        session_id=(session_service.status.session_id if session_service else "test-session"),
     )
-    sessions = (
-        persistence.session_service
-        if persistence is not None
-        else _SessionService()
-    )
-    long_memory = (
-        persistence.memory_service
-        if persistence is not None
-        else _MemoryService(selected_workspace.root)
-    )
+    sessions = session_service or _SessionService()
+    long_memory = memory_service or _MemoryService(selected_workspace.root)
     return ArtCodeRuntime(
         config=config,
         conversation=conversation,
         tui=tui,
         workspace=selected_workspace,
         state=selected_state,
-        tool_context=context,
+        tool_environment=environment,
         plan_memory=memory,
         agent_loop=loop,
         command_dispatcher=CommandDispatcher(commands or create_default_registry()),
@@ -147,4 +138,4 @@ def build_test_runtime(
     )
 
 
-__all__ = ["build_test_runtime"]
+__all__ = ["build_test_runtime", "register_test_workspace"]

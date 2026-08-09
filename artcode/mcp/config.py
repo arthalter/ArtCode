@@ -45,7 +45,7 @@ def load_mcp_configuration(
         servers = source_raw.get("mcp_servers", {})
         if servers is None:
             continue
-        if not isinstance(servers, dict):
+        if not isinstance(servers, Mapping):
             issues.append(McpConfigIssue("<config>", "mcp_servers 必须是对象/map。", source))
             continue
         for name, value in servers.items():

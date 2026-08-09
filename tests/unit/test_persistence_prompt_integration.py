@@ -8,7 +8,6 @@ from artcode.conversation import ConversationContext
 from artcode.persistence import (
     DurablePromptSource,
     DurablePaths,
-    DurablePromptContext,
     InstructionLoader,
     MemoryCategory,
     MemoryNoteStore,
@@ -16,7 +15,8 @@ from artcode.persistence import (
     MemoryScope,
 )
 from artcode.prompting.assembler import PromptRequestAssembler
-from artcode.tools import AllowedPathPolicy, ToolExecutionContext, ToolRegistry
+from artcode.permissions import PermissionState
+from artcode.tools import ToolEnvironment, ToolRegistry
 from artcode.workspace import ArtCodePaths, Workspace
 
 import pytest
@@ -52,7 +52,10 @@ def test_dynamic_prompt_orders_instructions_and_marks_memory_as_read_only(tmp_pa
         ],
         now,
     )
-    durable = DurablePromptContext(InstructionLoader(paths).load(), user, project)
+    durable = DurablePromptSource(
+        paths,
+        instructions=InstructionLoader(paths).load(),
+    )
 
     prompt = durable.build_system_prompt()
 
@@ -67,17 +70,22 @@ def test_dynamic_prompt_orders_instructions_and_marks_memory_as_read_only(tmp_pa
 
 def test_assembler_reads_latest_index_without_mutating_conversation(tmp_path: Path) -> None:
     workspace, paths, user, project = _setup(tmp_path)
-    durable = DurablePromptContext(InstructionLoader(paths).load(), user, project)
+    durable = DurablePromptSource(
+        paths,
+        instructions=InstructionLoader(paths).load(),
+    )
     assembler = PromptRequestAssembler()
     conversation = ConversationContext("STATIC SYSTEM")
     conversation.append_user("hello")
-    context = ToolExecutionContext(AllowedPathPolicy((workspace.root,)), default_cwd=workspace.root)
+    environment = ToolEnvironment.from_workspace(workspace)
+    permission = PermissionState()
 
     preparer = RequestPreparer(
         conversation,
         assembler,
         ToolRegistry(),
-        context,
+        environment,
+        permission,
         durable_prompt=durable,
     )
     first = preparer.preview_request(NORMAL_AGENT_MODE)
@@ -95,13 +103,18 @@ async def test_resume_reminder_is_committed_only_after_dispatch_and_not_persiste
     assembler = PromptRequestAssembler()
     conversation = ConversationContext("static")
     conversation.append_user("continue")
-    context = ToolExecutionContext(AllowedPathPolicy((workspace.root,)), default_cwd=workspace.root)
+    environment = ToolEnvironment.from_workspace(workspace)
+    permission = PermissionState()
     preparer = RequestPreparer(
         conversation,
         assembler,
         ToolRegistry(),
-        context,
-        durable_prompt=DurablePromptContext(InstructionLoader(paths).load(), user, project),
+        environment,
+        permission,
+        durable_prompt=DurablePromptSource(
+            paths,
+            instructions=InstructionLoader(paths).load(),
+        ),
         resume_reminder_required=True,
     )
 

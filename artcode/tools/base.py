@@ -5,10 +5,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Protocol
 
-from artcode.permissions import PermissionSnapshot, PermissionState, ShellPolicy
+from artcode.permissions import PermissionSnapshot, ShellPolicy
 from artcode.sandbox import SeatbeltSession
+from artcode.workspace import Workspace
 
-from .policy import AllowedPathPolicy
+from .policy import WorkspacePathPolicy
 from .results import ToolResult
 
 if TYPE_CHECKING:
@@ -74,17 +75,36 @@ class DescriptorBackedTool:
     def origin(self) -> ToolOrigin:
         return self.descriptor.origin
 
-    @property
-    def requires_confirmation(self) -> bool:
-        return self.descriptor.effect is not ToolEffect.READ
-
 @dataclass(frozen=True)
 class ToolEnvironment:
-    path_policy: AllowedPathPolicy
+    path_policy: WorkspacePathPolicy
     command_timeout_seconds: float = 10.0
     default_cwd: Path | None = None
     seatbelt: SeatbeltSession | None = None
     artifact_store: Any | None = None
+
+    @classmethod
+    def from_workspace(
+        cls,
+        workspace: Workspace | Path,
+        *,
+        sensitive_paths: tuple[Path, ...] = (),
+        command_timeout_seconds: float = 10.0,
+        seatbelt: SeatbeltSession | None = None,
+        artifact_store: Any | None = None,
+    ) -> "ToolEnvironment":
+        selected = (
+            workspace
+            if isinstance(workspace, Workspace)
+            else Workspace.from_path(workspace)
+        )
+        return cls(
+            WorkspacePathPolicy(selected, sensitive_paths),
+            command_timeout_seconds,
+            selected.root,
+            seatbelt,
+            artifact_store,
+        )
 
 
 @dataclass(frozen=True)
@@ -123,44 +143,10 @@ class ToolRunContext:
 
 
 @dataclass(frozen=True)
-class ToolExecutionContext:
-    path_policy: AllowedPathPolicy
-    command_timeout_seconds: float = 10.0
-    default_cwd: Path | None = None
-    shell_policy: ShellPolicy = ShellPolicy.UNSANDBOXED_ASK
-    seatbelt: SeatbeltSession | None = None
-    permission_state: PermissionState | None = None
-    artifact_store: Any | None = None
-
-    def to_environment(self) -> ToolEnvironment:
-        return ToolEnvironment(
-            path_policy=self.path_policy,
-            command_timeout_seconds=self.command_timeout_seconds,
-            default_cwd=self.default_cwd,
-            seatbelt=self.seatbelt,
-            artifact_store=self.artifact_store,
-        )
-
-    def to_run_context(
-        self,
-        mode: AgentMode,
-        permission_state: PermissionState | None = None,
-    ) -> ToolRunContext:
-        state = permission_state or self.permission_state
-        permission = (
-            state.snapshot()
-            if state is not None
-            else PermissionSnapshot(PermissionState().mode, self.shell_policy)
-        )
-        return ToolRunContext(self.to_environment(), mode, permission)
-
-
-@dataclass(frozen=True)
 class ToolPreview:
     tool_name: str
     summary: str
     target: str
-    requires_confirmation: bool
 
 
 @dataclass(frozen=True)

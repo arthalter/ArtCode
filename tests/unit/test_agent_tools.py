@@ -4,21 +4,27 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from artcode.agent import AgentEventType, ToolAccessPolicy
-from artcode.agent.tools import ToolBatchExecutor, ToolExecutionBlocked, ToolSafety, classify_tool
+from artcode.agent import AgentEventType, NORMAL_AGENT_MODE, PLAN_MODE, ToolAccessPolicy
+from artcode.permissions import PermissionState
+from artcode.permissions.service import PermissionService
 from artcode.providers.tool_calls import ToolCall
 from artcode.tools import (
-    AllowedPathPolicy,
     DescriptorBackedTool,
     PreparedToolCall,
     ToolDescriptor,
     ToolEffect,
-    ToolExecutionContext,
+    ToolEnvironment,
     ToolOrigin,
     ToolPreview,
     ToolRegistry,
 )
 from artcode.tools.results import ToolResult, error_result, success_result
+from artcode.tools.execution import (
+    ToolExecutionBlocked,
+    ToolExecutionService,
+    ToolSafety,
+    classify_tool,
+)
 
 
 class FakeTool(DescriptorBackedTool):
@@ -40,12 +46,12 @@ class FakeTool(DescriptorBackedTool):
         self.started: list[str] = []
         self.finished: list[str] = []
 
-    def prepare(self, arguments: dict[str, Any], context: ToolExecutionContext) -> PreparedToolCall | ToolResult:
+    def prepare(self, arguments: dict[str, Any], context) -> PreparedToolCall | ToolResult:
         if arguments.get("prepare_error"):
             return error_result(self.name, "prepare_error", "预检失败。")
-        return PreparedToolCall(self, arguments, ToolPreview(self.name, self.name, self.name, self.requires_confirmation))
+        return PreparedToolCall(self, arguments, ToolPreview(self.name, self.name, self.name))
 
-    async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
+    async def execute(self, prepared: PreparedToolCall, context) -> ToolResult:
         self.started.append(self.name)
         if self.delay:
             await asyncio.sleep(self.delay)
@@ -76,8 +82,16 @@ class FakeMcpApprover:
         return self.choices.pop(0)
 
 
-def context_for(tmp_path: Path) -> ToolExecutionContext:
-    return ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path)
+def context_for(tmp_path: Path) -> ToolEnvironment:
+    return ToolEnvironment.from_workspace(tmp_path)
+
+
+def executor_for(registry: ToolRegistry, environment: ToolEnvironment, approver=None):
+    return ToolExecutionService(
+        registry,
+        environment,
+        PermissionService(PermissionState(), approver=approver),
+    )
 
 
 def registry_with(*tools: FakeTool) -> ToolRegistry:
@@ -93,7 +107,7 @@ def test_classifies_run_command_as_side_effect() -> None:
 
 
 def test_build_plan_groups_adjacent_read_only_tools(tmp_path) -> None:
-    executor = ToolBatchExecutor(
+    executor = executor_for(
         registry_with(FakeTool("read_file"), FakeTool("search_text"), FakeTool("write_file"), FakeTool("find_files")),
         context_for(tmp_path),
     )
@@ -115,7 +129,7 @@ def test_build_plan_groups_adjacent_read_only_tools(tmp_path) -> None:
 
 
 def test_build_plan_blocks_unknown_tool(tmp_path) -> None:
-    executor = ToolBatchExecutor(registry_with(FakeTool("read_file")), context_for(tmp_path))
+    executor = executor_for(registry_with(FakeTool("read_file")), context_for(tmp_path))
 
     result = executor.build_plan([ToolCall("1", "missing", "{}")], ToolAccessPolicy())
 
@@ -124,7 +138,7 @@ def test_build_plan_blocks_unknown_tool(tmp_path) -> None:
 
 
 def test_build_plan_blocks_disallowed_tool(tmp_path) -> None:
-    executor = ToolBatchExecutor(registry_with(FakeTool("write_file")), context_for(tmp_path))
+    executor = executor_for(registry_with(FakeTool("write_file")), context_for(tmp_path))
 
     result = executor.build_plan(
         [ToolCall("1", "write_file", "{}")],
@@ -138,13 +152,13 @@ def test_build_plan_blocks_disallowed_tool(tmp_path) -> None:
 async def test_read_only_batch_runs_concurrently_but_yields_original_order(tmp_path) -> None:
     slow = FakeTool("read_file", delay=0.03)
     fast = FakeTool("search_text", delay=0.0)
-    executor = ToolBatchExecutor(registry_with(slow, fast), context_for(tmp_path))
+    executor = executor_for(registry_with(slow, fast), context_for(tmp_path))
     plan = executor.build_plan(
         [ToolCall("1", "read_file", "{}"), ToolCall("2", "search_text", "{}")],
         ToolAccessPolicy(),
     )
 
-    events = [event async for event in executor.execute_plan(plan)]
+    events = [event async for event in executor.execute_plan(plan, mode=NORMAL_AGENT_MODE)]
 
     result_events = [event for event in events if event.type == AgentEventType.TOOL_RESULT]
     assert [event.payload["tool_call"].id for event in result_events] == ["1", "2"]
@@ -154,13 +168,13 @@ async def test_read_only_batch_runs_concurrently_but_yields_original_order(tmp_p
 async def test_side_effect_batch_runs_serially(tmp_path) -> None:
     first = FakeTool("write_file")
     second = FakeTool("run_command")
-    executor = ToolBatchExecutor(registry_with(first, second), context_for(tmp_path))
+    executor = executor_for(registry_with(first, second), context_for(tmp_path))
     plan = executor.build_plan(
         [ToolCall("1", "write_file", "{}"), ToolCall("2", "run_command", "{}")],
         ToolAccessPolicy(),
     )
 
-    events = [event async for event in executor.execute_plan(plan)]
+    events = [event async for event in executor.execute_plan(plan, mode=NORMAL_AGENT_MODE)]
 
     assert [event.payload["tool_call"].id for event in events if event.type == AgentEventType.TOOL_RESULT] == ["1", "2"]
 
@@ -169,15 +183,15 @@ async def test_mcp_batch_asks_each_call_and_runs_approved_calls(tmp_path) -> Non
     first = FakeMcpTool("external_one")
     second = FakeMcpTool("external_two")
     approver = FakeMcpApprover([True, False])
-    executor = ToolBatchExecutor(
-        registry_with(first, second), context_for(tmp_path), approver=approver
+    executor = executor_for(
+        registry_with(first, second), context_for(tmp_path), approver
     )
     plan = executor.build_plan(
         [ToolCall("1", first.name, "{}"), ToolCall("2", second.name, "{}")],
         ToolAccessPolicy(frozenset()),
     )
 
-    events = [event async for event in executor.execute_plan(plan, plan_mode=True)]
+    events = [event async for event in executor.execute_plan(plan, mode=PLAN_MODE)]
     results = [event.payload["result"] for event in events if event.type == AgentEventType.TOOL_RESULT]
 
     assert plan.batches[0].safety is ToolSafety.MCP_EXTERNAL

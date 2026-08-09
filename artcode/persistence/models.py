@@ -210,12 +210,3 @@ class PersistenceStatus:
     user_active_notes: int = 0
     project_active_notes: int = 0
     default_locked_new_session: bool = False
-
-
-@dataclass(frozen=True)
-class RestorePreparationReport:
-    attempted: bool = False
-    status: str = "not_needed"
-    before_tokens: int = 0
-    after_tokens: int = 0
-    message: str = ""

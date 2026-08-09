@@ -8,14 +8,14 @@ import pytest
 
 from artcode.agent import AgentEventType, DO_MODE, NORMAL_AGENT_MODE, PLAN_MODE, ToolAccessPolicy
 from artcode.permissions import PermissionState
+from artcode.permissions.service import PermissionService
 from artcode.providers.tool_calls import ToolCall
 from artcode.tools import (
-    AllowedPathPolicy,
     DescriptorBackedTool,
     PreparedToolCall,
     ToolDescriptor,
     ToolEffect,
-    ToolExecutionContext,
+    ToolEnvironment,
     ToolOrigin,
     ToolPreview,
     ToolRegistry,
@@ -24,7 +24,7 @@ from artcode.tools import (
 )
 from artcode.tools.execution import (
     ToolExecutionBlocked,
-    ToolExecutionService,
+    ToolExecutionService as _ToolExecutionService,
     ToolSafety,
 )
 from artcode.tools.results import ToolResult
@@ -69,7 +69,7 @@ class RecordingTool(DescriptorBackedTool):
         return PreparedToolCall(
             self,
             arguments,
-            ToolPreview(self.name, self.name, arguments.get("target", self.name), False),
+            ToolPreview(self.name, self.name, arguments.get("target", self.name)),
         )
 
     async def execute(self, prepared, context):
@@ -100,16 +100,25 @@ def registry(*tools: RecordingTool) -> ToolRegistry:
     return selected
 
 
-def context(tmp_path: Path) -> ToolExecutionContext:
-    return ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path)
+def context(tmp_path: Path) -> ToolEnvironment:
+    return ToolEnvironment.from_workspace(tmp_path)
+
+
+def ToolExecutionService(registry, environment, permission=None) -> _ToolExecutionService:
+    return _ToolExecutionService(
+        registry,
+        environment,
+        permission or PermissionService(PermissionState()),
+    )
 
 
 def call(name: str, arguments: str = "{}", identifier: str = "call") -> ToolCall:
     return ToolCall(identifier, name, arguments)
 
 
-async def result_events(service: ToolExecutionService, plan, **kwargs):
-    events = [event async for event in service.execute_plan(plan, **kwargs)]
+async def result_events(service: _ToolExecutionService, plan, **kwargs):
+    mode = kwargs.pop("mode", NORMAL_AGENT_MODE)
+    events = [event async for event in service.execute_plan(plan, mode=mode)]
     return [event for event in events if event.type is AgentEventType.TOOL_RESULT]
 
 
@@ -264,15 +273,6 @@ async def test_invalid_execute_return_is_normalized(tmp_path, value) -> None:
     assert events[0].payload["result"].error_code == "tool_execution_error"
 
 
-async def test_mode_and_legacy_plan_flag_are_mutually_exclusive(tmp_path) -> None:
-    tool = RecordingTool("read", ToolEffect.READ)
-    service = ToolExecutionService(registry(tool), context(tmp_path))
-    plan = service.build_plan([call(tool.name)], ToolAccessPolicy())
-
-    with pytest.raises(ValueError, match="mode or plan_mode"):
-        await anext(service.execute_plan(plan, mode=NORMAL_AGENT_MODE, plan_mode=False))
-
-
 @pytest.mark.parametrize("mode", [NORMAL_AGENT_MODE, PLAN_MODE, DO_MODE], ids=("normal", "plan", "do"))
 async def test_each_execution_builds_context_with_requested_mode(tmp_path, mode) -> None:
     tool = RecordingTool("read", ToolEffect.READ)
@@ -280,7 +280,7 @@ async def test_each_execution_builds_context_with_requested_mode(tmp_path, mode)
     service = ToolExecutionService(
         registry(tool),
         context(tmp_path),
-        permission_state=state,
+        PermissionService(state),
     )
     plan = service.build_plan([call(tool.name)], mode.tool_policy)
 
@@ -322,7 +322,11 @@ async def test_external_batch_runs_concurrently_and_reports_call_order(tmp_path)
         async def request_mcp_approval(self, preview, plan_mode):
             return True
 
-    service = ToolExecutionService(registry(slow, fast), context(tmp_path), approver=AllowMcp())
+    service = ToolExecutionService(
+        registry(slow, fast),
+        context(tmp_path),
+        PermissionService(PermissionState(), approver=AllowMcp()),
+    )
     plan = service.build_plan([call("slow", identifier="1"), call("fast", identifier="2")], ToolAccessPolicy())
 
     events = await result_events(service, plan)
@@ -351,16 +355,3 @@ async def test_permission_denial_short_circuits_tool(tmp_path, denial) -> None:
 
     assert events[0].payload["result"] is denial
     assert not tool.started
-
-
-def test_explicit_permission_service_rejects_legacy_permission_arguments(tmp_path) -> None:
-    tool = RecordingTool("read", ToolEffect.READ)
-    permission = DenyingPermissionService(error_result("read", "x", "x"))
-
-    with pytest.raises(ValueError, match="cannot be combined"):
-        ToolExecutionService(
-            registry(tool),
-            context(tmp_path),
-            permission,
-            permission_state=PermissionState(),
-        )

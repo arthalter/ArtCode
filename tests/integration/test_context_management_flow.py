@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import re
 
-from artcode.agent import AgentEventType, AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE
+from artcode.agent import (
+    AgentEventType,
+    AgentLoop,
+    AgentRunRequest,
+    NORMAL_AGENT_MODE,
+    RequestPreparer,
+)
 from artcode.config import ContextConfig
 from artcode.context_management import (
     ContextArtifactStore,
@@ -13,19 +19,23 @@ from artcode.context_management import (
 from artcode.context_management.retention import RetentionPlanner
 from artcode.context_management.summarizer import SUMMARY_TITLES, VERBATIM_PLACEHOLDER
 from artcode.conversation import ConversationContext
+from artcode.permissions import PermissionState
+from artcode.permissions.service import PermissionService
+from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.providers.events import content_delta_event, done_event, token_usage_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
 from artcode.tools import (
-    AllowedPathPolicy,
     DescriptorBackedTool,
     PreparedToolCall,
     ToolDescriptor,
     ToolEffect,
-    ToolExecutionContext,
+    ToolEnvironment,
     ToolPreview,
     ToolRegistry,
+    ToolRunContext,
     success_result,
 )
+from artcode.tools.execution import ToolExecutionService
 from artcode.tools.file_tools import ReadFileTool
 
 
@@ -46,8 +56,8 @@ class FlowProvider:
         ]
         self.calls = []
 
-    async def stream_chat(self, messages, tools=None, *, options=None):
-        self.calls.append((list(messages), tools, options))
+    async def stream(self, request):
+        self.calls.append(request)
         for event in self.responses.pop(0):
             yield event
 
@@ -77,7 +87,7 @@ class LargeOutputTool(DescriptorBackedTool):
     )
 
     def prepare(self, arguments, context):
-        return PreparedToolCall(self, arguments, ToolPreview(self.name, "large", "large", False))
+        return PreparedToolCall(self, arguments, ToolPreview(self.name, "large", "large"))
 
     async def execute(self, prepared, context):
         content = "".join(f"row-{index:05d}\n" for index in range(9_000)) + "UNIQUE_CONTEXT_TAIL\n"
@@ -94,11 +104,11 @@ async def test_complete_context_management_flow(tmp_path) -> None:
     provider = FlowProvider()
     store = ContextArtifactStore(tmp_path, "flow-session")
     store.start()
-    context = ToolExecutionContext(
-        AllowedPathPolicy((tmp_path,)),
-        default_cwd=tmp_path,
+    environment = ToolEnvironment.from_workspace(
+        tmp_path,
         artifact_store=store,
     )
+    permission_state = PermissionState()
     registry = ToolRegistry()
     registry.register(LargeOutputTool())
     manager = ContextManager(
@@ -108,7 +118,27 @@ async def test_complete_context_management_flow(tmp_path) -> None:
         lightweight_compactor=LightweightCompactor(store),
         retention_planner=RetentionPlanner(recent_token_budget=50, minimum_messages=3),
     )
-    loop = AgentLoop(provider, conversation, registry, context, context_manager=manager)
+    preparer = RequestPreparer(
+        conversation,
+        PromptRequestAssembler(),
+        registry,
+        environment,
+        permission_state,
+        context_manager=manager,
+    )
+    loop = AgentLoop(
+        provider,
+        conversation,
+        registry,
+        environment,
+        tool_executor=ToolExecutionService(
+            registry,
+            environment,
+            PermissionService(permission_state),
+        ),
+        request_preparer=preparer,
+        context_manager=manager,
+    )
 
     events = [
         event
@@ -118,9 +148,9 @@ async def test_complete_context_management_flow(tmp_path) -> None:
     ]
 
     assert len(provider.calls) == 3
-    assert provider.calls[1][1] is None
-    assert provider.calls[1][2].thinking_enabled is False
-    final_request = provider.calls[2][0]
+    assert provider.calls[1].tools is None
+    assert provider.calls[1].thinking_enabled is False
+    final_request = provider.calls[2].messages
     assert any(str(message.get("content", "")).startswith("<conversation-summary>") for message in final_request)
     artifact_message = next(message for message in final_request if message.get("role") == "tool")
     assert artifact_message["content"].startswith("<persisted-output>")
@@ -135,12 +165,17 @@ async def test_complete_context_management_flow(tmp_path) -> None:
 
     relative_path = re.search(r"^path: (.+)$", artifact_message["content"], re.MULTILINE).group(1)
     tool = ReadFileTool()
+    run_context = ToolRunContext(
+        environment,
+        NORMAL_AGENT_MODE,
+        permission_state.snapshot(),
+    )
     prepared = tool.prepare(
         {"path": relative_path, "start_line": 8_999, "end_line": 9_001},
-        context,
+        run_context,
     )
     assert isinstance(prepared, PreparedToolCall)
-    fragment = await tool.execute(prepared, context)
+    fragment = await tool.execute(prepared, run_context)
     assert "UNIQUE_CONTEXT_TAIL" in fragment.content
 
     session_dir = store.session_dir

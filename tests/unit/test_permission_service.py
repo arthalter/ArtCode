@@ -15,7 +15,6 @@ from artcode.permissions import (
 )
 from artcode.permissions.service import PermissionService
 from artcode.tools import (
-    AllowedPathPolicy,
     PreparedToolCall,
     ToolDescriptor,
     ToolEffect,
@@ -82,13 +81,13 @@ def prepared(selected: ToolDescriptor, target: str = "target") -> PreparedToolCa
     return PreparedToolCall(
         BareTool(),
         arguments,
-        ToolPreview(selected.name, "preview", target, True),
+        ToolPreview(selected.name, "preview", target),
     )
 
 
 def run_context(tmp_path: Path) -> ToolRunContext:
     return ToolRunContext(
-        ToolEnvironment(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path),
+        ToolEnvironment.from_workspace(tmp_path),
         NORMAL_AGENT_MODE,
         PermissionSnapshot(PermissionState().mode, PermissionState().shell_policy),
     )

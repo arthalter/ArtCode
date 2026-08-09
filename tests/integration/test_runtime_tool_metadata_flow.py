@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from artcode.agent import PLAN_MODE, ToolAccessPolicy
-from artcode.agent.tools import ToolBatchExecutor, ToolSafety
+from artcode.permissions.service import PermissionService
+from artcode.tools.execution import ToolExecutionService, ToolSafety
 from artcode.permissions import (
     PermissionAction,
     PermissionEngine,
@@ -15,11 +16,10 @@ from artcode.permissions import (
 from artcode.providers.tool_calls import ToolCall
 from artcode.security import DangerousCommandValidator
 from artcode.tools import (
-    AllowedPathPolicy,
     DescriptorBackedTool,
     ToolDescriptor,
     ToolEffect,
-    ToolExecutionContext,
+    ToolEnvironment,
     ToolOrigin,
     ToolRegistry,
 )
@@ -78,9 +78,10 @@ def test_one_descriptor_declaration_drives_plan_visibility(effect: ToolEffect, v
 def test_same_descriptor_declaration_drives_batch_planning(tmp_path, effect: ToolEffect, safety: ToolSafety) -> None:
     descriptor = metadata(effect)
     registry = registry_for(effect)
-    executor = ToolBatchExecutor(
+    executor = ToolExecutionService(
         registry,
-        ToolExecutionContext(AllowedPathPolicy((tmp_path,)), default_cwd=tmp_path),
+        ToolEnvironment.from_workspace(tmp_path),
+        PermissionService(PermissionState()),
     )
     plan = executor.build_plan(
         [ToolCall("call", descriptor.name, "{}")],

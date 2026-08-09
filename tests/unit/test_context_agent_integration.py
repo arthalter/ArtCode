@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from artcode.agent import AgentEventType, AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE
+from artcode.agent import AgentEventType, AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, RequestPreparer
 from artcode.config import ContextConfig
 from artcode.context_management import (
     ContextArtifactStore,
@@ -15,17 +15,20 @@ from artcode.errors import ContextWindowExceededError
 from artcode.errors import NetworkError
 from artcode.providers.events import content_delta_event, done_event, token_usage_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
+from artcode.permissions import PermissionState
+from artcode.permissions.service import PermissionService
+from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.tools import (
-    AllowedPathPolicy,
     DescriptorBackedTool,
     PreparedToolCall,
     ToolDescriptor,
     ToolEffect,
-    ToolExecutionContext,
+    ToolEnvironment,
     ToolPreview,
     ToolRegistry,
     success_result,
 )
+from artcode.tools.execution import ToolExecutionService
 
 
 def valid_summary() -> str:
@@ -41,8 +44,8 @@ class QueueProvider:
         self.actions = list(actions)
         self.calls = []
 
-    async def stream_chat(self, messages, tools=None, *, options=None):
-        self.calls.append((list(messages), tools, options))
+    async def stream(self, request):
+        self.calls.append(request)
         action = self.actions.pop(0)
         if isinstance(action, Exception):
             raise action
@@ -59,7 +62,7 @@ class LargeTool(DescriptorBackedTool):
     )
 
     def prepare(self, arguments, context):
-        return PreparedToolCall(self, arguments, ToolPreview(self.name, "large", "large", False))
+        return PreparedToolCall(self, arguments, ToolPreview(self.name, "large", "large"))
 
     async def execute(self, prepared, context):
         return success_result(self.name, "ok", "a" * 24_003 + "UNIQUE_TAIL")
@@ -68,11 +71,11 @@ class LargeTool(DescriptorBackedTool):
 def build_loop(tmp_path, provider, conversation, *, with_large_tool=False):
     store = ContextArtifactStore(tmp_path, "session")
     store.start()
-    tool_context = ToolExecutionContext(
-        AllowedPathPolicy((tmp_path,)),
-        default_cwd=tmp_path,
+    environment = ToolEnvironment.from_workspace(
+        tmp_path,
         artifact_store=store,
     )
+    permission = PermissionState()
     registry = ToolRegistry()
     if with_large_tool:
         registry.register(LargeTool())
@@ -83,7 +86,27 @@ def build_loop(tmp_path, provider, conversation, *, with_large_tool=False):
         lightweight_compactor=LightweightCompactor(store),
         retention_planner=RetentionPlanner(recent_token_budget=50, minimum_messages=3),
     )
-    return AgentLoop(provider, conversation, registry, tool_context, context_manager=manager), store
+    preparer = RequestPreparer(
+        conversation,
+        PromptRequestAssembler(),
+        registry,
+        environment,
+        permission,
+        context_manager=manager,
+    )
+    return AgentLoop(
+        provider,
+        conversation,
+        registry,
+        environment,
+        tool_executor=ToolExecutionService(
+            registry,
+            environment,
+            PermissionService(permission),
+        ),
+        request_preparer=preparer,
+        context_manager=manager,
+    ), store
 
 
 async def collect(loop, request):
@@ -102,7 +125,7 @@ async def test_large_tool_result_is_persisted_before_next_model_request(tmp_path
 
     events = await collect(loop, AgentRunRequest("read", NORMAL_AGENT_MODE))
 
-    second_request_tool = next(message for message in provider.calls[1][0] if message.get("role") == "tool")
+    second_request_tool = next(message for message in provider.calls[1].messages if message.get("role") == "tool")
     assert second_request_tool["content"].startswith("<persisted-output>")
     assert any(event.type == AgentEventType.CONTEXT_STATUS for event in events)
     files = list(store.tool_results_dir.iterdir())
@@ -136,8 +159,8 @@ async def test_context_error_runs_one_emergency_compaction_and_retries_once(tmp_
     events = await collect(loop, AgentRunRequest("continue", NORMAL_AGENT_MODE))
 
     assert len(provider.calls) == 3
-    assert provider.calls[1][1] is None
-    assert provider.calls[1][2].max_output_tokens == 20_000
+    assert provider.calls[1].tools is None
+    assert provider.calls[1].max_output_tokens == 20_000
     assert sum(
         message.get("role") == "user" and message.get("content") == "continue"
         for message in conversation.export_messages()

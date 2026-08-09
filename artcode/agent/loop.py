@@ -7,9 +7,8 @@ from typing import Any
 
 from artcode.conversation import ConversationContext, ConversationPersistenceRejected
 from artcode.errors import ContextWindowExceededError, RequestError
-from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.providers.base import StreamingProvider
-from artcode.tools import ToolExecutionContext, ToolRegistry, error_result
+from artcode.tools import ToolEnvironment, ToolRegistry, error_result
 from artcode.context_management.manager import ContextManager
 from artcode.context_management.models import CompressionTrigger
 
@@ -17,8 +16,8 @@ from .events import (
     AgentEvent,
     AgentEventType,
     ModelTurn,
-    NaturalTurn,
-    NaturalTurnObserver,
+    CompletedTurn,
+    CompletedTurnObserver,
     StopReason,
     final_summary_started_event,
     context_status_event,
@@ -36,46 +35,34 @@ from .stream import StreamCollector
 from artcode.tools.execution import ToolExecutionBlocked, ToolExecutionService
 
 
-@dataclass(frozen=True)
-class AgentRunResult:
-    stop_reason: StopReason
-    final_text: str
-    iterations_used: int
-    tool_results_count: int
-    saved_plan: str | None = None
-
-
 class AgentLoop:
     def __init__(
         self,
         provider: StreamingProvider,
         conversation: ConversationContext,
         tool_registry: ToolRegistry,
-        tool_context: ToolExecutionContext,
+        tool_environment: ToolEnvironment,
         plan_memory: PlanMemory | None = None,
         stream_collector: StreamCollector | None = None,
         tool_executor: ToolExecutionService | None = None,
-        request_assembler: PromptRequestAssembler | None = None,
         request_preparer: RequestPreparer | None = None,
         context_manager: ContextManager | None = None,
-        natural_turn_observer: NaturalTurnObserver | None = None,
+        natural_turn_observer: CompletedTurnObserver | None = None,
         session_id: str = "ephemeral",
     ) -> None:
         self.provider = provider
         self.conversation = conversation
         self.tool_registry = tool_registry
-        self.tool_context = tool_context
+        self.tool_environment = tool_environment
         self.plan_memory = plan_memory or PlanMemory()
         self.stream_collector = stream_collector or StreamCollector()
-        self.tool_executor = tool_executor or ToolExecutionService(tool_registry, tool_context)
+        if tool_executor is None:
+            raise ValueError("AgentLoop requires an explicit ToolExecutionService")
+        self.tool_executor = tool_executor
         self.context_manager = context_manager
-        self.request_preparer = request_preparer or RequestPreparer(
-            conversation,
-            request_assembler or PromptRequestAssembler(),
-            tool_registry,
-            tool_context,
-            context_manager=context_manager,
-        )
+        if request_preparer is None:
+            raise ValueError("AgentLoop requires an explicit RequestPreparer")
+        self.request_preparer = request_preparer
         self.natural_turn_observer = natural_turn_observer
         self.session_id = session_id
 
@@ -127,7 +114,7 @@ class AgentLoop:
                             self.plan_memory.save(model_turn.text)
                         if self.natural_turn_observer is not None:
                             self.natural_turn_observer.submit(
-                                NaturalTurn(
+                                CompletedTurn(
                                     session_id=self.session_id,
                                     mode=request.mode.name,
                                     user_content=request.user_content,

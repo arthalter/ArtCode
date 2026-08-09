@@ -1,21 +1,23 @@
 from __future__ import annotations
 
-from artcode.tools.base import PreparedToolCall, ToolExecutionContext
+from artcode.agent import NORMAL_AGENT_MODE
+from artcode.permissions import PermissionState, ShellPolicy
+from artcode.tools.base import PreparedToolCall, ToolEnvironment, ToolRunContext
 from artcode.tools.command_tool import RunCommandTool
-from artcode.tools.policy import AllowedPathPolicy
 import asyncio
 
 
-def context_for(root, timeout: float = 10.0) -> ToolExecutionContext:
+def context_for(root, timeout: float = 10.0) -> ToolRunContext:
     root.mkdir()
-    return ToolExecutionContext(
-        AllowedPathPolicy((root,)),
+    environment = ToolEnvironment.from_workspace(
+        root,
         command_timeout_seconds=timeout,
-        default_cwd=root,
     )
+    state = PermissionState(shell_policy=ShellPolicy.UNSANDBOXED_ASK)
+    return ToolRunContext(environment, NORMAL_AGENT_MODE, state.snapshot())
 
 
-async def run_prepared(arguments, context: ToolExecutionContext):
+async def run_prepared(arguments, context: ToolRunContext):
     tool = RunCommandTool()
     prepared = tool.prepare(arguments, context)
     assert isinstance(prepared, PreparedToolCall)
@@ -29,7 +31,7 @@ def test_run_command_preview_contains_command(tmp_path) -> None:
 
     assert isinstance(prepared, PreparedToolCall)
     assert "pwd" in prepared.preview.summary
-    assert prepared.preview.requires_confirmation is True
+    assert prepared.preview.target.endswith("$ pwd")
 
 
 async def test_run_command_executes_inside_allowed_dir(tmp_path) -> None:
@@ -59,26 +61,7 @@ def test_run_command_rejects_outside_cwd(tmp_path) -> None:
     result = RunCommandTool().prepare({"command": "pwd", "cwd": str(tmp_path)}, context)
 
     assert result.ok is False
-    assert result.error_code == "path_outside_allowed_dirs"
-
-
-def test_run_command_rejects_dangerous_command(tmp_path) -> None:
-    context = context_for(tmp_path / "sandbox")
-
-    result = RunCommandTool().prepare({"command": "sudo echo nope"}, context)
-
-    assert result.ok is False
-    assert result.error_code == "dangerous_command"
-
-
-def test_rejected_dangerous_command_is_not_executed(tmp_path) -> None:
-    context = context_for(tmp_path / "sandbox")
-    target = context.default_cwd / "created.txt"
-
-    result = RunCommandTool().prepare({"command": f"sudo touch {target}"}, context)
-
-    assert result.ok is False
-    assert not target.exists()
+    assert result.error_code == "path_outside_workspace"
 
 
 async def test_run_command_times_out(tmp_path) -> None:

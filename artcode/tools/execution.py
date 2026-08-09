@@ -7,15 +7,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from artcode.permissions import PermissionEngine, PermissionState, RuleWriter
-from artcode.permissions.service import ApprovalPort, PermissionService
+from artcode.permissions.service import PermissionService
 from artcode.providers.tool_calls import ToolCall
 
 from .base import (
     PreparedToolCall,
     ToolDescriptor,
     ToolEffect,
-    ToolExecutionContext,
+    ToolEnvironment,
     ToolResult,
     ToolRunContext,
 )
@@ -61,28 +60,12 @@ class ToolExecutionService:
     def __init__(
         self,
         tool_registry: ToolRegistry,
-        tool_context: ToolExecutionContext,
-        permission_service: PermissionService | None = None,
-        *,
-        permission_engine: PermissionEngine | None = None,
-        permission_state: PermissionState | None = None,
-        approver: ApprovalPort | None = None,
-        rule_writer: RuleWriter | None = None,
+        environment: ToolEnvironment,
+        permission_service: PermissionService,
     ) -> None:
-        if permission_service is not None and any(
-            value is not None
-            for value in (permission_engine, permission_state, approver, rule_writer)
-        ):
-            raise ValueError("permission_service cannot be combined with legacy permission arguments")
-        state = permission_state or PermissionState(shell_policy=tool_context.shell_policy)
         self.tool_registry = tool_registry
-        self.tool_context = tool_context
-        self.permission_service = permission_service or PermissionService(
-            state,
-            engine=permission_engine,
-            approver=approver,
-            rule_writer=rule_writer,
-        )
+        self.environment = environment
+        self.permission_service = permission_service
 
     def build_plan(
         self,
@@ -147,19 +130,14 @@ class ToolExecutionService:
         self,
         plan: ToolExecutionPlan,
         *,
-        mode: AgentMode | None = None,
-        plan_mode: bool | None = None,
+        mode: AgentMode,
     ) -> AsyncIterator[AgentEvent]:
         from artcode.agent.events import tool_batch_started_event, tool_result_event
-        from artcode.agent.modes import NORMAL_AGENT_MODE, PLAN_MODE
-
-        if mode is not None and plan_mode is not None:
-            raise ValueError("pass mode or plan_mode, not both")
-        selected_mode = mode or (PLAN_MODE if plan_mode else NORMAL_AGENT_MODE)
         for batch in plan.batches:
-            context = self.tool_context.to_run_context(
-                selected_mode,
-                self.permission_service.state,
+            context = ToolRunContext(
+                self.environment,
+                mode,
+                self.permission_service.state.snapshot(),
             )
             yield tool_batch_started_event(batch.index, batch.safety.value, len(batch.tool_calls))
             prepared = [
@@ -256,7 +234,3 @@ def classify_tool(descriptor: ToolDescriptor) -> ToolSafety:
     if descriptor.effect is ToolEffect.EXTERNAL:
         return ToolSafety.MCP_EXTERNAL
     return ToolSafety.SIDE_EFFECT
-
-
-# Transitional name retained until T14 removes the old Agent tools module.
-ToolBatchExecutor = ToolExecutionService

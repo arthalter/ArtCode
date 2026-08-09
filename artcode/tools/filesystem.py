@@ -222,10 +222,7 @@ class WorkspaceFileAccess:
         return sorted(selected)
 
     def display_target(self, path: Path) -> str:
-        relative_target = getattr(self.policy, "relative_target", None)
-        if callable(relative_target):
-            return relative_target(path)
-        return str(path)
+        return self.policy.relative_target(path)
 
     def _snapshot(
         self,
@@ -300,12 +297,7 @@ class WorkspaceFileAccess:
     def _root_for(self, path: Path) -> Path:
         matches = [root for root in self.roots if path == root or root in path.parents]
         if not matches:
-            message = (
-                f"路径位于 Workspace 外：{path}"
-                if hasattr(self.policy, "workspace")
-                else f"路径不在允许目录内：{path}"
-            )
-            raise WorkspaceBoundaryError(message)
+            raise WorkspaceBoundaryError(f"路径位于 Workspace 外：{path}")
         return max(matches, key=lambda item: len(item.parts))
 
     def _open_parent(self, root: Path, path: Path, *, create: bool) -> int:

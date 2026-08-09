@@ -1,9 +1,20 @@
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
 from artcode.mcp.config import expand_config, load_mcp_configuration, safe_stdio_environment
 from artcode.mcp.models import ServerSource, TransportKind
+
+
+def test_immutable_runtime_mcp_mapping_is_accepted(tmp_path: Path) -> None:
+    configs, issues = load_mcp_configuration(
+        {"mcp_servers": MappingProxyType({})},
+        tmp_path,
+    )
+
+    assert configs == ()
+    assert issues == ()
 
 
 def test_project_replaces_user_server_as_whole(tmp_path: Path) -> None:

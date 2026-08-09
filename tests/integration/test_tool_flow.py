@@ -4,11 +4,14 @@ import json
 
 from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.conversation import ConversationContext
-from artcode.permissions import ApprovalChoice, PermissionState
+from artcode.permissions import ApprovalChoice, PermissionState, ShellPolicy
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
-from tests.runtime_factory import build_test_runtime as ArtCodeRuntime
-from artcode.tools import AllowedPathPolicy, ToolExecutionContext
+from tests.runtime_factory import (
+    build_test_runtime as ArtCodeRuntime,
+    register_test_workspace,
+)
+from artcode.tools import ToolEnvironment
 
 
 class FakeTui:
@@ -117,9 +120,9 @@ class FakeProvider:
         self.calls = 0
         self.tools_seen: list[list[dict] | None] = []
 
-    async def stream_chat(self, messages, tools=None):
+    async def stream(self, request):
         self.calls += 1
-        self.tools_seen.append(tools)
+        self.tools_seen.append(None if request.tools is None else list(request.tools))
         if self.calls == 1:
             yield tool_calls_event(self.tool_calls)
             yield done_event()
@@ -130,14 +133,13 @@ class FakeProvider:
 
 def config_for(allowed_dir) -> ArtCodeConfig:
     allowed_dir.mkdir(exist_ok=True)
-    return ArtCodeConfig(
+    return register_test_workspace(ArtCodeConfig(
         protocol="openai",
         model="fake-model",
         base_url="https://example.invalid",
         api_key="sk-test",
         thinking=ThinkingConfig(),
-        workspace=allowed_dir,
-    )
+    ), allowed_dir)
 
 
 def tool_payloads(context: ConversationContext) -> list[dict]:
@@ -148,7 +150,7 @@ def tool_payloads(context: ConversationContext) -> list[dict]:
     ]
 
 
-async def run_flow(tmp_path, user_input: str, tool_calls: list[ToolCall], final_reply: str, confirmations=None, tool_context=None):
+async def run_flow(tmp_path, user_input: str, tool_calls: list[ToolCall], final_reply: str, confirmations=None, tool_environment=None):
     allowed_dir = tmp_path / "sandbox"
     config = config_for(allowed_dir)
     provider = FakeProvider(tool_calls, final_reply)
@@ -159,10 +161,10 @@ async def run_flow(tmp_path, user_input: str, tool_calls: list[ToolCall], final_
         provider=provider,
         conversation=context,
         tui=tui,
-        tool_context=tool_context,
+        tool_environment=tool_environment,
         permission_state=(
-            PermissionState(shell_policy=tool_context.shell_policy)
-            if tool_context is not None
+            PermissionState(shell_policy=ShellPolicy.UNSANDBOXED_ASK)
+            if tool_environment is not None
             else None
         ),
     )
@@ -199,7 +201,7 @@ async def test_outside_read_flow_returns_boundary_error_and_summary(tmp_path) ->
     )
 
     payload = tool_payloads(context)[0]
-    assert payload["error_code"] == "path_outside_allowed_dirs"
+    assert payload["error_code"] == "path_outside_workspace"
     assert context.export_messages()[-1]["content"] == "无法读取，路径越界。"
 
 
@@ -239,17 +241,16 @@ async def test_multiple_tool_calls_flow_executes_all_and_summarizes(tmp_path) ->
 async def test_command_timeout_flow_returns_error_and_summary(tmp_path) -> None:
     allowed_dir = tmp_path / "sandbox"
     allowed_dir.mkdir()
-    tool_context = ToolExecutionContext(
-        AllowedPathPolicy((allowed_dir,)),
+    tool_environment = ToolEnvironment.from_workspace(
+        allowed_dir,
         command_timeout_seconds=0.05,
-        default_cwd=allowed_dir,
     )
     _, _, context, _ = await run_flow(
         tmp_path,
         "执行慢命令",
         [ToolCall("call_1", "run_command", '{"command":"sleep 1"}')],
         "命令执行超时。",
-        tool_context=tool_context,
+        tool_environment=tool_environment,
     )
 
     assert tool_payloads(context)[0]["error_code"] == "command_timeout"

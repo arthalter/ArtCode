@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from artcode.tools import ToolExecutionContext, ToolRunContext
+from artcode.tools import ToolRunContext
 
 if TYPE_CHECKING:
     from artcode.agent.modes import AgentMode
@@ -62,11 +62,11 @@ def collect_runtime_reminder_context(
     mode: AgentMode,
     all_tool_names: tuple[str, ...],
     allowed_tool_names: tuple[str, ...],
-    tool_context: ToolExecutionContext | ToolRunContext,
+    tool_context: ToolRunContext,
 ) -> ReminderContext:
     allowed = tuple(name for name in all_tool_names if name in set(allowed_tool_names))
     blocked = tuple(name for name in all_tool_names if name not in set(allowed_tool_names))
-    state = tool_context.permission_state
+    state = tool_context.permission
     return ReminderContext(
         mode_name=mode.name,
         mode_purpose=mode.purpose,
@@ -75,8 +75,8 @@ def collect_runtime_reminder_context(
         cwd=tool_context.default_cwd or Path.cwd(),
         platform=_current_platform(),
         workspace=tool_context.default_cwd,
-        permission_mode=state.mode.value if state is not None else "default",
-        shell_policy=state.shell_policy.value if state is not None else tool_context.shell_policy.value,
+        permission_mode=state.mode.value,
+        shell_policy=state.shell_policy.value,
     )
 
 

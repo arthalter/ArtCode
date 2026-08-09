@@ -6,19 +6,25 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, NaturalTurn, RequestPreparer
+from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, CompletedTurn, RequestPreparer
 from artcode.config import ArtCodeConfig
 from artcode.persistence import (
+    DurablePaths,
+    DurablePromptSource,
+    MemoryService,
     MemoryNoteStore,
     MemoryScope,
     MemoryUpdater,
-    PersistenceCoordinator,
     SessionSelection,
+    SessionService,
 )
+from artcode.permissions import PermissionState
+from artcode.permissions.service import PermissionService
 from artcode.prompting.assembler import PromptRequestAssembler
-from artcode.providers.openai_compatible import OpenAICompatibleProvider
+from artcode.providers import DeepSeekChatProvider
 from artcode.providers.events import ContentDelta
-from artcode.tools import AllowedPathPolicy, ToolExecutionContext, ToolRegistry
+from artcode.tools import ToolEnvironment, ToolRegistry
+from artcode.tools.execution import ToolExecutionService
 from artcode.workspace import ArtCodePaths, Workspace
 from tests.live.conftest import load_live_config
 
@@ -31,9 +37,9 @@ class CapturingProvider:
         self.inner = inner
         self.responses: list[str] = []
 
-    async def stream_chat(self, messages, tools=None, *, options=None):
+    async def stream(self, request):
         parts = []
-        async for event in self.inner.stream_chat(messages, tools, options=options):
+        async for event in self.inner.stream(request):
             if isinstance(event, ContentDelta):
                 parts.append(event.text)
             yield event
@@ -46,7 +52,7 @@ def required_live_config() -> ArtCodeConfig:
 
 async def test_live_memory_extracts_cross_project_preference_and_deduplicates(tmp_path: Path) -> None:
     config = required_live_config()
-    provider = CapturingProvider(OpenAICompatibleProvider(config))
+    provider = CapturingProvider(DeepSeekChatProvider(config))
     app_paths = ArtCodePaths.create(tmp_path / "home")
     workspace_root = tmp_path / "project"
     workspace_root.mkdir()
@@ -54,7 +60,7 @@ async def test_live_memory_extracts_cross_project_preference_and_deduplicates(tm
     user = MemoryNoteStore(app_paths.user_memory_dir, MemoryScope.USER)
     project = MemoryNoteStore(workspace.project_memory_dir, MemoryScope.PROJECT)
     updater = MemoryUpdater(provider, user, project, secrets=(config.api_key,))
-    first = NaturalTurn(
+    first = CompletedTurn(
         "20260806-120000-a1b2",
         "normal",
         "这是明确、长期且跨项目通用的偏好：我希望 Python 测试函数统一使用 test_should_ 前缀。请确认。",
@@ -78,7 +84,7 @@ async def test_live_memory_extracts_cross_project_preference_and_deduplicates(tm
     assert "test_should_" in (first_active[0].summary + first_active[0].body)
     assert not project.scan().notes
 
-    second = NaturalTurn(
+    second = CompletedTurn(
         "20260806-120000-a1b2",
         "normal",
         "再次确认同一偏好：所有项目的 Python 测试函数使用 test_should_ 前缀。",
@@ -99,30 +105,33 @@ async def test_live_memory_extracts_cross_project_preference_and_deduplicates(tm
     second_active = [note for note in user.scan().notes if note.status.value == "active"]
     assert len(second_active) == 1
 
-    resumed = PersistenceCoordinator.start(
-        app_paths,
-        workspace,
-        provider,
-        SessionSelection.new(),
-        secrets=(config.api_key,),
-    )
-    context = ToolExecutionContext(
-        AllowedPathPolicy((workspace.root,)), default_cwd=workspace.root
-    )
+    paths = DurablePaths.from_context(app_paths, workspace)
+    sessions = SessionService(paths)
+    resumed = sessions.start(SessionSelection.new())
+    memory = MemoryService(paths, provider, secrets=(config.api_key,))
+    environment = ToolEnvironment.from_workspace(workspace)
+    permission_state = PermissionState()
+    registry = ToolRegistry()
     loop = AgentLoop(
         provider,
         resumed.conversation,
-        ToolRegistry(),
-        context,
+        registry,
+        environment,
+        tool_executor=ToolExecutionService(
+            registry,
+            environment,
+            PermissionService(permission_state),
+        ),
         request_preparer=RequestPreparer(
             resumed.conversation,
             PromptRequestAssembler(),
-            ToolRegistry(),
-            context,
-            durable_prompt=resumed.prompt_context,
+            registry,
+            environment,
+            permission_state,
+            durable_prompt=DurablePromptSource(paths),
         ),
-        natural_turn_observer=resumed.turn_observer,
-        session_id=resumed.status.session_id,
+        natural_turn_observer=memory,
+        session_id=sessions.status.session_id,
     )
     try:
         async for _ in loop.run(
@@ -134,4 +143,5 @@ async def test_live_memory_extracts_cross_project_preference_and_deduplicates(tm
             pass
         assert "test_should_" in resumed.conversation.export_messages()[-1]["content"]
     finally:
-        await resumed.close()
+        await memory.close()
+        sessions.close()
