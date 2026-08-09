@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.live
+
 from artcode.config import ArtCodeConfig, ConfigError, load_config
 from artcode.conversation import ConversationContext
 from artcode.providers.openai_compatible import OpenAICompatibleProvider

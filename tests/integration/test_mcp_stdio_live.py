@@ -1,6 +1,10 @@
 import asyncio
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.live
+
 from artcode.mcp.config import load_mcp_configuration
 from artcode.mcp.manager import McpManager
 from artcode.mcp.models import ServerState

@@ -141,22 +141,16 @@ def build_request_payload(
         thinking_enabled = options.thinking_enabled
     if thinking_enabled:
         payload["thinking"] = {"type": "enabled"}
-        payload["reasoning_effort"] = map_reasoning_effort(config.thinking.effort)
-    elif options is not None and options.thinking_enabled is False:
+        payload["reasoning_effort"] = "high"
+    else:
         payload["thinking"] = {"type": "disabled"}
     return payload
-
-
-def map_reasoning_effort(effort: str) -> str:
-    if effort in {"low", "medium"}:
-        return "high"
-    return "high"
 
 
 def map_http_error(status_code: int, response_body: str, secrets: Sequence[str]) -> Exception:
     safe_body = scrub_secrets(response_body, secrets)
     if status_code in {401, 403}:
-        return AuthenticationError("DeepSeek 认证失败。", "请检查 artcode.yaml 中的 api_key 是否正确。")
+        return AuthenticationError("DeepSeek 认证失败。", "请检查 ~/.artcode/config.yml 中的 api_key 是否正确。")
     if _looks_like_context_window_error(safe_body):
         return ContextWindowExceededError(
             "模型上下文窗口已超限。",

@@ -17,13 +17,13 @@ from artcode.providers.openai_compatible import (
 )
 
 
-def config(thinking_enabled: bool = False, effort: str = "high") -> ArtCodeConfig:
+def config(thinking_enabled: bool = False) -> ArtCodeConfig:
     return ArtCodeConfig(
         protocol="openai",
         model="deepseek-v4-flash",
         base_url="https://api.deepseek.com/",
         api_key="sk-secret-key",
-        thinking=ThinkingConfig(enabled=thinking_enabled, effort=effort),
+        thinking=ThinkingConfig(enabled=thinking_enabled),
     )
 
 
@@ -31,17 +31,17 @@ def test_chat_completions_url_does_not_double_slash() -> None:
     assert chat_completions_url("https://api.deepseek.com/") == "https://api.deepseek.com/chat/completions"
 
 
-def test_payload_without_thinking_omits_thinking_fields() -> None:
+def test_payload_without_thinking_explicitly_disables_thinking() -> None:
     payload = build_request_payload(config(False), [{"role": "user", "content": "hi"}])
 
     assert payload["stream"] is True
     assert payload["stream_options"] == {"include_usage": True}
-    assert "thinking" not in payload
+    assert payload["thinking"] == {"type": "disabled"}
     assert "reasoning_effort" not in payload
 
 
 def test_payload_with_thinking_maps_effort() -> None:
-    payload = build_request_payload(config(True, "low"), [{"role": "user", "content": "hi"}])
+    payload = build_request_payload(config(True), [{"role": "user", "content": "hi"}])
 
     assert payload["thinking"] == {"type": "enabled"}
     assert payload["reasoning_effort"] == "high"

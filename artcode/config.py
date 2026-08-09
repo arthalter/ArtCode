@@ -1,27 +1,31 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping
 
 import yaml
 
-from .errors import ConfigError, mask_secret
+from .errors import ConfigError
 
 
 CONFIG_FILENAME = "config.yml"
-CHAPTER_NAME = "ch10：斜杠命令系统"
 SUPPORTED_PROTOCOL = "openai"
-SUPPORTED_THINKING_EFFORTS = {"low", "medium", "high"}
-DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
+DEFAULT_MODEL = "deepseek-v4-flash"
+DEFAULT_CONTEXT_WINDOW_TOKENS = 1_000_000
 MIN_CONTEXT_WINDOW_TOKENS = 200_000
 MAX_CONTEXT_WINDOW_TOKENS = 1_000_000
+_TOP_LEVEL_FIELDS = frozenset(
+    {"protocol", "model", "base_url", "api_key", "thinking", "context", "mcp_servers"}
+)
+_THINKING_FIELDS = frozenset({"enabled"})
+_CONTEXT_FIELDS = frozenset({"window_tokens"})
 
 
 @dataclass(frozen=True)
 class ThinkingConfig:
     enabled: bool = False
-    effort: str = "high"
 
 
 @dataclass(frozen=True)
@@ -38,61 +42,26 @@ class ContextConfig:
 
 
 @dataclass(frozen=True)
-class SafeConfigStatus:
-    chapter: str
-    protocol: str
-    model: str
-    base_url: str
-    streaming: bool
-    thinking_enabled: bool
-    thinking_effort: str
-    masked_api_key: str
-    workspace: str = ""
-    permission_mode: str = "default"
-    shell_policy: str = "auto"
-    seatbelt_status: str = "not initialized"
-    context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
-    session_id: str = ""
-    session_state: str = "disabled"
-    recovered_messages: int = 0
-    bad_session_lines: int = 0
-    session_truncated: bool = False
-    instruction_bytes: int = 0
-    instruction_issues: int = 0
-    user_active_notes: int = 0
-    project_active_notes: int = 0
-
-
-@dataclass(frozen=True)
 class ArtCodeConfig:
     protocol: str
     model: str
     base_url: str
     api_key: str
     thinking: ThinkingConfig
+    # Transitional compatibility for callers that predate explicit Workspace injection.
+    # parse_config never populates it; T13 removes the final callers and T14 deletes it.
     workspace: Path | None = None
-    mcp_servers_raw: Mapping[str, Any] | None = None
+    mcp_servers_raw: Mapping[str, Any] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     context: ContextConfig = ContextConfig()
-
-    def safe_status(self) -> SafeConfigStatus:
-        return SafeConfigStatus(
-            chapter=CHAPTER_NAME,
-            protocol=self.protocol,
-            model=self.model,
-            base_url=self.base_url,
-            streaming=True,
-            thinking_enabled=self.thinking.enabled,
-            thinking_effort=self.thinking.effort,
-            masked_api_key=mask_secret(self.api_key),
-            context_window_tokens=self.context.window_tokens,
-        )
 
 
 def load_config(config_path: Path | str | None = None) -> ArtCodeConfig:
     path = Path(config_path) if config_path is not None else Path.home() / ".artcode" / CONFIG_FILENAME
     if not path.exists():
         raise ConfigError(
-            f"找不到配置文件 {CONFIG_FILENAME}。",
+            f"找不到配置文件 {path}。",
             "请复制 config.example.yml 到 ~/.artcode/config.yml，并填写 DeepSeek API key。",
         )
 
@@ -100,7 +69,7 @@ def load_config(config_path: Path | str | None = None) -> ArtCodeConfig:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         raise ConfigError(
-            f"{CONFIG_FILENAME} 不是合法 YAML。",
+            f"配置文件 {path} 不是合法 YAML。",
             f"请检查缩进、冒号和引号。解析器提示：{exc}",
         ) from exc
 
@@ -111,8 +80,9 @@ def parse_config(raw: Any) -> ArtCodeConfig:
     if not isinstance(raw, dict):
         raise ConfigError("配置结构错误：YAML 顶层必须是对象/map。")
 
+    _reject_unknown_keys(raw, _TOP_LEVEL_FIELDS, "配置顶层")
     protocol = _required_non_empty_string(raw, "protocol")
-    model = _required_non_empty_string(raw, "model")
+    model = _optional_non_empty_string(raw, "model", DEFAULT_MODEL)
     base_url = _required_non_empty_string(raw, "base_url")
     api_key = _required_non_empty_string(raw, "api_key")
 
@@ -122,18 +92,14 @@ def parse_config(raw: Any) -> ArtCodeConfig:
             f"ArtCode 目前只支持 protocol: {SUPPORTED_PROTOCOL}。",
         )
 
-    if "tools" in raw:
-        raise ConfigError("ch06 已移除 tools.allowed_dirs；请使用 --workspace 指定项目目录。")
-    thinking = _parse_thinking(raw.get("thinking"))
-    context = _parse_context(raw.get("context"))
     return ArtCodeConfig(
         protocol=protocol,
         model=model,
         base_url=base_url,
         api_key=api_key,
-        thinking=thinking,
-        context=context,
-        mcp_servers_raw=raw.get("mcp_servers") if isinstance(raw.get("mcp_servers"), dict) else None,
+        thinking=_parse_thinking(raw.get("thinking")),
+        context=_parse_context(raw.get("context")),
+        mcp_servers_raw=_parse_mcp_servers(raw),
     )
 
 
@@ -148,25 +114,23 @@ def _required_non_empty_string(raw: dict[str, Any], key: str) -> str:
     return value.strip()
 
 
+def _optional_non_empty_string(raw: dict[str, Any], key: str, default: str) -> str:
+    if key not in raw:
+        return default
+    return _required_non_empty_string(raw, key)
+
+
 def _parse_thinking(raw: Any) -> ThinkingConfig:
     if raw is None:
         return ThinkingConfig()
     if not isinstance(raw, dict):
         raise ConfigError("配置字段 thinking 必须是对象/map。")
+    _reject_unknown_keys(raw, _THINKING_FIELDS, "配置字段 thinking")
 
     enabled = raw.get("enabled", False)
     if not isinstance(enabled, bool):
         raise ConfigError("配置字段 thinking.enabled 必须是布尔值。")
-
-    effort = raw.get("effort", "high")
-    if not isinstance(effort, str):
-        raise ConfigError("配置字段 thinking.effort 必须是字符串。")
-    effort = effort.strip()
-    if effort not in SUPPORTED_THINKING_EFFORTS:
-        allowed = "、".join(sorted(SUPPORTED_THINKING_EFFORTS))
-        raise ConfigError(f"配置字段 thinking.effort 只能是 {allowed} 之一。")
-
-    return ThinkingConfig(enabled=enabled, effort=effort)
+    return ThinkingConfig(enabled=enabled)
 
 
 def _parse_context(raw: Any) -> ContextConfig:
@@ -174,6 +138,7 @@ def _parse_context(raw: Any) -> ContextConfig:
         return ContextConfig()
     if not isinstance(raw, dict):
         raise ConfigError("配置字段 context 必须是对象/map。")
+    _reject_unknown_keys(raw, _CONTEXT_FIELDS, "配置字段 context")
 
     value = raw.get("window_tokens", DEFAULT_CONTEXT_WINDOW_TOKENS)
     if isinstance(value, bool) or not isinstance(value, int):
@@ -184,3 +149,18 @@ def _parse_context(raw: Any) -> ContextConfig:
             f"{MIN_CONTEXT_WINDOW_TOKENS} 到 {MAX_CONTEXT_WINDOW_TOKENS} 之间。"
         )
     return ContextConfig(window_tokens=value)
+
+
+def _parse_mcp_servers(raw: dict[str, Any]) -> Mapping[str, Any]:
+    if "mcp_servers" not in raw:
+        return MappingProxyType({})
+    value = raw["mcp_servers"]
+    if not isinstance(value, dict):
+        raise ConfigError("配置字段 mcp_servers 必须是对象/map。")
+    return MappingProxyType(dict(value))
+
+
+def _reject_unknown_keys(raw: Mapping[str, Any], allowed: frozenset[str], path: str) -> None:
+    unknown = sorted(str(key) for key in raw if key not in allowed)
+    if unknown:
+        raise ConfigError(f"{path}包含未知字段：{'、'.join(unknown)}。")

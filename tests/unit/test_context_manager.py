@@ -43,9 +43,9 @@ def manager(statuses: list[str], circuit=None) -> ContextManager:
 def test_trigger_thresholds_and_forced_once_per_cycle() -> None:
     context_manager = manager([])
 
-    assert context_manager.choose_trigger(166_999) is None
-    assert context_manager.choose_trigger(167_000) is CompressionTrigger.AUTOMATIC
-    assert context_manager.choose_trigger(177_000) is CompressionTrigger.FORCED
+    assert context_manager.choose_trigger(834_999) is None
+    assert context_manager.choose_trigger(835_000) is CompressionTrigger.AUTOMATIC
+    assert context_manager.choose_trigger(885_000) is CompressionTrigger.FORCED
     context_manager.circuit.forced_attempted = True
     assert context_manager.choose_trigger(200_000) is None
 
@@ -112,14 +112,14 @@ def test_persistence_failure_blocks_only_at_forced_safety_line() -> None:
     context = compressible_context()
     context.mark_persistence_failed(context.snapshot().entries[-1].id)
 
-    assert context_manager.unsafe_persistence_failure(context, 176_999) is False
-    assert context_manager.unsafe_persistence_failure(context, 177_000) is True
+    assert context_manager.unsafe_persistence_failure(context, 884_999) is False
+    assert context_manager.unsafe_persistence_failure(context, 885_000) is True
 
 
 async def test_oversized_verbatim_user_message_blocks_without_summarizer_call() -> None:
     context_manager = manager(["success"])
     context = ConversationContext("system")
-    context.append_user("中" * 180_001)
+    context.append_user("中" * 990_001)
     for index in range(10):
         context.append_assistant("recent")
 

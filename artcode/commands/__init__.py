@@ -8,7 +8,6 @@ from .base import (
     DisplayMode,
     InputRoute,
     ParsedInput,
-    RuntimeStatusSnapshot,
 )
 from .builtin import create_default_registry
 from .dispatcher import CommandDispatcher
@@ -28,7 +27,6 @@ __all__ = [
     "DisplayMode",
     "InputRoute",
     "ParsedInput",
-    "RuntimeStatusSnapshot",
     "create_default_registry",
     "parse_input",
 ]

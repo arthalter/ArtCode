@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.live
+
 from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, NaturalTurn
 from artcode.config import ArtCodeConfig, ConfigError, load_config
 from artcode.persistence import (

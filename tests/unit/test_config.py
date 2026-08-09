@@ -6,6 +6,7 @@ from pathlib import Path
 
 from artcode.config import ArtCodeConfig, ContextConfig, load_config, parse_config
 from artcode.errors import ConfigError
+from artcode.runtime.state import StartupStatusSnapshot
 
 
 def valid_raw(allowed_dir: Path | None = None) -> dict:
@@ -14,7 +15,7 @@ def valid_raw(allowed_dir: Path | None = None) -> dict:
         "model": "deepseek-v4-flash",
         "base_url": "https://api.deepseek.com",
         "api_key": "sk-test-secret-value",
-        "thinking": {"enabled": True, "effort": "high"},
+        "thinking": {"enabled": True},
     }
     if allowed_dir is not None:
         raw["tools"] = {"allowed_dirs": [str(allowed_dir)]}
@@ -27,7 +28,7 @@ def raw_without_tools() -> dict:
         "model": "deepseek-v4-flash",
         "base_url": "https://api.deepseek.com",
         "api_key": "sk-test-secret-value",
-        "thinking": {"enabled": True, "effort": "high"},
+        "thinking": {"enabled": True},
     }
 
 
@@ -37,7 +38,6 @@ def test_parse_valid_config() -> None:
     assert isinstance(config, ArtCodeConfig)
     assert config.protocol == "openai"
     assert config.thinking.enabled is True
-    assert config.thinking.effort == "high"
 
 
 def test_load_missing_file(tmp_path) -> None:
@@ -58,13 +58,20 @@ def test_top_level_must_be_map() -> None:
         parse_config(["not", "a", "map"])
 
 
-@pytest.mark.parametrize("field", ["protocol", "model", "base_url", "api_key"])
+@pytest.mark.parametrize("field", ["protocol", "base_url", "api_key"])
 def test_missing_required_fields(field: str) -> None:
     raw = valid_raw()
     raw.pop(field)
 
     with pytest.raises(ConfigError, match=f"配置缺少字段：{field}"):
         parse_config(raw)
+
+
+def test_missing_model_uses_current_default() -> None:
+    raw = valid_raw()
+    raw.pop("model")
+
+    assert parse_config(raw).model == "deepseek-v4-flash"
 
 
 @pytest.mark.parametrize("field", ["model", "base_url", "api_key"])
@@ -91,7 +98,6 @@ def test_thinking_is_optional_and_defaults_to_off() -> None:
     config = parse_config(raw)
 
     assert config.thinking.enabled is False
-    assert config.thinking.effort == "high"
 
 
 def test_thinking_enabled_must_be_bool() -> None:
@@ -106,31 +112,31 @@ def test_thinking_effort_must_be_allowed_value() -> None:
     raw = valid_raw()
     raw["thinking"]["effort"] = "max"
 
-    with pytest.raises(ConfigError, match="thinking.effort"):
+    with pytest.raises(ConfigError, match="thinking.*未知字段.*effort"):
         parse_config(raw)
 
 
 def test_safe_status_masks_api_key() -> None:
     config = parse_config(valid_raw())
-    status = config.safe_status()
+    status = StartupStatusSnapshot.from_config(config)
 
-    assert status.masked_api_key != config.api_key
-    assert config.api_key not in status.masked_api_key
+    assert status.api_key_configured is True
+    assert config.api_key not in repr(status)
 
 
-def test_chapter_name_is_ch10() -> None:
-    status = parse_config(valid_raw()).safe_status()
+def test_startup_status_has_no_chapter_product_text() -> None:
+    status = StartupStatusSnapshot.from_config(parse_config(valid_raw()))
 
-    assert status.chapter == "ch10：斜杠命令系统"
+    assert "chapter" not in status.__dataclass_fields__
 
 
 def test_context_defaults_and_thresholds() -> None:
     config = parse_config(valid_raw())
 
-    assert config.context == ContextConfig(200_000)
-    assert config.context.automatic_threshold == 167_000
-    assert config.context.forced_threshold == 177_000
-    assert config.safe_status().context_window_tokens == 200_000
+    assert config.context == ContextConfig(1_000_000)
+    assert config.context.automatic_threshold == 835_000
+    assert config.context.forced_threshold == 885_000
+    assert StartupStatusSnapshot.from_config(config).context_window_tokens == 1_000_000
 
 
 @pytest.mark.parametrize("value", [200_000, 500_000, 1_000_000])
@@ -154,7 +160,7 @@ def test_old_tools_allowed_dirs_is_rejected() -> None:
     raw = valid_raw()
     raw["tools"] = {"allowed_dirs": ["relative/path"]}
 
-    with pytest.raises(ConfigError, match="已移除 tools.allowed_dirs"):
+    with pytest.raises(ConfigError, match="未知字段：tools"):
         parse_config(raw)
 
 

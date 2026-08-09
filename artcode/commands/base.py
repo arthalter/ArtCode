@@ -47,21 +47,6 @@ class ParsedInput:
     invocation: CommandInvocation | None = None
 
 
-@dataclass(frozen=True)
-class RuntimeStatusSnapshot:
-    model: str
-    workspace: str
-    display_mode: DisplayMode
-    permission_mode: str
-    shell_policy: str
-    seatbelt_status: str
-    session_id: str | None
-    session_state: str
-    estimated_context_tokens: int | None
-    context_window_tokens: int
-    last_token_usage: TokenUsage | None = None
-
-
 class CommandController(Protocol):
     def show_command_message(self, message: str) -> None: ...
 

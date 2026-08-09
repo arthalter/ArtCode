@@ -7,7 +7,8 @@ from prompt_toolkit import PromptSession
 from artcode.tools import ToolPreview, ToolResult
 from artcode.permissions import ApprovalChoice, ApprovalRequest
 from artcode.mcp.models import McpServerConfig, TransportKind
-from artcode.commands.base import DisplayMode, RuntimeStatusSnapshot
+from artcode.commands.base import DisplayMode
+from artcode.runtime.state import RuntimeStatusSnapshot
 
 from .keybindings import create_input_keybindings
 from .render import TuiRenderer

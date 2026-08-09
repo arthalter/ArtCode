@@ -3,7 +3,8 @@ from __future__ import annotations
 from rich.console import Console
 
 from artcode.tools import ToolPreview
-from artcode.commands import DisplayMode, RuntimeStatusSnapshot
+from artcode.commands import DisplayMode
+from artcode.runtime.state import RuntimeStatusSnapshot
 from artcode.agent import TokenUsage
 from artcode.tui.app import PromptToolkitTui
 from artcode.tui.render import TuiRenderer

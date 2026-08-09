@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.live
+
 from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE
 from artcode.config import ArtCodeConfig, ThinkingConfig, load_config
 from artcode.conversation import ConversationContext
@@ -60,7 +62,7 @@ async def test_live_deepseek_multi_turn_context() -> None:
 
 async def test_live_deepseek_accepts_thinking_mode_payload() -> None:
     config = live_config()
-    thinking_config = replace(config, thinking=ThinkingConfig(enabled=True, effort="high"))
+    thinking_config = replace(config, thinking=ThinkingConfig(enabled=True))
     provider = OpenAICompatibleProvider(thinking_config)
 
     reply = await collect_reply(provider, [{"role": "user", "content": "用一句话回答：1+1 等于几？"}])

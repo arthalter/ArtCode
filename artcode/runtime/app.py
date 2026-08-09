@@ -22,7 +22,6 @@ from artcode.commands import (
     CommandRegistry,
     DisplayMode,
     InputRoute,
-    RuntimeStatusSnapshot,
     create_default_registry,
     parse_input,
 )
@@ -52,6 +51,7 @@ from artcode.agent.tools import ToolBatchExecutor
 from artcode.context_management import ContextManager
 from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.persistence import PersistenceCoordinator
+from artcode.runtime.state import RuntimeStatusSnapshot, StartupStatusSnapshot
 
 
 class TuiApp(Protocol):
@@ -193,7 +193,7 @@ class ArtCodeRuntime:
             )
 
     async def run(self) -> int:
-        status = self.config.safe_status()
+        status = StartupStatusSnapshot.from_config(self.config)
         if self.workspace is not None:
             status = replace(
                 status,

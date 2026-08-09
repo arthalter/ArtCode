@@ -4,6 +4,10 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.live
+
 from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, ToolBatchExecutor
 from artcode.config import load_config
 from artcode.conversation import ConversationContext

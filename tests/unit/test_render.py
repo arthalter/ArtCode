@@ -4,11 +4,11 @@ from io import StringIO
 
 from rich.console import Console
 
-from artcode.config import SafeConfigStatus
 from artcode.tools import ToolPreview
 from artcode.tools.results import success_result
 from artcode.tui.render import TuiRenderer
-from artcode.commands import DisplayMode, RuntimeStatusSnapshot
+from artcode.commands import DisplayMode
+from artcode.runtime.state import RuntimeStatusSnapshot, StartupStatusSnapshot
 from artcode.agent import TokenUsage
 
 
@@ -19,15 +19,13 @@ def capture_renderer() -> tuple[TuiRenderer, Console]:
 
 def test_startup_status_contains_non_sensitive_fields() -> None:
     renderer, console = capture_renderer()
-    status = SafeConfigStatus(
-        chapter="ch05：System Prompt 设计",
+    status = StartupStatusSnapshot(
         protocol="openai",
         model="deepseek-v4-flash",
         base_url="https://api.deepseek.com",
         streaming=True,
         thinking_enabled=True,
-        thinking_effort="high",
-        masked_api_key="sk-t...alue",
+        api_key_configured=True,
         workspace="/tmp/artcode-sandbox",
     )
 
@@ -35,14 +33,14 @@ def test_startup_status_contains_non_sensitive_fields() -> None:
     output = console.export_text()
 
     assert "ArtCode" in output
-    assert "ch05：System Prompt 设计" in output
     assert "protocol: openai" in output
     assert "model: deepseek-v4-flash" in output
     assert "base_url: https://api.deepseek.com" in output
     assert "streaming: on" in output
     assert "thinking: on (high)" in output
     assert "/tmp/artcode-sandbox" in output
-    assert "context: 200000 tokens" in output
+    assert "context: 1000000 tokens" in output
+    assert "api_key: configured" in output
     assert "sk-test-secret-value" not in output
 
 

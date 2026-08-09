@@ -4,6 +4,9 @@ import sys
 from pathlib import Path
 
 import httpx
+import pytest
+
+pytestmark = pytest.mark.live
 
 from artcode.mcp.config import load_mcp_configuration
 from artcode.mcp.manager import McpManager

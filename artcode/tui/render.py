@@ -6,12 +6,12 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from artcode.config import SafeConfigStatus
 from artcode.errors import ArtCodeError
 from artcode.tools import ToolPreview, ToolResult
 from artcode.permissions import ApprovalRequest
 from artcode.mcp.models import McpServerConfig, McpStartupReport, TransportKind
-from artcode.commands.base import DisplayMode, RuntimeStatusSnapshot
+from artcode.commands.base import DisplayMode
+from artcode.runtime.state import RuntimeStatusSnapshot, StartupStatusSnapshot
 
 
 class _PrintableError(Protocol):
@@ -22,19 +22,18 @@ class TuiRenderer:
     def __init__(self, console: Console | None = None) -> None:
         self.console = console or Console()
 
-    def show_startup(self, status: SafeConfigStatus) -> None:
+    def show_startup(self, status: StartupStatusSnapshot) -> None:
         thinking = "on" if status.thinking_enabled else "off"
         if status.thinking_enabled:
-            thinking = f"{thinking} ({status.thinking_effort})"
+            thinking = f"{thinking} (high)"
         body = "\n".join(
             [
-                status.chapter,
                 f"protocol: {status.protocol}",
                 f"model: {status.model}",
                 f"base_url: {status.base_url}",
                 "streaming: on",
                 f"thinking: {thinking}",
-                f"api_key: {status.masked_api_key}",
+                f"api_key: {'configured' if status.api_key_configured else 'missing'}",
                 f"workspace: {status.workspace}",
                 f"permission: {status.permission_mode}",
                 f"sandbox: {status.shell_policy}",

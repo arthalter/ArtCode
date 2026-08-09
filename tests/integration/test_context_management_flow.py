@@ -58,7 +58,7 @@ class ScenarioEstimator:
         if "<conversation-summary>" in text:
             return 10_000
         if "<persisted-output>" in text:
-            return 170_000
+            return 850_000
         return 100
 
     def record_usage(self, prompt_tokens, messages, tools):
