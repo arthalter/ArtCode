@@ -60,3 +60,68 @@ def test_expansion_reports_only_missing_name(tmp_path: Path) -> None:
 def test_safe_environment_does_not_inherit_arbitrary_secret() -> None:
     result = safe_stdio_environment({"EXPLICIT": "ok"}, {"PATH": "/bin", "HOST_SECRET": "no"})
     assert result == {"PATH": "/bin", "EXPLICIT": "ok"}
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        ("[broken", "无法读取"),
+        ("- item\n", "顶层必须"),
+        ("other: true\n", "只允许"),
+    ],
+    ids=("yaml", "top-level", "extra-key"),
+)
+def test_invalid_project_config_is_reported(tmp_path: Path, content: str, message: str) -> None:
+    directory = tmp_path / ".artcode"
+    directory.mkdir()
+    (directory / "config.yml").write_text(content, encoding="utf-8")
+    configs, issues = load_mcp_configuration({}, tmp_path)
+    assert configs == ()
+    assert message in issues[0].message
+
+
+@pytest.mark.parametrize(
+    ("servers", "message"),
+    [
+        (None, None),
+        ([], "mcp_servers"),
+        ({1: {}}, "Server 名"),
+        ({"server": None}, "配置必须"),
+        ({"server": {"transport": "bad"}}, "transport"),
+        ({"server": {"transport": "stdio", "command": "x", "enabled": "yes"}}, "enabled"),
+        ({"server": {"transport": "stdio", "command": ""}}, "command"),
+        ({"server": {"transport": "stdio", "command": "x", "args": [1]}}, "args"),
+        ({"server": {"transport": "stdio", "command": "x", "env": {"X": 1}}}, "env"),
+        ({"server": {"transport": "streamable_http", "url": "file:///tmp/x"}}, "url"),
+        ({"server": {"transport": "streamable_http", "url": "https://x", "headers": {"X": 1}}}, "headers"),
+    ],
+    ids=("none", "not-map", "bad-name", "not-object", "transport", "enabled", "command", "args", "env", "url", "headers"),
+)
+def test_server_configuration_validation_matrix(tmp_path: Path, servers, message) -> None:
+    configs, issues = load_mcp_configuration({"mcp_servers": servers}, tmp_path)
+    assert configs == ()
+    if message is None:
+        assert issues == ()
+    else:
+        assert message in issues[0].message
+
+
+def test_expand_config_replaces_all_supported_fields(tmp_path: Path) -> None:
+    configs, issues = load_mcp_configuration(
+        {
+            "mcp_servers": {
+                "one": {
+                    "transport": "stdio",
+                    "command": "${BIN}",
+                    "args": ["--token=${TOKEN}"],
+                    "env": {"VALUE": "${TOKEN}"},
+                }
+            }
+        },
+        tmp_path,
+    )
+    assert not issues
+    expanded = expand_config(configs[0], {"BIN": "python", "TOKEN": "secret"})
+    assert expanded.command == "python"
+    assert expanded.args == ("--token=secret",)
+    assert expanded.env == {"VALUE": "secret"}

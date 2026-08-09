@@ -2,18 +2,24 @@ from __future__ import annotations
 
 import os
 import stat
+import yaml
+import pytest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from artcode.persistence import (
     MAX_INDEX_BYTES,
     MAX_INDEX_LINES,
+    MAX_NOTE_BYTES,
     MemoryCategory,
+    MemoryNote,
+    MemoryNoteError,
     MemoryNoteStore,
     MemoryOperation,
     MemoryScope,
     MemoryStatus,
     parse_note,
+    render_note,
 )
 
 
@@ -160,3 +166,155 @@ def test_index_order_summary_and_dual_budget_are_deterministic(tmp_path: Path) -
     assert report.byte_count <= MAX_INDEX_BYTES
     assert report.omitted_count > 0
     assert "未索引" in first
+
+
+def test_apply_handles_noop_invalid_actions_and_targets(tmp_path: Path) -> None:
+    store = MemoryNoteStore(tmp_path, MemoryScope.PROJECT)
+    report = store.apply(
+        [
+            _operation("noop"),
+            _operation("create", target_id="mem-20260806-000000-dead"),
+            _operation("update", target_id="mem-20260806-000000-dead"),
+            _operation("unknown"),
+        ],
+        NOW,
+    )
+    assert report.created == 0
+    assert report.rejected == 3
+    assert report.status == "rejected"
+
+
+def test_scan_rejects_symlink_and_wrong_scope(tmp_path: Path) -> None:
+    store = MemoryNoteStore(tmp_path, MemoryScope.PROJECT)
+    user_store = MemoryNoteStore(tmp_path / "user", MemoryScope.USER)
+    user_store.apply(
+        [_operation(scope=MemoryScope.USER, category=MemoryCategory.PREFERENCE)], NOW
+    )
+    user_note = next((tmp_path / "user").glob("mem-*.md"))
+    wrong_scope = tmp_path / user_note.name
+    wrong_scope.write_bytes(user_note.read_bytes())
+    link = tmp_path / "mem-20260806-000000-dead.md"
+    link.symlink_to(wrong_scope)
+    scan = store.scan()
+    assert scan.notes == ()
+    assert len(scan.issues) == 2
+
+
+def test_note_id_collision_exhaustion_is_reported(tmp_path: Path, monkeypatch) -> None:
+    store = MemoryNoteStore(tmp_path, MemoryScope.PROJECT)
+    monkeypatch.setattr("artcode.persistence.notes.secrets.token_hex", lambda _: "dead")
+    name = NOW.astimezone().strftime("mem-%Y%m%d-%H%M%S") + "-dead.md"
+    (tmp_path / name).write_text("occupied", encoding="utf-8")
+    with pytest.raises(MemoryNoteError, match="无法生成"):
+        store._new_note_id(NOW)
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["id", "scope", "category"],
+)
+def test_render_note_rejects_invalid_identity_fields(change: str) -> None:
+    values = dict(
+        id="mem-20260806-083000-dead",
+        scope=MemoryScope.PROJECT,
+        category=MemoryCategory.PROJECT_KNOWLEDGE,
+        status=MemoryStatus.ACTIVE,
+        title="title",
+        summary="summary",
+        body="body",
+        created_at=NOW,
+        updated_at=NOW,
+        source_session="unknown",
+        source_entry_ids=("msg-00000001",),
+    )
+    values[change] = "invalid"
+    with pytest.raises(MemoryNoteError, match="字段非法"):
+        render_note(MemoryNote(**values))
+
+
+def _valid_note_parts() -> tuple[dict, str]:
+    note = MemoryNote(
+        id="mem-20260806-083000-dead",
+        scope=MemoryScope.PROJECT,
+        category=MemoryCategory.PROJECT_KNOWLEDGE,
+        status=MemoryStatus.ACTIVE,
+        title="title",
+        summary="summary",
+        body="body",
+        created_at=NOW,
+        updated_at=NOW,
+        source_session="unknown",
+        source_entry_ids=("msg-00000001",),
+    )
+    text = render_note(note)
+    frontmatter, body = text[4:].split("\n---\n", 1)
+    return yaml.safe_load(frontmatter), body
+
+
+@pytest.mark.parametrize(
+    ("scenario", "message"),
+    [
+        ("fields", "字段集合"),
+        ("id", "ID 格式"),
+        ("filename", "文件名"),
+        ("summary", "摘要超过"),
+        ("source-type", "source_entry_ids 必须"),
+        ("source-format", "source_entry_ids 格式"),
+        ("heading", "正文标题"),
+        ("body", "正文不能为空"),
+        ("enum", "作用域、类别或状态"),
+        ("session", "source_session"),
+        ("timezone", "UTC Z"),
+        ("timestamp", "时间格式"),
+        ("string", "title 必须"),
+    ],
+)
+def test_parse_note_validation_matrix(tmp_path: Path, scenario: str, message: str) -> None:
+    metadata, body = _valid_note_parts()
+    filename = metadata["id"] + ".md"
+    if scenario == "fields":
+        metadata["extra"] = True
+    elif scenario == "id":
+        metadata["id"] = "bad"
+    elif scenario == "filename":
+        filename = "mem-20260806-083000-cafe.md"
+    elif scenario == "summary":
+        metadata["summary"] = "x" * 121
+    elif scenario == "source-type":
+        metadata["source_entry_ids"] = []
+    elif scenario == "source-format":
+        metadata["source_entry_ids"] = ["bad"]
+    elif scenario == "heading":
+        body = body.replace("# title", "# other")
+    elif scenario == "body":
+        body = "\n# title\n\n"
+    elif scenario == "enum":
+        metadata["scope"] = "invalid"
+    elif scenario == "session":
+        metadata["source_session"] = "invalid"
+    elif scenario == "timezone":
+        metadata["created_at"] = "2026-08-06T08:30:00+00:00"
+    elif scenario == "timestamp":
+        metadata["created_at"] = "not-a-dateZ"
+    else:
+        metadata["title"] = " "
+    text = "---\n" + yaml.safe_dump(metadata, allow_unicode=True, sort_keys=False).strip() + "\n---\n" + body
+    path = tmp_path / filename
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(MemoryNoteError, match=message):
+        parse_note(path)
+
+
+@pytest.mark.parametrize("payload", [b"x" * (MAX_NOTE_BYTES + 1), b"plain text"])
+def test_parse_note_rejects_size_and_missing_frontmatter(tmp_path: Path, payload: bytes) -> None:
+    path = tmp_path / "mem-20260806-083000-dead.md"
+    path.write_bytes(payload)
+    with pytest.raises(MemoryNoteError):
+        parse_note(path)
+
+
+def test_commit_validation_rejects_missing_fields_and_oversized_render(tmp_path: Path) -> None:
+    store = MemoryNoteStore(tmp_path, MemoryScope.PROJECT)
+    base = _operation(summary="", body="")
+    assert store.apply([base], NOW).rejected == 1
+    assert store.apply([_operation(body="x" * MAX_NOTE_BYTES)], NOW).rejected == 1

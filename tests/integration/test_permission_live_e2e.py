@@ -9,7 +9,7 @@ import pytest
 pytestmark = pytest.mark.live
 
 from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, RequestPreparer
-from artcode.config import load_config
+from tests.live.conftest import load_live_config
 from artcode.conversation import ConversationContext
 from artcode.permissions import (
     ApprovalChoice,
@@ -81,7 +81,7 @@ async def test_live_deepseek_read_approve_edit_verify_and_summarize(tmp_path: Pa
         )
         executor = ToolExecutionService(registry, environment, permission_service)
         config = replace(
-            load_config(Path.home() / ".artcode" / "config.yml"),
+            load_live_config(),
             model="deepseek-v4-flash",
         )
         context = ConversationContext()

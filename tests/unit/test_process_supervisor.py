@@ -148,6 +148,77 @@ async def test_cancellation_is_re_raised_after_cleanup(tmp_path, source) -> None
         await task
 
 
+async def test_subprocess_creation_cancellation_is_not_mapped(tmp_path, monkeypatch) -> None:
+    async def cancelled(*args, **kwargs):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", cancelled)
+    with pytest.raises(asyncio.CancelledError):
+        await ProcessSupervisor().run(("ignored",), tmp_path, environment(), 1)
+
+
+async def test_communicate_failure_kills_and_reaps(tmp_path, monkeypatch) -> None:
+    class Process:
+        pid = 123
+        returncode = None
+
+        async def communicate(self):
+            raise RuntimeError("pipe failed")
+
+        async def wait(self):
+            self.returncode = -9
+            return -9
+
+    process = Process()
+    async def create_process(*args, **kwargs):
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr("artcode.tools.process.os.killpg", lambda *args: None)
+    with pytest.raises(RuntimeError, match="pipe failed"):
+        await ProcessSupervisor().run(("ignored",), tmp_path, environment(), 1)
+
+
+async def test_kill_and_reap_handles_missing_group_and_waits_if_status_is_stale(monkeypatch) -> None:
+    class Process:
+        pid = 123
+        returncode = None
+        waited = False
+
+        async def wait(self):
+            self.waited = True
+            self.returncode = -9
+            return -9
+
+    process = Process()
+
+    def missing_group(*args):
+        raise ProcessLookupError
+
+    async def complete():
+        return b"", b""
+
+    monkeypatch.setattr("artcode.tools.process.os.killpg", missing_group)
+    task = asyncio.create_task(complete())
+    await ProcessSupervisor()._kill_and_reap(process, task)
+    assert process.waited
+
+
+async def test_kill_and_reap_skips_signalling_exited_process() -> None:
+    class Process:
+        pid = 123
+        returncode = 0
+
+        async def wait(self):
+            raise AssertionError("already exited")
+
+    async def complete():
+        return b"", b""
+
+    task = asyncio.create_task(complete())
+    await ProcessSupervisor()._kill_and_reap(Process(), task)
+
+
 @pytest.mark.parametrize(
     ("source", "stdout_size", "stderr_size"),
     [

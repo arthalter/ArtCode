@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from artcode.agent import NORMAL_AGENT_MODE
 from artcode.permissions import PermissionState
 from artcode.tools.base import PreparedToolCall, ToolEnvironment, ToolRunContext
@@ -8,6 +10,7 @@ from artcode.context_management import ContextArtifactStore
 from artcode.conversation import ConversationContext
 from artcode.providers.tool_calls import ToolCall
 from artcode.tools import success_result
+from artcode.tools.filesystem import AtomicWriteError, TargetChangedError, WorkspaceFileAccess
 
 
 def context_for(root, *, artifact_store=None) -> ToolRunContext:
@@ -240,3 +243,124 @@ async def test_search_text_skips_unreadable_files(tmp_path) -> None:
     assert result.ok is True
     assert "needle" in result.content
     assert '"skipped_unreadable_files": 1' in result.content
+
+
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        (ReadFileTool(), {}),
+        (ReadFileTool(), {"path": "x", "start_line": "1"}),
+        (ReadFileTool(), {"path": "x", "start_line": 0}),
+        (WriteFileTool(), {"path": "x", "content": 1}),
+        (WriteFileTool(), {"path": "x", "content": "x", "overwrite": "yes"}),
+        (EditFileTool(), {"path": "x", "old_text": "old", "new_text": None}),
+        (FindFilesTool(), {"pattern": ""}),
+        (SearchTextTool(), {"query": "x", "path": 1}),
+        (SearchTextTool(), {"query": "x", "path": " "}),
+    ],
+)
+def test_prepare_argument_validation(tmp_path, tool, arguments) -> None:
+    context = context_for(tmp_path / "sandbox")
+    if arguments.get("path") == "x" and isinstance(tool, (ReadFileTool, EditFileTool)):
+        (context.default_cwd / "x").write_text("old", encoding="utf-8")
+    result = tool.prepare(arguments, context)
+    assert result.ok is False
+    assert result.error_code == "invalid_arguments"
+
+
+def test_read_range_order_is_validated(tmp_path) -> None:
+    context = context_for(tmp_path / "sandbox")
+    (context.default_cwd / "x").write_text("x", encoding="utf-8")
+    result = ReadFileTool().prepare(
+        {"path": "x", "start_line": 2, "end_line": 1}, context
+    )
+    assert result.error_code == "invalid_arguments"
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    [
+        (FileNotFoundError(), "file_not_found"),
+        (TargetChangedError("changed"), "path_target_changed"),
+        (OSError("read failed"), "read_error"),
+    ],
+)
+async def test_read_execute_maps_filesystem_failures(tmp_path, monkeypatch, failure, code) -> None:
+    context = context_for(tmp_path / "sandbox")
+    target = context.default_cwd / "x"
+    target.write_text("x", encoding="utf-8")
+    prepared = ReadFileTool().prepare({"path": "x"}, context)
+
+    def fail_read(self, snapshot):
+        raise failure
+
+    monkeypatch.setattr(WorkspaceFileAccess, "read_text", fail_read)
+    result = await prepared.tool.execute(prepared, context)
+    assert result.error_code == code
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    [
+        (FileExistsError(), "already_exists"),
+        (TargetChangedError("changed"), "path_target_changed"),
+        (AtomicWriteError("atomic"), "atomic_write_error"),
+        (OSError("write failed"), "write_error"),
+    ],
+)
+async def test_write_execute_maps_filesystem_failures(tmp_path, monkeypatch, failure, code) -> None:
+    context = context_for(tmp_path / "sandbox")
+    prepared = WriteFileTool().prepare({"path": "x", "content": "x"}, context)
+
+    def fail_write(self, snapshot, content, *, overwrite):
+        raise failure
+
+    monkeypatch.setattr(WorkspaceFileAccess, "atomic_write_text", fail_write)
+    result = await prepared.tool.execute(prepared, context)
+    assert result.error_code == code
+
+
+@pytest.mark.parametrize(
+    ("phase", "failure", "code"),
+    [
+        ("read", FileNotFoundError(), "file_not_found"),
+        ("read", UnicodeDecodeError("utf-8", b"x", 0, 1, "bad"), "decode_error"),
+        ("read", TargetChangedError("changed"), "path_target_changed"),
+        ("read", OSError("read failed"), "read_error"),
+        ("write", TargetChangedError("changed"), "path_target_changed"),
+        ("write", AtomicWriteError("atomic"), "atomic_write_error"),
+        ("write", OSError("write failed"), "write_error"),
+    ],
+)
+async def test_edit_execute_maps_filesystem_failures(tmp_path, monkeypatch, phase, failure, code) -> None:
+    context = context_for(tmp_path / "sandbox")
+    target = context.default_cwd / "x"
+    target.write_text("old", encoding="utf-8")
+    prepared = EditFileTool().prepare(
+        {"path": "x", "old_text": "old", "new_text": "new"}, context
+    )
+
+    if phase == "read":
+        monkeypatch.setattr(WorkspaceFileAccess, "read_text", lambda *args: (_ for _ in ()).throw(failure))
+    else:
+        monkeypatch.setattr(WorkspaceFileAccess, "atomic_write_text", lambda *args, **kwargs: (_ for _ in ()).throw(failure))
+    result = await prepared.tool.execute(prepared, context)
+    assert result.error_code == code
+
+
+async def test_search_maps_changed_target_and_skips_os_error(tmp_path, monkeypatch) -> None:
+    context = context_for(tmp_path / "sandbox")
+    directory = context.default_cwd / "dir"
+    directory.mkdir()
+    prepared = SearchTextTool().prepare({"query": "x", "path": "dir"}, context)
+    monkeypatch.setattr(WorkspaceFileAccess, "search_files", lambda *args: (_ for _ in ()).throw(TargetChangedError("changed")))
+    changed = await prepared.tool.execute(prepared, context)
+    assert changed.error_code == "path_target_changed"
+
+    file_path = context.default_cwd / "x.txt"
+    file_path.write_text("x", encoding="utf-8")
+    prepared = SearchTextTool().prepare({"query": "x"}, context)
+    monkeypatch.setattr(WorkspaceFileAccess, "search_files", lambda *args: [file_path])
+    monkeypatch.setattr(WorkspaceFileAccess, "read_current_text", lambda *args: (_ for _ in ()).throw(OSError("bad")))
+    result = await prepared.tool.execute(prepared, context)
+    assert '"matches": []' in result.content

@@ -232,3 +232,63 @@ async def test_invalid_approval_response_is_structured_error(tmp_path, effect) -
     result = await service.authorize(selected, prepared(selected), run_context(tmp_path))
 
     assert result.error_code == "permission_approval_error"
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, ValueError])
+async def test_engine_failure_is_structured(tmp_path, failure) -> None:
+    class FailingEngine:
+        def decide(self, request, state):
+            raise failure("bad rules")
+
+    selected = descriptor(ToolEffect.WRITE)
+    result = await PermissionService(PermissionState(), engine=FailingEngine()).authorize(
+        selected, prepared(selected), run_context(tmp_path)
+    )
+    assert result.error_code == "permission_rule_error"
+
+
+@pytest.mark.parametrize("effect", [ToolEffect.WRITE, ToolEffect.EXTERNAL])
+async def test_approval_failure_is_structured(tmp_path, effect) -> None:
+    class FailingApprover(Approver):
+        async def request_approval(self, request):
+            raise RuntimeError("ui failed")
+
+        async def request_mcp_approval(self, preview, plan_mode):
+            raise RuntimeError("ui failed")
+
+    selected = descriptor(effect)
+    service = PermissionService(
+        PermissionState(),
+        engine=Engine(PermissionAction.ASK) if effect is ToolEffect.WRITE else None,
+        approver=FailingApprover(None),
+    )
+    result = await service.authorize(selected, prepared(selected), run_context(tmp_path))
+    assert result.error_code == "permission_approval_error"
+
+
+async def test_permanent_choice_requires_writer(tmp_path) -> None:
+    selected = descriptor(ToolEffect.WRITE)
+    service = PermissionService(
+        PermissionState(),
+        engine=Engine(PermissionAction.ASK),
+        approver=Approver(ApprovalChoice.ALLOW_ALWAYS),
+    )
+    result = await service.authorize(selected, prepared(selected), run_context(tmp_path))
+    assert result.error_code == "permission_rule_error"
+    assert "写入器" in result.message
+
+
+async def test_rule_writer_failure_is_structured(tmp_path) -> None:
+    class FailingWriter:
+        def write_exact(self, match, action):
+            raise OSError("read only")
+
+    selected = descriptor(ToolEffect.WRITE)
+    service = PermissionService(
+        PermissionState(),
+        engine=Engine(PermissionAction.ASK),
+        approver=Approver(ApprovalChoice.DENY_ALWAYS),
+        rule_writer=FailingWriter(),
+    )
+    result = await service.authorize(selected, prepared(selected), run_context(tmp_path))
+    assert result.error_code == "permission_rule_error"

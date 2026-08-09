@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 
 import httpx
 import pytest
@@ -10,7 +11,10 @@ from artcode.errors import (
     AuthenticationError,
     ContextWindowExceededError,
     ModelError,
+    NetworkError,
+    StreamInterruptedError,
     ThinkingModeUnsupportedError,
+    TimeoutError as ProviderTimeoutError,
 )
 from artcode.providers.base import ProviderRequest
 from artcode.providers.deepseek import (
@@ -25,6 +29,7 @@ from artcode.providers.events import (
     StreamCompleted,
     TokenUsage,
     UsageReported,
+    ToolCallsCompleted,
 )
 from artcode.providers.tool_calls import ToolCallAccumulator
 
@@ -222,3 +227,176 @@ def test_each_token_usage_field_rejects_boolean(field: str) -> None:
 def test_provider_request_rejects_non_boolean_thinking_override(value) -> None:
     with pytest.raises(TypeError, match="thinking_enabled"):
         ProviderRequest((), thinking_enabled=value)
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ("not-json", "格式无法解析"),
+        ("[]", "顶层不是对象"),
+        (json.dumps({}), "缺少 choices"),
+        (json.dumps({"choices": "bad"}), "缺少 choices"),
+        (
+            json.dumps({"choices": [{"delta": {"tool_calls": [None]}}]}),
+            "工具调用流无法组装",
+        ),
+    ],
+    ids=("json", "top-level", "missing-choices", "bad-choices", "bad-tool-delta"),
+)
+def test_invalid_sse_payloads_raise_typed_stream_errors(data: str, expected: str) -> None:
+    with pytest.raises(StreamInterruptedError, match=expected):
+        _events_from_sse_data(data, ToolCallAccumulator())
+
+
+def test_usage_only_payload_without_choices_is_accepted() -> None:
+    events, finish = _events_from_sse_data(
+        json.dumps({"usage": {"total_tokens": 7}}),
+        ToolCallAccumulator(),
+    )
+
+    assert events == [UsageReported(TokenUsage(total_tokens=7))]
+    assert finish is None
+
+
+def test_non_object_choices_and_deltas_are_ignored() -> None:
+    events, finish = _events_from_sse_data(
+        json.dumps(
+            {
+                "choices": [
+                    None,
+                    {"finish_reason": "stop", "delta": [1]},
+                    {"delta": {"content": "kept"}},
+                ]
+            }
+        ),
+        ToolCallAccumulator(),
+    )
+
+    assert events == [ContentDelta("kept")]
+    assert finish == "stop"
+
+
+@pytest.mark.parametrize(
+    ("external", "mapped"),
+    [
+        (httpx.ReadTimeout("slow"), ProviderTimeoutError),
+        (httpx.ConnectError("offline"), NetworkError),
+        (httpx.RemoteProtocolError("broken"), StreamInterruptedError),
+    ],
+    ids=("timeout", "connect", "protocol"),
+)
+async def test_transport_failures_are_mapped(external: Exception, mapped: type[Exception]) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise external
+
+    provider = DeepSeekChatProvider(config(), transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(mapped):
+            [event async for event in provider.stream(ProviderRequest.from_parts([]))]
+    finally:
+        await provider.close()
+
+
+async def test_transport_cancellation_is_not_remapped() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise asyncio.CancelledError
+
+    provider = DeepSeekChatProvider(config(), transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            [event async for event in provider.stream(ProviderRequest.from_parts([]))]
+    finally:
+        await provider.close()
+
+
+class _LinesResponse:
+    def __init__(self, lines: list[str]) -> None:
+        self.lines = lines
+
+    async def aiter_lines(self):
+        for line in self.lines:
+            yield line
+
+
+@pytest.mark.parametrize(
+    ("lines", "expected_types", "finish"),
+    [
+        (["data: [DONE]"], (StreamCompleted,), None),
+        (
+            [
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}',
+                "",
+                "data: [DONE]",
+            ],
+            (ToolCallsCompleted, StreamCompleted),
+            "tool_calls",
+        ),
+    ],
+    ids=("unflushed-done", "unflushed-done-after-tool"),
+)
+async def test_decoder_close_can_finish_a_stream(lines, expected_types, finish) -> None:
+    provider = DeepSeekChatProvider(config())
+    try:
+        events = [event async for event in provider._iter_stream_events(_LinesResponse(lines))]
+    finally:
+        await provider.close()
+
+    assert tuple(type(event) for event in events) == expected_types
+    assert events[-1].finish_reason == finish
+
+
+async def test_decoder_close_rejects_incomplete_tool_call() -> None:
+    provider = DeepSeekChatProvider(config())
+    lines = [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0}]}}]}',
+        "",
+        "data: [DONE]",
+    ]
+    try:
+        with pytest.raises(StreamInterruptedError, match="工具调用流无法组装"):
+            [event async for event in provider._iter_stream_events(_LinesResponse(lines))]
+    finally:
+        await provider.close()
+
+
+async def test_decoder_close_without_done_is_interrupted() -> None:
+    provider = DeepSeekChatProvider(config())
+    try:
+        with pytest.raises(StreamInterruptedError, match="意外结束"):
+            [event async for event in provider._iter_stream_events(_LinesResponse([]))]
+    finally:
+        await provider.close()
+
+
+@pytest.mark.parametrize(
+    ("payload", "event_type"),
+    [
+        ({"choices": [{"delta": {"content": "tail"}, "finish_reason": "stop"}]}, ContentDelta),
+        ({"choices": [{"delta": {"reasoning_content": "tail"}}]}, ReasoningDelta),
+    ],
+    ids=("finish", "no-finish"),
+)
+async def test_decoder_close_emits_unterminated_data_before_interruption(payload, event_type) -> None:
+    provider = DeepSeekChatProvider(config())
+    stream = provider._iter_stream_events(_LinesResponse(["data: " + json.dumps(payload)]))
+    try:
+        assert isinstance(await anext(stream), event_type)
+        with pytest.raises(StreamInterruptedError, match="意外结束"):
+            await anext(stream)
+    finally:
+        await provider.close()
+
+
+async def test_flushed_done_rejects_incomplete_tool_call() -> None:
+    provider = DeepSeekChatProvider(config())
+    lines = [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0}]}}]}',
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    try:
+        with pytest.raises(StreamInterruptedError, match="工具调用流无法组装"):
+            [event async for event in provider._iter_stream_events(_LinesResponse(lines))]
+    finally:
+        await provider.close()

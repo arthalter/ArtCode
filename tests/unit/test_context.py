@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
 from artcode.conversation import ConversationContext
+from artcode.conversation.context import (
+    ConversationPersistenceRejected,
+    _tool_call_from_message,
+    _tool_result_from_message,
+)
 from artcode.providers.tool_calls import ToolCall
 from artcode.tools.results import error_result, success_result
 
@@ -138,3 +145,72 @@ def test_repair_is_idempotent_for_complete_tool_turn() -> None:
 
     assert context.repair_incomplete_tool_calls() == []
     assert context.repair_incomplete_tool_calls() == []
+
+
+def test_version_and_observer_can_be_rebound() -> None:
+    context = ConversationContext("system")
+    assert context.version == 0
+
+    class Observer:
+        def on_entry(self, entry) -> None:
+            raise RuntimeError("write failed")
+
+    context.bind_observer(Observer())
+    entry = context.append_user("saved in memory only")
+    assert entry.persistence_failed
+    assert isinstance(context.last_observer_error, RuntimeError)
+
+    context.bind_observer(None)
+    assert context.last_observer_error is None
+
+
+def test_preflight_rejection_does_not_append_entry() -> None:
+    class Observer:
+        def validate_entry(self, entry) -> None:
+            raise ValueError("too large")
+
+        def on_entry(self, entry) -> None:
+            raise AssertionError("must not run")
+
+    context = ConversationContext("system", observer=Observer())
+    with pytest.raises(ConversationPersistenceRejected, match="too large"):
+        context.append_assistant("blocked")
+    assert len(context.export_messages()) == 1
+
+
+def test_missing_entry_updates_are_noops() -> None:
+    context = ConversationContext("system")
+
+    assert not context.replace_entry_content("missing", "new")
+    assert not context.mark_persistence_failed("missing")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        {},
+        {"id": 1, "function": {}},
+        {"id": "call", "function": []},
+        {"id": "call", "function": {"name": 1, "arguments": "{}"}},
+        {"id": "call", "function": {"name": "read", "arguments": {}}},
+    ],
+    ids=("none", "empty", "id", "function", "name", "arguments"),
+)
+def test_invalid_tool_call_messages_are_ignored(raw) -> None:
+    assert _tool_call_from_message(raw) is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        None,
+        "not-json",
+        "[]",
+        "{}",
+        '{"tool_name":"read","ok":true,"status":"success","message":"ok","content":"","error_code":null,"bytes_returned":{}}',
+    ],
+    ids=("none", "json", "array", "missing", "bad-bytes"),
+)
+def test_invalid_persisted_tool_results_are_ignored(content) -> None:
+    assert _tool_result_from_message({"content": content}) is None

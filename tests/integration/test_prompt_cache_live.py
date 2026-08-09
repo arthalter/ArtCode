@@ -7,7 +7,8 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-from artcode.config import ArtCodeConfig, ConfigError, load_config
+from artcode.config import ArtCodeConfig
+from tests.live.conftest import load_live_config
 from artcode.prompting import build_system_prompt
 from artcode.providers import DeepSeekChatProvider, ProviderRequest
 from artcode.providers.events import UsageReported
@@ -17,13 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def required_live_config() -> ArtCodeConfig:
-    try:
-        config = load_config(ROOT / "artcode.yaml")
-    except ConfigError as exc:
-        pytest.fail(f"prompt cache validation requires real API config: {exc.message}")
-    if "your-deepseek-api-key" in config.api_key or config.api_key.startswith("<"):
-        pytest.fail("prompt cache validation requires a real API key in artcode.yaml")
-    return replace(config, model="deepseek-v4-flash")
+    return replace(load_live_config(), model="deepseek-v4-flash")
 
 
 async def collect_cached_tokens(provider: DeepSeekChatProvider, messages: list[dict[str, str]]) -> int:

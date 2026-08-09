@@ -16,7 +16,10 @@ from artcode.mcp.models import (
     McpStartupReport,
     ServerSource,
     ServerState,
+    McpServerConfig,
+    TransportKind,
 )
+from artcode.permissions import ApprovalRequest, PermissionMode, ShellPolicy
 import pytest
 
 
@@ -231,3 +234,80 @@ def test_mcp_startup_renderer_exposes_counts_without_secret_values(issue_count: 
     assert f"注册问题 {issue_count}" in output
     assert "server [user] ready" in output
     assert "Bearer renderer-secret" not in output
+
+
+@pytest.mark.parametrize("transport", [TransportKind.STDIO, TransportKind.STREAMABLE_HTTP])
+def test_mcp_server_approval_renders_transport_risks(transport) -> None:
+    renderer, console = capture_renderer()
+    if transport is TransportKind.STDIO:
+        config = McpServerConfig(
+            "server", transport, ServerSource.PROJECT, True,
+            command="python", args=("server.py",), referenced_variables=("TOKEN",),
+        )
+    else:
+        config = McpServerConfig(
+            "server", transport, ServerSource.PROJECT, True,
+            url="https://example.invalid/mcp", headers={"Authorization": "${TOKEN}"},
+            referenced_variables=("TOKEN",),
+        )
+    renderer.show_mcp_server_approval(config)
+    output = console.export_text()
+    assert "server" in output
+    assert "TOKEN" in output
+    assert ("外部进程" in output) is (transport is TransportKind.STDIO)
+
+
+def test_approval_and_lifecycle_messages_are_rendered() -> None:
+    renderer, console = capture_renderer()
+    renderer.show_approval(
+        ApprovalRequest(
+            "write_file", "note.txt", "/tmp/workspace",
+            PermissionMode.DEFAULT, ShellPolicy.SANDBOX_AUTO, "fixture",
+        )
+    )
+    renderer.show_error(type("Error", (), {"user_message": "bad"})())
+    renderer.show_startup_error(RuntimeError("startup bad"))
+    renderer.show_cancelled()
+    renderer.show_exit()
+    renderer.finish_assistant_message()
+    output = console.export_text()
+    assert "需要授权" in output
+    assert "错误：bad" in output
+    assert "启动失败：startup bad" in output
+    assert "已取消" in output
+    assert "已退出" in output
+
+
+@pytest.mark.parametrize("ok", [True, False])
+def test_tool_result_and_unbounded_iteration_styles(ok: bool) -> None:
+    renderer, console = capture_renderer()
+    result = success_result("tool", "ok", "x")
+    if not ok:
+        from artcode.tools.results import error_result
+        result = error_result("tool", "failed", "bad")
+    renderer.show_tool_result_summary(result)
+    renderer.show_agent_iteration(3, None)
+    output = console.export_text()
+    assert ("成功" in output) is ok
+    assert "第 3 轮" in output
+
+
+def test_context_and_persistence_failure_details_are_rendered() -> None:
+    renderer, console = capture_renderer()
+    renderer.show_context_status(
+        {
+            "trigger": "automatic", "status": "failed", "before_tokens": 10,
+            "after_tokens": 9, "persisted_count": 0, "circuit_open": True,
+            "message": "summary failed",
+        }
+    )
+    renderer.show_persistence_status(
+        {
+            "kind": "memory", "status": "rejected", "created": 1,
+            "updated": 2, "superseded": 3, "rejected": 4, "message": "bad",
+        }
+    )
+    output = console.export_text()
+    assert "熔断 open；summary failed" in output
+    assert "新增=1" in output
+    assert "拒绝=4" in output

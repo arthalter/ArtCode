@@ -7,7 +7,7 @@ import pytest
 from artcode.config import ContextConfig
 from artcode.context_management import ContextArtifactStore, ContextManager, ContextSummarizer, LightweightCompactor
 from artcode.context_management.models import CompressionTrigger
-from artcode.context_management.retention import RetentionPlanner
+from artcode.context_management.retention import RetentionPlanner, _unit_start_for_index
 from artcode.context_management.summarizer import SUMMARY_TITLES, VERBATIM_PLACEHOLDER, SummaryResult
 from artcode.conversation import ConversationContext
 from artcode.providers.events import content_delta_event, done_event
@@ -47,6 +47,37 @@ def user_entries(context: ConversationContext):
         for entry in context.snapshot().entries
         if entry.payload.get("role") == "user"
     )
+
+
+def test_empty_history_has_nothing_to_compact() -> None:
+    plan = RetentionPlanner(1, 1).plan(ConversationContext("system").snapshot())
+
+    assert not plan.can_compact
+    assert plan.recent_entries == ()
+
+
+def test_unit_lookup_falls_back_for_unknown_index() -> None:
+    assert _unit_start_for_index([(1, 3), (3, 5)], 9) == 9
+
+
+def test_existing_user_id_is_not_duplicated_from_summary_metadata() -> None:
+    context = ConversationContext("system")
+    user = context.append_user("original")
+    context.append_assistant("old")
+    snapshot = context.snapshot()
+    summary = context.make_entry(
+        {"role": "system", "content": "<conversation-summary>old</conversation-summary>"},
+        summarized_user_ids=(user.id, user.id),
+    )
+    assert context.replace_entries_if_version(
+        snapshot.version,
+        (*snapshot.entries, summary),
+    )
+    add_turns(context, 8, size=200)
+
+    plan = RetentionPlanner(10, 1).plan(context.snapshot())
+
+    assert plan.summarized_user_ids.count(user.id) == 1
 
 
 @pytest.mark.parametrize(

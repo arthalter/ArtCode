@@ -10,7 +10,8 @@ from artcode.commands import DisplayMode
 from artcode.runtime.state import RuntimeStatusSnapshot
 from artcode.agent import TokenUsage
 from artcode.permissions import ApprovalChoice, ApprovalRequest, PermissionMode, ShellPolicy
-from artcode.tui.app import PromptToolkitTui
+from artcode.tui.app import PromptToolkitTui, UserRequestedExit
+from artcode.mcp.models import McpServerConfig, ServerSource, TransportKind
 from artcode.tui.render import TuiRenderer
 
 
@@ -143,3 +144,49 @@ async def test_permission_approval_maps_all_four_stable_choices() -> None:
     ]
     for answer, choice in zip(("1", "2", "3", "4"), expected, strict=True):
         assert await tui_with_answers([answer]).request_approval(request) is choice
+
+
+@pytest.mark.parametrize("failure", [KeyboardInterrupt, EOFError])
+async def test_read_input_maps_terminal_exit(failure) -> None:
+    class ExitingSession:
+        async def prompt_async(self, prompt):
+            raise failure
+
+    tui = PromptToolkitTui(TuiRenderer(Console(record=True)))
+    tui._session = ExitingSession()
+    with pytest.raises(UserRequestedExit):
+        await tui.read_input("model")
+
+
+def test_remaining_renderer_forwarders_are_wired() -> None:
+    tui = PromptToolkitTui(TuiRenderer(Console(record=True)))
+    tui.show_error(type("Error", (), {"user_message": "bad"})())
+    tui.show_cancelled()
+    tui.show_tool_preview(ToolPreview("tool", "summary", "target"))
+    tui.show_context_status(
+        {"trigger": "manual", "status": "success", "before_tokens": 1,
+         "after_tokens": 1, "persisted_count": 0, "circuit_open": False}
+    )
+    tui.show_persistence_status({"kind": "journal", "status": "success"})
+    output = tui.renderer.console.export_text()
+    assert "错误：bad" in output
+    assert "已取消" in output
+    assert "准备调用工具" in output
+    assert "上下文" in output
+    assert "持久状态" in output
+
+
+@pytest.mark.parametrize(("answers", "expected"), [(["yes"], True), (["maybe", "n"], False)])
+async def test_mcp_server_confirmation_reprompts(answers, expected) -> None:
+    tui = tui_with_answers(answers)
+    config = McpServerConfig(
+        "server", TransportKind.STDIO, ServerSource.PROJECT, True, command="python"
+    )
+    assert await tui.confirm_mcp_server(config) is expected
+    assert "项目 MCP Server 授权" in tui.renderer.console.export_text()
+
+
+async def test_mcp_tool_confirmation_reprompts_and_denies() -> None:
+    tui = tui_with_answers(["later", "no"])
+    preview = ToolPreview("mcp__s__t", "{}", "s/t")
+    assert not await tui.confirm_mcp_tool(preview, False)

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import asyncio
+from dataclasses import replace
+from types import SimpleNamespace
 from pathlib import Path
 
-from artcode.agent import PlanMemory, TokenUsage
+from artcode.agent import PlanMemory, TokenUsage, NORMAL_AGENT_MODE
+from artcode.agent.events import StopReason, stopped_event
 from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.conversation import ConversationContext
 from artcode.providers.events import (
@@ -497,3 +501,111 @@ async def test_runtime_persistence_commands_show_metadata_without_becoming_messa
     finally:
         await memory.close()
         sessions.close()
+
+
+def test_runtime_permission_command_validates_and_switches(tmp_path) -> None:
+    tui = FakeTui([])
+    runtime = ArtCodeRuntime(
+        fake_config(tmp_path / "sandbox"), FakeProvider([]), ConversationContext(), tui
+    )
+    runtime.handle_permission("bad")
+    runtime.handle_permission("edit")
+    assert runtime.state.permission.mode is PermissionMode.EDIT
+    assert any("只能是 default" in item for item in tui.output)
+    assert any("已切换为：edit" in item for item in tui.output)
+
+
+async def test_runtime_sandbox_command_validates_denies_and_accepts(tmp_path) -> None:
+    tui = FakeTui([])
+    runtime = ArtCodeRuntime(
+        fake_config(tmp_path / "sandbox"), FakeProvider([]), ConversationContext(), tui
+    )
+    await runtime.handle_sandbox("bad")
+    await runtime.handle_sandbox("ask")
+    assert runtime.state.permission.shell_policy is ShellPolicy.SANDBOX_ASK
+    await runtime.handle_sandbox("off")
+    assert runtime.state.permission.shell_policy is ShellPolicy.SANDBOX_ASK
+
+    async def allow():
+        return True
+
+    tui.confirm_unsandboxed = allow
+    await runtime.handle_sandbox("off")
+    assert runtime.state.permission.shell_policy is ShellPolicy.UNSANDBOXED_ASK
+    assert any("已取消切换" in item for item in tui.output)
+
+
+async def test_runtime_cancelled_generation_restores_display(tmp_path) -> None:
+    tui = FakeTui([])
+    runtime = ArtCodeRuntime(
+        fake_config(tmp_path / "sandbox"), FakeProvider([]), ConversationContext(), tui
+    )
+
+    async def cancelled(request):
+        raise asyncio.CancelledError
+
+    runtime._consume_agent_events = cancelled
+    await runtime._run_agent("message", NORMAL_AGENT_MODE)
+    assert "cancelled" in tui.output
+    assert runtime.state.display_mode.value == "DEFAULT"
+
+
+async def test_runtime_reports_new_persistence_observer_error(tmp_path) -> None:
+    tui = FakeTui([])
+    conversation = ConversationContext()
+    runtime = ArtCodeRuntime(
+        fake_config(tmp_path / "sandbox"), FakeProvider([]), conversation, tui
+    )
+
+    class Loop:
+        async def run(self, request):
+            conversation._last_observer_error = RuntimeError("disk")
+            if False:
+                yield None
+
+    runtime.agent_loop = Loop()
+    await runtime._consume_agent_events(SimpleNamespace())
+    assert "persistence:journal:failed" in tui.output
+
+
+def test_runtime_cancelled_stop_event_is_shown_twice(tmp_path) -> None:
+    tui = FakeTui([])
+    runtime = ArtCodeRuntime(
+        fake_config(tmp_path / "sandbox"), FakeProvider([]), ConversationContext(), tui
+    )
+    runtime._handle_agent_event(stopped_event(StopReason.USER_CANCELLED))
+    assert "stopped:user_cancelled" in tui.output
+    assert "cancelled" in tui.output
+
+
+def test_runtime_status_covers_initialized_seatbelt_and_empty_sessions(tmp_path) -> None:
+    tui = FakeTui([])
+    runtime = ArtCodeRuntime(
+        fake_config(tmp_path / "sandbox"), FakeProvider([]), ConversationContext(), tui
+    )
+    runtime.tool_environment = replace(
+        runtime.tool_environment, seatbelt=SimpleNamespace(self_tested=False)
+    )
+    runtime.agent_loop.estimate_next_request = lambda mode: 1
+    runtime.refresh_status()
+    runtime.session_service.sessions_summary = lambda limit: ()
+    runtime.show_sessions()
+    assert tui.statuses[-1].seatbelt_status == "initialized"
+    assert any("（无）" in item for item in tui.output)
+
+
+def test_runtime_signal_handler_fallbacks_are_safe(tmp_path, monkeypatch) -> None:
+    runtime = ArtCodeRuntime(
+        fake_config(tmp_path / "sandbox"), FakeProvider([]), ConversationContext(), FakeTui([])
+    )
+
+    class Loop:
+        def add_signal_handler(self, *args):
+            raise NotImplementedError
+
+        def remove_signal_handler(self, *args):
+            raise RuntimeError
+
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: Loop())
+    runtime._install_generation_cancel_handler(SimpleNamespace(cancel=lambda: None))
+    runtime._remove_generation_cancel_handler()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from artcode.providers.sse import parse_sse_lines
+from artcode.providers.sse import SSEDecoder, parse_sse_lines
 
 
 def test_single_data_event() -> None:
@@ -35,3 +35,19 @@ def test_no_auto_reconnect_fields_are_emitted() -> None:
 
     assert len(events) == 1
     assert events[0].data == "payload"
+
+
+def test_byte_decoder_flushes_unterminated_utf8_event() -> None:
+    decoder = SSEDecoder()
+    payload = "data: 中文".encode()
+
+    assert decoder.feed_bytes(payload[:8]) == []
+    events = decoder.feed_bytes(payload[8:])
+    assert events == []
+    assert decoder.close_bytes()[0].data == "中文"
+
+
+def test_bytes_and_data_without_space_are_supported() -> None:
+    events = list(parse_sse_lines([b"data:value\r\n", b"\r\n"]))
+
+    assert events[0].data == "value"

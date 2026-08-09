@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from artcode.tools import (
+    AtomicWriteError,
     SensitivePathError,
     TargetChangedError,
     WorkspaceBoundaryError,
@@ -358,3 +359,129 @@ def test_constructor_rejects_empty_root_policy() -> None:
 
     with pytest.raises(ValueError, match="at least one root"):
         WorkspaceFileAccess(EmptyPolicy())
+
+
+def test_read_text_rechecks_descriptor_identity(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    target = root / "note.txt"
+    target.write_text("old", encoding="utf-8")
+    access = access_for(root)
+    snapshot = access.prepare_existing("note.txt", root)
+    target.unlink()
+    target.write_text("new", encoding="utf-8")
+    monkeypatch.setattr(access, "verify", lambda selected: selected.approved_path)
+
+    with pytest.raises(TargetChangedError, match="读取前"):
+        access.read_text(snapshot)
+
+
+def test_atomic_write_detects_races_after_verification(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    target = root / "note.txt"
+    access = access_for(root)
+    snapshot = access.prepare_file("note.txt", root)
+    original_verify = access.verify
+    calls = 0
+
+    def create_between_checks(selected):
+        nonlocal calls
+        calls += 1
+        path = original_verify(selected) if calls == 1 else selected.approved_path
+        if calls == 2:
+            target.write_text("appeared", encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(access, "verify", create_between_checks)
+    with pytest.raises(TargetChangedError, match="写入前"):
+        access.atomic_write_text(snapshot, "new", overwrite=True)
+
+
+def test_atomic_write_rejects_symlink_race(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    target = root / "note.txt"
+    target.write_text("old", encoding="utf-8")
+    alternate = root / "alternate.txt"
+    alternate.write_text("alternate", encoding="utf-8")
+    access = access_for(root)
+    snapshot = access.prepare_existing("note.txt", root)
+    monkeypatch.setattr(access, "verify", lambda selected: selected.approved_path)
+    monkeypatch.setattr(access, "_entry_identity", lambda parent, name: snapshot.target_identity)
+    target.unlink()
+    target.symlink_to(alternate)
+
+    with pytest.raises(TargetChangedError, match="符号链接"):
+        access.atomic_write_text(snapshot, "new", overwrite=True)
+
+
+def test_atomic_write_maps_os_error_and_cleans_temp(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    access = access_for(root)
+    snapshot = access.prepare_file("note.txt", root)
+
+    def fail_replace(*args, **kwargs):
+        raise OSError("disk failure")
+
+    monkeypatch.setattr("artcode.tools.filesystem.os.replace", fail_replace)
+    with pytest.raises(AtomicWriteError, match="原子写入失败"):
+        access.atomic_write_text(snapshot, "content", overwrite=False)
+    assert not list(root.glob(".note.txt.artcode-*.tmp"))
+
+
+def test_snapshot_maps_stat_failure(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    access = access_for(root)
+    target = root / "note.txt"
+    original_stat = Path.stat
+
+    def fail_target_stat(self, *args, **kwargs):
+        if self == target:
+            raise OSError("stat failed")
+        return original_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fail_target_stat)
+    with pytest.raises(WorkspaceFileError, match="无法读取目标状态"):
+        access.prepare_file("note.txt", root)
+
+
+def test_open_parent_rejects_root_and_outside_targets(tmp_path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    access = access_for(root)
+    with pytest.raises(WorkspaceFileError, match="必须是"):
+        access._open_parent(root, root, create=False)
+    with pytest.raises(WorkspaceBoundaryError):
+        access._open_parent(root, tmp_path / "outside.txt", create=False)
+
+
+def test_open_parent_missing_and_changed_components_close_descriptors(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    access = access_for(root)
+    with pytest.raises(FileNotFoundError):
+        access._open_parent(root, root / "missing" / "note.txt", create=False)
+
+    (root / "component").write_text("not a directory", encoding="utf-8")
+    with pytest.raises(TargetChangedError, match="目录目标"):
+        access._open_parent(root, root / "component" / "note.txt", create=False)
+
+
+def test_open_parent_propagates_unclassified_os_error(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "component").mkdir()
+    access = access_for(root)
+    original_open = __import__("os").open
+
+    def fail_component(path, flags, *args, **kwargs):
+        if path == "component":
+            raise OSError(5, "io error")
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr("artcode.tools.filesystem.os.open", fail_component)
+    with pytest.raises(OSError, match="io error"):
+        access._open_parent(root, root / "component" / "note.txt", create=False)

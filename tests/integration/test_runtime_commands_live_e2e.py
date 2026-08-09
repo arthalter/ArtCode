@@ -7,7 +7,8 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-from artcode.config import ArtCodeConfig, ConfigError, load_config
+from artcode.config import ArtCodeConfig
+from tests.live.conftest import load_live_config
 from artcode.conversation import ConversationContext
 from artcode.providers import DeepSeekChatProvider
 from tests.runtime_factory import (
@@ -21,14 +22,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def required_live_config(workspace: Path) -> ArtCodeConfig:
-    try:
-        config = load_config(ROOT / "artcode.yaml")
-    except ConfigError as exc:
-        pytest.fail(f"runtime command validation requires real API config: {exc.message}")
-    if "your-deepseek-api-key" in config.api_key or config.api_key.startswith("<"):
-        pytest.fail("runtime command validation requires a real API key in artcode.yaml")
     return register_test_workspace(
-        replace(config, model="deepseek-v4-flash"),
+        replace(load_live_config(), model="deepseek-v4-flash"),
         workspace,
     )
 
