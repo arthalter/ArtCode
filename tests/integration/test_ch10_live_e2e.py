@@ -10,7 +10,7 @@ pytestmark = pytest.mark.live
 from artcode.config import ArtCodeConfig, ConfigError, load_config
 from artcode.conversation import ConversationContext
 from artcode.providers.openai_compatible import OpenAICompatibleProvider
-from artcode.runtime import ArtCodeRuntime
+from tests.runtime_factory import build_test_runtime as ArtCodeRuntime
 from artcode.permissions import ApprovalChoice
 
 
@@ -38,6 +38,9 @@ class LiveTui:
         return self.inputs.pop(0)
 
     def show_startup(self, status) -> None:
+        pass
+
+    def show_mcp_startup(self, report) -> None:
         pass
 
     def show_help(self, message: str) -> None:

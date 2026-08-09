@@ -10,7 +10,7 @@ from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.conversation import ConversationContext
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
-from artcode.runtime import ArtCodeRuntime
+from tests.runtime_factory import build_test_runtime as ArtCodeRuntime
 from artcode.context_management import ContextManager, ContextSummarizer
 from artcode.persistence import PersistenceCoordinator, SessionSelection
 from artcode.prompting.assembler import PromptRequestAssembler

@@ -8,7 +8,7 @@ from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.conversation import ConversationContext
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
-from artcode.runtime import ArtCodeRuntime
+from tests.runtime_factory import build_test_runtime as ArtCodeRuntime
 from artcode.permissions import ApprovalChoice
 
 
@@ -19,6 +19,9 @@ class FakeTui:
 
     def show_startup(self, status) -> None:
         self.output.append("startup")
+
+    def show_mcp_startup(self, report) -> None:
+        self.output.append("mcp")
 
     async def read_input(self, model: str) -> str:
         return self.inputs.pop(0)

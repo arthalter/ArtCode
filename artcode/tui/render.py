@@ -154,8 +154,9 @@ class TuiRenderer:
     def show_error(self, error: _PrintableError | ArtCodeError) -> None:
         self.console.print(f"错误：{error.user_message}", style="bold red")
 
-    def show_startup_error(self, error: _PrintableError | ArtCodeError) -> None:
-        self.console.print(f"启动失败：{error.user_message}", style="bold red")
+    def show_startup_error(self, error: BaseException) -> None:
+        message = getattr(error, "user_message", str(error))
+        self.console.print(f"启动失败：{message}", style="bold red")
 
     def show_cancelled(self) -> None:
         self.console.print("\n已取消当前回复，本轮半截回复未写入上下文。", style="yellow")

@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from dataclasses import dataclass, field
-from dataclasses import replace
+from dataclasses import dataclass
 from typing import Protocol
 
 from artcode.agent import (
@@ -14,50 +13,37 @@ from artcode.agent import (
     AgentLoop,
     AgentRunRequest,
     PlanMemory,
-    RequestPreparer,
     TokenUsage,
 )
 from artcode.commands import (
     CommandDispatcher,
     CommandFlow,
-    CommandRegistry,
     DisplayMode,
     InputRoute,
-    create_default_registry,
     parse_input,
 )
 from artcode.config import ArtCodeConfig
 from artcode.conversation import ConversationContext
-from artcode.providers.base import StreamingProvider
 from artcode.permissions import (
-    ApprovalChoice,
-    ApprovalRequest,
-    PermissionEngine,
     PermissionMode,
-    PermissionState,
-    RuleWriter,
     ShellPolicy,
 )
-from artcode.permissions.service import PermissionService
 from artcode.tools import (
-    AllowedPathPolicy,
     ToolExecutionContext,
-    ToolPreview,
-    ToolRegistry,
     ToolResult,
-    create_default_tool_registry,
 )
 from artcode.tui import UserRequestedExit
 from artcode.workspace import Workspace
-from artcode.tools.execution import ToolExecutionService
-from artcode.context_management import ContextManager
-from artcode.prompting.assembler import PromptRequestAssembler
-from artcode.persistence import PersistenceCoordinator
+from artcode.mcp import McpStartupReport
+from artcode.persistence import MemoryService, SessionService
 from artcode.runtime.state import RuntimeState, RuntimeStatusSnapshot, StartupStatusSnapshot
 
 
 class TuiApp(Protocol):
     def show_startup(self, status) -> None:
+        ...
+
+    def show_mcp_startup(self, report: McpStartupReport) -> None:
         ...
 
     async def read_input(self, model: str) -> str:
@@ -85,18 +71,6 @@ class TuiApp(Protocol):
         ...
 
     def finish_assistant_message(self) -> None:
-        ...
-
-    def show_tool_preview(self, preview: ToolPreview) -> None:
-        ...
-
-    async def confirm_tool_execution(self, preview: ToolPreview) -> bool:
-        ...
-
-    async def request_approval(self, request: ApprovalRequest) -> ApprovalChoice:
-        ...
-
-    async def confirm_mcp_tool(self, preview: ToolPreview, plan_mode: bool) -> bool:
         ...
 
     async def confirm_unsandboxed(self) -> bool:
@@ -146,122 +120,22 @@ class TuiApp(Protocol):
 @dataclass
 class ArtCodeRuntime:
     config: ArtCodeConfig
-    provider: StreamingProvider
     conversation: ConversationContext
     tui: TuiApp
-    tool_registry: ToolRegistry | None = None
-    tool_context: ToolExecutionContext | None = None
-    commands: CommandRegistry = field(default_factory=create_default_registry)
-    plan_memory: PlanMemory | None = None
-    agent_loop: AgentLoop | None = None
-    workspace: Workspace | None = None
-    permission_state: PermissionState | None = None
-    state: RuntimeState | None = None
-    permission_engine: PermissionEngine | None = None
-    rule_writer: RuleWriter | None = None
-    context_manager: ContextManager | None = None
-    request_assembler: PromptRequestAssembler | None = None
-    request_preparer: RequestPreparer | None = None
-    persistence: PersistenceCoordinator | None = None
-    command_dispatcher: CommandDispatcher = field(init=False)
-
-    def __post_init__(self) -> None:
-        self.command_dispatcher = CommandDispatcher(self.commands)
-        if self.state is None:
-            self.state = RuntimeState(self.permission_state or PermissionState())
-        elif self.permission_state is not None and self.permission_state is not self.state.permission:
-            raise ValueError("permission_state must be the RuntimeState permission instance")
-        self.permission_state = self.state.permission
-        if self.tool_registry is None:
-            self.tool_registry = create_default_tool_registry()
-        if self.tool_context is None:
-            selected = self.workspace or Workspace.from_path(self.config.workspace)
-            policy = AllowedPathPolicy((selected.root,))
-            self.tool_context = ToolExecutionContext(
-                policy,
-                default_cwd=selected.root,
-                permission_state=self.state.permission,
-            )
-        elif self.tool_context.permission_state is not self.state.permission:
-            self.tool_context = replace(
-                self.tool_context,
-                permission_state=self.state.permission,
-            )
-        if self.plan_memory is None:
-            self.plan_memory = self.persistence.plan_memory if self.persistence is not None else PlanMemory()
-        if self.persistence is not None:
-            self.persistence.add_memory_callback(self._show_memory_report)
-        if self.agent_loop is None:
-            if self.request_preparer is None:
-                self.request_preparer = RequestPreparer(
-                    self.conversation,
-                    self.request_assembler or PromptRequestAssembler(),
-                    self.tool_registry,
-                    self.tool_context,
-                    context_manager=self.context_manager,
-                    durable_prompt=(
-                        self.persistence.prompt_context if self.persistence is not None else None
-                    ),
-                )
-            permission_service = PermissionService(
-                self.permission_state,
-                engine=self.permission_engine,
-                approver=self if self.permission_engine is not None else None,
-                rule_writer=self.rule_writer,
-            )
-            executor = ToolExecutionService(
-                self.tool_registry,
-                self.tool_context,
-                permission_service,
-            )
-            self.agent_loop = AgentLoop(
-                provider=self.provider,
-                conversation=self.conversation,
-                tool_registry=self.tool_registry,
-                tool_context=self.tool_context,
-                plan_memory=self.plan_memory,
-                tool_executor=executor,
-                context_manager=self.context_manager,
-                request_preparer=self.request_preparer,
-                natural_turn_observer=(
-                    self.persistence.turn_observer if self.persistence is not None else None
-                ),
-                session_id=(
-                    self.persistence.status.session_id if self.persistence is not None else "ephemeral"
-                ),
-            )
+    workspace: Workspace
+    state: RuntimeState
+    tool_context: ToolExecutionContext
+    plan_memory: PlanMemory
+    agent_loop: AgentLoop
+    command_dispatcher: CommandDispatcher
+    session_service: SessionService
+    memory_service: MemoryService
+    startup_status: StartupStatusSnapshot
+    mcp_report: McpStartupReport
 
     async def run(self) -> int:
-        status = self.state.startup_snapshot(
-            self.config,
-            workspace=str(self.workspace.root) if self.workspace is not None else "",
-            seatbelt_status=(
-                "self-test passed"
-                if self.tool_context is not None
-                and self.tool_context.seatbelt is not None
-                and self.tool_context.seatbelt.self_tested
-                else "not initialized"
-            ),
-        )
-        if self.persistence is not None:
-            persistent = self.persistence.status
-            status = replace(
-                status,
-                session_id=persistent.session_id,
-                session_state=(
-                    "restored" if persistent.restored else (
-                        "new (latest locked)" if persistent.default_locked_new_session else "new"
-                    )
-                ),
-                recovered_messages=persistent.recovered_messages,
-                bad_session_lines=persistent.bad_line_count,
-                session_truncated=persistent.truncated,
-                instruction_bytes=persistent.instruction_bytes,
-                instruction_issues=persistent.instruction_issues,
-                user_active_notes=persistent.user_active_notes,
-                project_active_notes=persistent.project_active_notes,
-            )
-        self.tui.show_startup(status)
+        self.tui.show_startup(self.startup_status)
+        self.tui.show_mcp_startup(self.mcp_report)
         while True:
             try:
                 user_input = await self.tui.read_input(self.config.model)
@@ -297,19 +171,17 @@ class ArtCodeRuntime:
         return self.state.last_token_usage
 
     def refresh_status(self) -> None:
-        persistence_status = self.persistence.status if self.persistence is not None else None
-        session_state = "不可用"
-        if persistence_status is not None:
-            session_state = (
-                "restored"
-                if persistence_status.restored
-                else (
-                    "new (latest locked)"
-                    if persistence_status.default_locked_new_session
-                    else "new"
-                )
+        persistence_status = self.session_service.status
+        session_state = (
+            "restored"
+            if persistence_status.restored
+            else (
+                "new (latest locked)"
+                if persistence_status.default_locked_new_session
+                else "new"
             )
-        seatbelt = self.tool_context.seatbelt if self.tool_context is not None else None
+        )
+        seatbelt = self.tool_context.seatbelt
         if seatbelt is None:
             seatbelt_status = "not initialized"
         elif seatbelt.self_tested:
@@ -317,12 +189,11 @@ class ArtCodeRuntime:
         else:
             seatbelt_status = "initialized"
         estimated = self.agent_loop.estimate_next_request(NORMAL_AGENT_MODE)
-        workspace = self.workspace.root if self.workspace is not None else self.config.workspace
         snapshot = self.state.status_snapshot(
             model=self.config.model,
-            workspace=str(workspace) if workspace is not None else "",
+            workspace=str(self.workspace.root),
             seatbelt_status=seatbelt_status,
-            session_id=persistence_status.session_id if persistence_status is not None else None,
+            session_id=persistence_status.session_id,
             session_state=session_state,
             estimated_context_tokens=estimated,
             context_window_tokens=self.config.context.window_tokens,
@@ -337,18 +208,12 @@ class ArtCodeRuntime:
             self._handle_agent_event(event)
 
     def get_recent_plan(self) -> str | None:
-        return self.plan_memory.get() if self.plan_memory is not None else None
-
-    async def request_approval(self, request: ApprovalRequest) -> ApprovalChoice:
-        return await self.tui.request_approval(request)
-
-    async def request_mcp_approval(self, preview: ToolPreview, plan_mode: bool) -> bool:
-        return await self.tui.confirm_mcp_tool(preview, plan_mode)
+        return self.plan_memory.get()
 
     def handle_permission(self, argument: str) -> None:
         if not argument:
             self.tui.show_help(
-                f"当前权限模式：{self.permission_state.mode.value}；可选：default、edit、full"
+                f"当前权限模式：{self.state.permission.mode.value}；可选：default、edit、full"
             )
             return
         try:
@@ -356,12 +221,12 @@ class ArtCodeRuntime:
         except ValueError:
             self.tui.show_help("权限模式只能是 default、edit 或 full。")
             return
-        self.tui.show_help(f"权限模式已切换为：{self.permission_state.mode.value}")
+        self.tui.show_help(f"权限模式已切换为：{self.state.permission.mode.value}")
 
     async def handle_sandbox(self, argument: str) -> None:
         if not argument:
             self.tui.show_help(
-                f"当前 Shell 策略：{self.permission_state.shell_policy.value}；可选：auto、ask、off"
+                f"当前 Shell 策略：{self.state.permission.shell_policy.value}；可选：auto、ask、off"
             )
             return
         try:
@@ -438,12 +303,9 @@ class ArtCodeRuntime:
             self.tui.show_context_status(event.payload)
 
     def show_sessions(self) -> None:
-        if self.persistence is None:
-            self.tui.show_help("会话持久化尚未启用。")
-            return
-        current = self.persistence.status.session_id
+        current = self.session_service.status.session_id
         lines = ["最近会话："]
-        for item in self.persistence.sessions_summary(20):
+        for item in self.session_service.sessions_summary(20):
             marker = "*" if item.session_id == current else " "
             locked = " [使用中]" if item.locked else ""
             lines.append(
@@ -455,23 +317,20 @@ class ArtCodeRuntime:
         self.tui.show_help("\n".join(lines))
 
     def show_memory(self) -> None:
-        if self.persistence is None:
-            self.tui.show_help("长期记忆尚未启用。")
-            return
-        summary = self.persistence.memory_summary()
-        report = summary["last_report"]
+        summary = self.memory_service.status_snapshot()
+        report = summary.last_report
         last = report.status if report is not None else "尚无后台更新"
         self.tui.show_help(
             "\n".join(
                 (
-                    f"用户级记忆：{summary['user_path']}（active={summary['user_active']} superseded={summary['user_superseded']} issues={summary['user_issues']}）",
-                    f"项目级记忆：{summary['project_path']}（active={summary['project_active']} superseded={summary['project_superseded']} issues={summary['project_issues']}）",
+                    f"用户级记忆：{summary.user_path}（active={summary.user_active} superseded={summary.user_superseded} issues={summary.user_issues}）",
+                    f"项目级记忆：{summary.project_path}（active={summary.project_active} superseded={summary.project_superseded} issues={summary.project_issues}）",
                     f"最近更新：{last}",
                 )
             )
         )
 
-    def _show_memory_report(self, report) -> None:
+    def show_memory_report(self, report) -> None:
         self._show_persistence_payload(
             {
                 "kind": "memory",

@@ -6,7 +6,7 @@ from typing import Any
 from artcode.agent.events import CompletedTurn
 from artcode.providers.base import StreamingProvider
 
-from .models import MemoryScope, MemoryUpdateReport
+from .models import MemoryScope, MemoryStatusSnapshot, MemoryUpdateReport
 from .notes import MemoryNoteStore
 from .paths import DurablePaths
 from .updater import MemoryUpdater, MemoryUpdateWorker
@@ -58,23 +58,40 @@ class MemoryService:
     async def close(self) -> None:
         await self.worker.close()
 
-    def summary(self) -> dict[str, Any]:
+    def status_snapshot(self) -> MemoryStatusSnapshot:
         user = self.user_store.scan()
         project = self.project_store.scan()
-        return {
-            "user_path": self.user_store.root,
-            "project_path": self.project_store.root,
-            "user_active": sum(note.status.value == "active" for note in user.notes),
-            "project_active": sum(note.status.value == "active" for note in project.notes),
-            "user_superseded": sum(
+        return MemoryStatusSnapshot(
+            user_path=self.user_store.root,
+            project_path=self.project_store.root,
+            user_active=sum(note.status.value == "active" for note in user.notes),
+            project_active=sum(note.status.value == "active" for note in project.notes),
+            user_superseded=sum(
                 note.status.value == "superseded" for note in user.notes
             ),
-            "project_superseded": sum(
+            project_superseded=sum(
                 note.status.value == "superseded" for note in project.notes
             ),
-            "user_issues": len(user.issues),
-            "project_issues": len(project.issues),
-            "last_report": self.last_report,
+            user_issues=len(user.issues),
+            project_issues=len(project.issues),
+            pending_count=self.pending_count,
+            last_report=self.last_report,
+        )
+
+    def summary(self) -> dict[str, Any]:
+        """Transitional mapping compatibility; production uses an immutable snapshot."""
+
+        snapshot = self.status_snapshot()
+        return {
+            "user_path": snapshot.user_path,
+            "project_path": snapshot.project_path,
+            "user_active": snapshot.user_active,
+            "project_active": snapshot.project_active,
+            "user_superseded": snapshot.user_superseded,
+            "project_superseded": snapshot.project_superseded,
+            "user_issues": snapshot.user_issues,
+            "project_issues": snapshot.project_issues,
+            "last_report": snapshot.last_report,
         }
 
     def _publish(self, report: MemoryUpdateReport) -> None:

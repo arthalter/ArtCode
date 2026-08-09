@@ -168,6 +168,20 @@ class MemoryUpdateReport:
 
 
 @dataclass(frozen=True)
+class MemoryStatusSnapshot:
+    user_path: Path
+    project_path: Path
+    user_active: int
+    project_active: int
+    user_superseded: int
+    project_superseded: int
+    user_issues: int
+    project_issues: int
+    pending_count: int
+    last_report: MemoryUpdateReport | None = None
+
+
+@dataclass(frozen=True)
 class MemoryIndexReport:
     active_count: int = 0
     superseded_count: int = 0

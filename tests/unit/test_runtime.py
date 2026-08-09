@@ -13,7 +13,7 @@ from artcode.providers.events import (
     tool_calls_event,
 )
 from artcode.providers.tool_calls import ToolCall
-from artcode.runtime import ArtCodeRuntime
+from tests.runtime_factory import build_test_runtime as ArtCodeRuntime
 from artcode.context_management import ContextManager, ContextSummarizer
 from artcode.context_management.retention import RetentionPlanner
 from artcode.context_management.summarizer import SUMMARY_TITLES, VERBATIM_PLACEHOLDER
@@ -35,6 +35,9 @@ class FakeTui:
 
     def show_startup(self, status) -> None:
         self.output.append("startup")
+
+    def show_mcp_startup(self, report) -> None:
+        self.output.append("mcp")
 
     async def read_input(self, model: str) -> str:
         return self.inputs.pop(0)
@@ -397,8 +400,8 @@ async def test_runtime_clear_only_changes_visible_terminal(tmp_path) -> None:
         plan_memory=memory,
     )
     runtime.state.record_usage(TokenUsage(total_tokens=99))
-    runtime.permission_state.mode = PermissionMode.EDIT
-    runtime.permission_state.shell_policy = ShellPolicy.SANDBOX_ASK
+    runtime.state.permission.mode = PermissionMode.EDIT
+    runtime.state.permission.shell_policy = ShellPolicy.SANDBOX_ASK
     before = context.export_messages()
 
     await runtime.run()
@@ -407,8 +410,8 @@ async def test_runtime_clear_only_changes_visible_terminal(tmp_path) -> None:
     assert context.export_messages() == before
     assert memory.get() == "保留计划"
     assert runtime.get_token_usage() == TokenUsage(total_tokens=99)
-    assert runtime.permission_state.mode is PermissionMode.EDIT
-    assert runtime.permission_state.shell_policy is ShellPolicy.SANDBOX_ASK
+    assert runtime.state.permission.mode is PermissionMode.EDIT
+    assert runtime.state.permission.shell_policy is ShellPolicy.SANDBOX_ASK
     assert provider.messages_seen == []
 
 

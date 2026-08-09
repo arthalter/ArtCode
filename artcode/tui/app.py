@@ -6,7 +6,7 @@ from prompt_toolkit import PromptSession
 
 from artcode.tools import ToolPreview, ToolResult
 from artcode.permissions import ApprovalChoice, ApprovalRequest
-from artcode.mcp.models import McpServerConfig, TransportKind
+from artcode.mcp.models import McpServerConfig, McpStartupReport
 from artcode.commands.base import DisplayMode
 from artcode.runtime.state import RuntimeStatusSnapshot
 
@@ -40,6 +40,9 @@ class PromptToolkitTui:
 
     def show_startup(self, status) -> None:
         self.renderer.show_startup(status)
+
+    def show_mcp_startup(self, report: McpStartupReport) -> None:
+        self.renderer.show_mcp_startup(report)
 
     def show_help(self, message: str) -> None:
         self.renderer.show_help(message)
