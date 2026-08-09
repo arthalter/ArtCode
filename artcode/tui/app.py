@@ -95,7 +95,7 @@ class PromptToolkitTui:
             if answer.strip().lower() in {"no", "n"}:
                 return False
 
-    async def confirm_mcp_tool(self, preview: ToolPreview, plan_mode: bool = False) -> bool:
+    async def confirm_mcp_tool(self, preview: ToolPreview, plan_mode: bool) -> bool:
         self.renderer.show_mcp_tool_approval(preview, plan_mode)
         while True:
             answer = await self._session.prompt_async("执行这个 MCP 工具？(yes/no)> ")

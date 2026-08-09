@@ -93,6 +93,15 @@ class TuiApp(Protocol):
     async def confirm_tool_execution(self, preview: ToolPreview) -> bool:
         ...
 
+    async def request_approval(self, request: ApprovalRequest) -> ApprovalChoice:
+        ...
+
+    async def confirm_mcp_tool(self, preview: ToolPreview, plan_mode: bool) -> bool:
+        ...
+
+    async def confirm_unsandboxed(self) -> bool:
+        ...
+
     def show_tool_result_summary(self, result: ToolResult) -> None:
         ...
 
@@ -278,9 +287,7 @@ class ArtCodeRuntime:
         self.tui.show_help(message)
 
     def clear_screen(self) -> None:
-        handler = getattr(self.tui, "clear_screen", None)
-        if callable(handler):
-            handler()
+        self.tui.clear_screen()
 
     def set_display_mode(self, mode: DisplayMode) -> None:
         self.state.set_display_mode(mode)
@@ -333,18 +340,10 @@ class ArtCodeRuntime:
         return self.plan_memory.get() if self.plan_memory is not None else None
 
     async def request_approval(self, request: ApprovalRequest) -> ApprovalChoice:
-        handler = getattr(self.tui, "request_approval", None)
-        if callable(handler):
-            return await handler(request)
-        preview = ToolPreview(request.tool_name, request.source, request.target, True)
-        allowed = await self.tui.confirm_tool_execution(preview)
-        return ApprovalChoice.ALLOW_ONCE if allowed else ApprovalChoice.DENY_ONCE
+        return await self.tui.request_approval(request)
 
     async def request_mcp_approval(self, preview: ToolPreview, plan_mode: bool) -> bool:
-        handler = getattr(self.tui, "confirm_mcp_tool", None)
-        if callable(handler):
-            return await handler(preview, plan_mode)
-        return await self.tui.confirm_tool_execution(preview)
+        return await self.tui.confirm_mcp_tool(preview, plan_mode)
 
     def handle_permission(self, argument: str) -> None:
         if not argument:
@@ -371,18 +370,7 @@ class ArtCodeRuntime:
             self.tui.show_help("Shell 策略只能是 auto、ask 或 off。")
             return
         if selected is ShellPolicy.UNSANDBOXED_ASK:
-            confirm = getattr(self.tui, "confirm_unsandboxed", None)
-            if callable(confirm):
-                allowed = await confirm()
-            else:
-                allowed = await self.tui.confirm_tool_execution(
-                    ToolPreview(
-                        "run_command",
-                        "关闭 Seatbelt 后，命令只受危险命令检查和人工授权保护。",
-                        "当前运行",
-                        True,
-                    )
-                )
+            allowed = await self.tui.confirm_unsandboxed()
             if not allowed:
                 self.tui.show_help("已取消切换，Shell 策略保持不变。")
                 return
@@ -447,9 +435,7 @@ class ArtCodeRuntime:
             if event.payload["reason"] == "user_cancelled":
                 self.tui.show_cancelled()
         elif event.type == AgentEventType.CONTEXT_STATUS:
-            handler = getattr(self.tui, "show_context_status", None)
-            if callable(handler):
-                handler(event.payload)
+            self.tui.show_context_status(event.payload)
 
     def show_sessions(self) -> None:
         if self.persistence is None:
@@ -499,11 +485,7 @@ class ArtCodeRuntime:
         )
 
     def _show_persistence_payload(self, payload: dict) -> None:
-        handler = getattr(self.tui, "show_persistence_status", None)
-        if callable(handler):
-            handler(payload)
-        elif payload.get("message"):
-            self.tui.show_help(payload["message"])
+        self.tui.show_persistence_status(payload)
 
     def _install_generation_cancel_handler(self, task: asyncio.Task[None]) -> None:
         try:

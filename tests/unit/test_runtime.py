@@ -19,7 +19,7 @@ from artcode.context_management.retention import RetentionPlanner
 from artcode.context_management.summarizer import SUMMARY_TITLES, VERBATIM_PLACEHOLDER
 from artcode.errors import NetworkError
 from artcode.persistence import PersistenceCoordinator, SessionSelection
-from artcode.permissions import PermissionMode, ShellPolicy
+from artcode.permissions import ApprovalChoice, PermissionMode, ShellPolicy
 from artcode.workspace import ArtCodePaths, Workspace
 
 
@@ -68,6 +68,16 @@ class FakeTui:
 
     async def confirm_tool_execution(self, preview) -> bool:
         self.confirmations_requested += 1
+        return False
+
+    async def request_approval(self, request):
+        return ApprovalChoice.DENY_ONCE
+
+    async def confirm_mcp_tool(self, preview, plan_mode: bool) -> bool:
+        self.confirmations_requested += 1
+        return False
+
+    async def confirm_unsandboxed(self) -> bool:
         return False
 
     def show_tool_result_summary(self, result) -> None:

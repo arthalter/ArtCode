@@ -4,7 +4,7 @@ import json
 
 from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.conversation import ConversationContext
-from artcode.permissions import PermissionState
+from artcode.permissions import ApprovalChoice, PermissionState
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
 from artcode.runtime import ArtCodeRuntime
@@ -55,6 +55,17 @@ class FakeTui:
         self.confirmations_requested += 1
         return self.confirmations.pop(0)
 
+    async def request_approval(self, request):
+        allowed = self.confirmations.pop(0)
+        return ApprovalChoice.ALLOW_ONCE if allowed else ApprovalChoice.DENY_ONCE
+
+    async def confirm_mcp_tool(self, preview, plan_mode: bool) -> bool:
+        self.confirmations_requested += 1
+        return self.confirmations.pop(0)
+
+    async def confirm_unsandboxed(self) -> bool:
+        return self.confirmations.pop(0)
+
     def show_tool_result_summary(self, result) -> None:
         self.output.append(f"{result.status}:{result.error_code}")
 
@@ -82,6 +93,18 @@ class FakeTui:
 
     def set_display_mode(self, mode) -> None:
         self.output.append(f"mode:{mode.value}")
+
+    def clear_screen(self) -> None:
+        self.output.append("clear")
+
+    def show_runtime_status(self, snapshot) -> None:
+        self.output.append("status")
+
+    def show_context_status(self, payload: dict) -> None:
+        self.output.append("context")
+
+    def show_persistence_status(self, payload: dict) -> None:
+        self.output.append("persistence")
 
 
 class FakeProvider:

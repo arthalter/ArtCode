@@ -88,12 +88,15 @@ class TuiRenderer:
     def show_mcp_startup(self, report: McpStartupReport) -> None:
         lines = [
             f"配置 {report.configured_count} / 成功 {report.connected_count} / "
-            f"失败 {report.failed_count} / 工具 {report.registered_tool_count}"
+            f"失败 {report.failed_count} / 工具 {report.registered_tool_count} / "
+            f"注册问题 {report.registration_issue_count}"
         ]
         for item in report.server_reports:
             suffix = f"：{item.detail}" if item.detail else ""
             lines.append(f"{item.name} [{item.source.value}] {item.state.value} 工具={item.tool_count}{suffix}")
-        self.console.print(Panel("\n".join(lines), title="MCP", border_style="magenta"))
+        self.console.print(
+            Panel(Text("\n".join(lines)), title="MCP", border_style="magenta")
+        )
 
     def prompt_text(
         self,

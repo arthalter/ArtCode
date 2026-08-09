@@ -66,6 +66,7 @@ class McpServerReport:
     failure_stage: FailureStage | None = None
     detail: str = ""
     truncated: bool = False
+    registration_issues: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -84,3 +85,7 @@ class McpStartupReport:
             report.state in {ServerState.INVALID, ServerState.UNAVAILABLE}
             for report in self.server_reports
         )
+
+    @property
+    def registration_issue_count(self) -> int:
+        return sum(len(report.registration_issues) for report in self.server_reports)

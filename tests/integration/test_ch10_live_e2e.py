@@ -11,6 +11,7 @@ from artcode.config import ArtCodeConfig, ConfigError, load_config
 from artcode.conversation import ConversationContext
 from artcode.providers.openai_compatible import OpenAICompatibleProvider
 from artcode.runtime import ArtCodeRuntime
+from artcode.permissions import ApprovalChoice
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -67,6 +68,15 @@ class LiveTui:
         pass
 
     async def confirm_tool_execution(self, preview) -> bool:
+        return True
+
+    async def request_approval(self, request):
+        return ApprovalChoice.ALLOW_ONCE
+
+    async def confirm_mcp_tool(self, preview, plan_mode: bool) -> bool:
+        return True
+
+    async def confirm_unsandboxed(self) -> bool:
         return True
 
     def show_tool_result_summary(self, result) -> None:

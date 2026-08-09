@@ -12,6 +12,12 @@ from .redaction import sanitize_external_text
 from .transport import open_transport
 
 
+MCP_CONNECT_TIMEOUT_SECONDS = 10.0
+MCP_SESSION_READ_TIMEOUT_SECONDS = 60.0
+MCP_TOOL_TIMEOUT_SECONDS = 60.0
+MCP_CLOSE_TIMEOUT_SECONDS = 5.0
+
+
 class McpSession:
     def __init__(self, config: McpServerConfig, workspace) -> None:
         self.config = config
@@ -22,16 +28,28 @@ class McpSession:
         self._stack = AsyncExitStack()
         self._client: ClientSession | None = None
         self._closing = False
+        self._closed = False
+        self._close_lock = asyncio.Lock()
 
     async def connect(self) -> tuple[Any, ...]:
+        if self._closed:
+            raise RuntimeError("已经关闭的 MCP Session 不能重新连接。")
         try:
             streams, _capture = await asyncio.wait_for(
-                self._stack.enter_async_context(open_transport(self.config, self.workspace)), 10
+                self._stack.enter_async_context(open_transport(self.config, self.workspace)),
+                MCP_CONNECT_TIMEOUT_SECONDS,
             )
             self._client = await self._stack.enter_async_context(
-                ClientSession(*streams, read_timeout_seconds=timedelta(seconds=60))
+                ClientSession(
+                    *streams,
+                    read_timeout_seconds=timedelta(
+                        seconds=MCP_SESSION_READ_TIMEOUT_SECONDS
+                    ),
+                )
             )
-            await asyncio.wait_for(self._client.initialize(), 10)
+            await asyncio.wait_for(
+                self._client.initialize(), MCP_CONNECT_TIMEOUT_SECONDS
+            )
             self.tools = await self._discover_tools()
             self.state = ServerState.READY
             return self.tools
@@ -46,7 +64,9 @@ class McpSession:
         cursor: str | None = None
         seen: set[str] = set()
         for _ in range(100):
-            result = await asyncio.wait_for(self._client.list_tools(cursor=cursor), 10)
+            result = await asyncio.wait_for(
+                self._client.list_tools(cursor=cursor), MCP_CONNECT_TIMEOUT_SECONDS
+            )
             remaining = 100 - len(found)
             found.extend(list(result.tools)[:remaining])
             if len(found) >= 100:
@@ -68,7 +88,12 @@ class McpSession:
             raise RuntimeError(f"MCP Server {self.config.name} 当前不可用。")
         try:
             return await asyncio.wait_for(
-                self._client.call_tool(name, arguments, read_timeout_seconds=timedelta(seconds=60)), 60
+                self._client.call_tool(
+                    name,
+                    arguments,
+                    read_timeout_seconds=timedelta(seconds=MCP_TOOL_TIMEOUT_SECONDS),
+                ),
+                MCP_TOOL_TIMEOUT_SECONDS,
             )
         except TimeoutError:
             self.state = ServerState.UNAVAILABLE
@@ -77,25 +102,41 @@ class McpSession:
         except (ConnectionError, EOFError, BrokenPipeError) as exc:
             self.state = ServerState.UNAVAILABLE
             await self.close()
-            raise RuntimeError(sanitize_external_text(f"MCP Server {self.config.name} 连接已断开：{exc}")) from None
+            raise RuntimeError(
+                sanitize_external_text(
+                    f"MCP Server {self.config.name} 连接已断开：{exc}",
+                    self._secrets,
+                )
+            ) from None
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self.state = ServerState.UNAVAILABLE
             await self.close()
             raise RuntimeError(
-                sanitize_external_text(f"MCP Server {self.config.name} 协议调用失败：{exc}")
+                sanitize_external_text(
+                    f"MCP Server {self.config.name} 协议调用失败：{exc}",
+                    self._secrets,
+                )
             ) from None
 
     async def close(self) -> None:
-        if self._closing or self.state is ServerState.CLOSED:
-            return
-        self._closing = True
-        try:
-            await asyncio.wait_for(self._stack.aclose(), 5)
-        except Exception:
-            pass
-        finally:
-            if self.state is not ServerState.UNAVAILABLE:
-                self.state = ServerState.CLOSED
-            self._closing = False
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._closing = True
+            try:
+                await asyncio.wait_for(
+                    self._stack.aclose(), MCP_CLOSE_TIMEOUT_SECONDS
+                )
+            except Exception:
+                pass
+            finally:
+                self._closed = True
+                if self.state is not ServerState.UNAVAILABLE:
+                    self.state = ServerState.CLOSED
+                self._closing = False
+
+    @property
+    def _secrets(self) -> tuple[str, ...]:
+        return tuple(self.config.env.values()) + tuple(self.config.headers.values())

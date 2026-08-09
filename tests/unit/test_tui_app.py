@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from rich.console import Console
 
 from artcode.tools import ToolPreview
 from artcode.commands import DisplayMode
 from artcode.runtime.state import RuntimeStatusSnapshot
 from artcode.agent import TokenUsage
+from artcode.permissions import ApprovalChoice, ApprovalRequest, PermissionMode, ShellPolicy
 from artcode.tui.app import PromptToolkitTui
 from artcode.tui.render import TuiRenderer
 
@@ -103,3 +107,39 @@ def test_clear_and_status_forward_to_renderer() -> None:
     assert "运行状态" in output
     assert "session-1" in output
     assert "total=12" in output
+
+
+@pytest.mark.ch10_5
+@pytest.mark.parametrize("plan_mode", [False, True])
+async def test_mcp_confirmation_receives_explicit_plan_mode(plan_mode: bool) -> None:
+    tui = tui_with_answers(["yes"])
+    preview = ToolPreview("mcp__s__t", "{}", "s/t", True)
+
+    assert await tui.confirm_mcp_tool(preview, plan_mode)
+    assert f"Plan 模式：{'是' if plan_mode else '否'}" in tui.renderer.console.export_text()
+
+
+@pytest.mark.ch10_5
+@pytest.mark.parametrize(("answer", "expected"), [("yes", True), ("no", False)])
+async def test_unsandboxed_confirmation_is_explicit(answer: str, expected: bool) -> None:
+    assert await tui_with_answers([answer]).confirm_unsandboxed() is expected
+
+
+@pytest.mark.ch10_5
+async def test_permission_approval_maps_all_four_stable_choices() -> None:
+    request = ApprovalRequest(
+        "write_file",
+        "note.txt",
+        Path("/tmp/workspace"),
+        PermissionMode.DEFAULT,
+        ShellPolicy.SANDBOX_AUTO,
+        "rule",
+    )
+    expected = [
+        ApprovalChoice.ALLOW_ONCE,
+        ApprovalChoice.DENY_ONCE,
+        ApprovalChoice.ALLOW_ALWAYS,
+        ApprovalChoice.DENY_ALWAYS,
+    ]
+    for answer, choice in zip(("1", "2", "3", "4"), expected, strict=True):
+        assert await tui_with_answers([answer]).request_approval(request) is choice

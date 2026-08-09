@@ -10,6 +10,14 @@ from artcode.tui.render import TuiRenderer
 from artcode.commands import DisplayMode
 from artcode.runtime.state import RuntimeStatusSnapshot, StartupStatusSnapshot
 from artcode.agent import TokenUsage
+from artcode.mcp.models import (
+    FailureStage,
+    McpServerReport,
+    McpStartupReport,
+    ServerSource,
+    ServerState,
+)
+import pytest
 
 
 def capture_renderer() -> tuple[TuiRenderer, Console]:
@@ -194,3 +202,32 @@ def test_runtime_status_renders_whitelist_and_missing_values_without_secrets() -
     assert "cached=不可用" in output
     assert "sk-test-secret" not in output
     assert "MEMORY_SECRET_BODY" not in output
+
+
+@pytest.mark.ch10_5
+@pytest.mark.parametrize("issue_count", [0, 1, 2, 4, 8])
+def test_mcp_startup_renderer_exposes_counts_without_secret_values(issue_count: int) -> None:
+    renderer, console = capture_renderer()
+    issues = tuple(f"mcp__server__tool_{index}：冲突" for index in range(issue_count))
+    report = McpStartupReport(
+        configured_count=1,
+        server_reports=(
+            McpServerReport(
+                "server",
+                ServerSource.USER,
+                ServerState.READY,
+                tool_count=3 - min(issue_count, 3),
+                failure_stage=FailureStage.REGISTRATION if issues else None,
+                detail="；".join(issues),
+                registration_issues=issues,
+            ),
+        ),
+        registered_tool_count=3 - min(issue_count, 3),
+    )
+
+    renderer.show_mcp_startup(report)
+
+    output = console.export_text()
+    assert f"注册问题 {issue_count}" in output
+    assert "server [user] ready" in output
+    assert "Bearer renderer-secret" not in output

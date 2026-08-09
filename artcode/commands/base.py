@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Awaitable, Callable, Protocol
 
 if TYPE_CHECKING:
-    from artcode.agent import AgentMode, TokenUsage
+    from artcode.agent import AgentMode
 
     from .registry import CommandRegistry
 
@@ -51,10 +51,6 @@ class CommandController(Protocol):
     def show_command_message(self, message: str) -> None: ...
 
     def clear_screen(self) -> None: ...
-
-    def set_display_mode(self, mode: DisplayMode) -> None: ...
-
-    def get_token_usage(self) -> TokenUsage | None: ...
 
     def refresh_status(self) -> None: ...
 

@@ -400,3 +400,25 @@ async def test_no_argument_commands_reject_extra_text(name: str) -> None:
     assert "不接受参数" in controller.messages[-1]
     assert controller.calls == []
     assert controller.sent == []
+
+
+@pytest.mark.ch10_5
+@pytest.mark.parametrize("repeat", [1, 2, 5, 10])
+async def test_repeated_status_dispatch_only_reads_status_capability(repeat: int) -> None:
+    registry = create_default_registry()
+    controller = FakeController()
+    dispatcher = CommandDispatcher(registry)
+
+    for _ in range(repeat):
+        await dispatcher.dispatch(parse_input("/status").invocation, controller)
+
+    assert controller.calls == [("status", "")] * repeat
+    assert controller.sent == []
+    assert controller.messages == []
+
+
+@pytest.mark.ch10_5
+def test_command_controller_protocol_excludes_runtime_state_storage() -> None:
+    annotations = set(getattr(__import__("artcode.commands.base", fromlist=["CommandController"]).CommandController, "__annotations__", {}))
+    assert "state" not in annotations
+    assert "provider" not in annotations

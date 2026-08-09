@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,7 +30,7 @@ def validate_schema(schema: Any) -> dict[str, Any]:
         raise ValueError("inputSchema 的 properties 必须是对象，required 必须是列表。")
     if any(not isinstance(item, str) or item not in properties for item in required):
         raise ValueError("inputSchema.required 必须只引用 properties 中的字符串字段。")
-    return schema
+    return deepcopy(schema)
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,8 @@ class McpToolAdapter(DescriptorBackedTool):
         try:
             result = await self.manager.call_tool(self.server_name, self.remote_name, prepared.arguments)
             return convert_call_result(self.name, result)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             return error_result(self.name, "mcp_call_failed", sanitize_external_text(str(exc)))
 

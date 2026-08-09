@@ -9,6 +9,7 @@ from artcode.conversation import ConversationContext
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
 from artcode.runtime import ArtCodeRuntime
+from artcode.permissions import ApprovalChoice
 
 
 class FakeTui:
@@ -52,6 +53,15 @@ class FakeTui:
     async def confirm_tool_execution(self, preview) -> bool:
         raise AssertionError("Agent Loop must not ask for tool confirmation")
 
+    async def request_approval(self, request):
+        return ApprovalChoice.DENY_ONCE
+
+    async def confirm_mcp_tool(self, preview, plan_mode: bool) -> bool:
+        return False
+
+    async def confirm_unsandboxed(self) -> bool:
+        return False
+
     def show_tool_result_summary(self, result) -> None:
         self.output.append(f"tool:{result.tool_name}:{result.status}:{result.error_code}")
 
@@ -79,6 +89,18 @@ class FakeTui:
 
     def set_display_mode(self, mode) -> None:
         self.output.append(f"mode:{mode.value}")
+
+    def clear_screen(self) -> None:
+        self.output.append("clear")
+
+    def show_runtime_status(self, snapshot) -> None:
+        self.output.append("status")
+
+    def show_context_status(self, payload: dict) -> None:
+        self.output.append("context")
+
+    def show_persistence_status(self, payload: dict) -> None:
+        self.output.append("persistence")
 
 
 class FakeProvider:

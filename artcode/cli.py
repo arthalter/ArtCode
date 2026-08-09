@@ -112,7 +112,8 @@ async def run_app(
             artifact_store=artifact_store,
         )
         registry = create_default_tool_registry()
-        registry.register_many(mcp_manager.adapters)
+        mcp_manager.register_into(registry)
+        mcp_report = mcp_manager.report
         conversation = persistence.conversation
         context_manager = ContextManager(
             config.context,
