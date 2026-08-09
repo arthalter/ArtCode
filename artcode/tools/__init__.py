@@ -13,12 +13,28 @@ from .base import (
 from .policy import AllowedPathPolicy, PathPolicyError, WorkspacePathPolicy
 from .registry import ToolRegistry, create_default_tool_registry
 from .results import ToolResult, denied_result, error_result, success_result
+from .filesystem import (
+    AtomicWriteError,
+    FileTargetSnapshot,
+    SensitivePathError,
+    TargetChangedError,
+    WorkspaceBoundaryError,
+    WorkspaceFileAccess,
+    WorkspaceFileError,
+)
 
 __all__ = [
     "AllowedPathPolicy",
     "DescriptorBackedTool",
     "PathPolicyError",
     "WorkspacePathPolicy",
+    "AtomicWriteError",
+    "FileTargetSnapshot",
+    "SensitivePathError",
+    "TargetChangedError",
+    "WorkspaceBoundaryError",
+    "WorkspaceFileAccess",
+    "WorkspaceFileError",
     "PreparedToolCall",
     "Tool",
     "ToolDescriptor",

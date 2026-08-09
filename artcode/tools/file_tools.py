@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import glob
 import json
 from pathlib import Path
 from typing import Any
@@ -14,6 +13,13 @@ from .base import (
     ToolRunContext,
 )
 from .results import ToolResult, error_result, success_result
+from .filesystem import (
+    AtomicWriteError,
+    FileTargetSnapshot,
+    TargetChangedError,
+    WorkspaceFileAccess,
+    WorkspaceFileError,
+)
 from artcode.context_management.estimator import estimate_text_tokens
 from artcode.context_management.models import SINGLE_TOOL_RESULT_TOKENS
 
@@ -61,6 +67,8 @@ def _prepare_error(tool_name: str, exc: Exception, code: str = "invalid_argument
         if "不在允许目录" in text
         else "sensitive_path"
         if "敏感路径" in text
+        else exc.error_code
+        if isinstance(exc, WorkspaceFileError)
         else code
     )
     return error_result(tool_name, error_code, str(exc))
@@ -86,7 +94,12 @@ class ReadFileTool(DescriptorBackedTool):
 
     def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:
         try:
-            path = context.path_policy.resolve_existing_path(_string_arg(arguments, "path"), context.default_cwd)
+            access = WorkspaceFileAccess(context.path_policy)
+            target = access.prepare_existing(
+                _string_arg(arguments, "path"),
+                context.default_cwd,
+            )
+            path = target.approved_path
             start_line = _optional_int_arg(arguments, "start_line")
             end_line = _optional_int_arg(arguments, "end_line")
             if start_line is not None and end_line is not None and end_line < start_line:
@@ -110,6 +123,7 @@ class ReadFileTool(DescriptorBackedTool):
             tool=self,
             arguments={
                 "path": path,
+                "target": target,
                 "start_line": start_line,
                 "end_line": end_line,
                 "is_artifact": is_artifact,
@@ -120,11 +134,15 @@ class ReadFileTool(DescriptorBackedTool):
     async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
         path: Path = prepared.arguments["path"]
         try:
-            text = path.read_text(encoding="utf-8")
+            text = WorkspaceFileAccess(context.path_policy).read_text(
+                prepared.arguments["target"]
+            )
         except FileNotFoundError:
             return error_result(self.name, "file_not_found", f"文件不存在：{path}")
         except UnicodeDecodeError:
             return error_result(self.name, "decode_error", f"文件不是可读取的 UTF-8 文本：{path}")
+        except TargetChangedError as exc:
+            return error_result(self.name, exc.error_code, str(exc))
         except OSError as exc:
             return error_result(self.name, "read_error", f"读取文件失败：{exc}")
 
@@ -166,7 +184,12 @@ class WriteFileTool(DescriptorBackedTool):
 
     def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:
         try:
-            path = context.path_policy.resolve_new_file_path(_string_arg(arguments, "path"), context.default_cwd)
+            access = WorkspaceFileAccess(context.path_policy)
+            target = access.prepare_file(
+                _string_arg(arguments, "path"),
+                context.default_cwd,
+            )
+            path = target.approved_path
             content = arguments.get("content")
             if not isinstance(content, str):
                 raise ValueError("参数 content 必须是字符串。")
@@ -180,7 +203,12 @@ class WriteFileTool(DescriptorBackedTool):
         action = "覆盖" if path.exists() else "写入"
         return PreparedToolCall(
             tool=self,
-            arguments={"path": path, "content": content, "overwrite": overwrite},
+            arguments={
+                "path": path,
+                "target": target,
+                "content": content,
+                "overwrite": overwrite,
+            },
             preview=ToolPreview(self.name, f"{action}文件 {path}", _target(context, path), True),
         )
 
@@ -188,8 +216,17 @@ class WriteFileTool(DescriptorBackedTool):
         path: Path = prepared.arguments["path"]
         content: str = prepared.arguments["content"]
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            WorkspaceFileAccess(context.path_policy).atomic_write_text(
+                prepared.arguments["target"],
+                content,
+                overwrite=prepared.arguments["overwrite"],
+            )
+        except FileExistsError:
+            return error_result(self.name, "already_exists", f"文件已存在，且未声明覆盖：{path}")
+        except TargetChangedError as exc:
+            return error_result(self.name, exc.error_code, str(exc))
+        except AtomicWriteError as exc:
+            return error_result(self.name, exc.error_code, str(exc))
         except OSError as exc:
             return error_result(self.name, "write_error", f"写入文件失败：{exc}")
         return success_result(self.name, f"已写入文件：{path}", f"path: {path}")
@@ -216,7 +253,12 @@ class EditFileTool(DescriptorBackedTool):
 
     def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:
         try:
-            path = context.path_policy.resolve_existing_path(_string_arg(arguments, "path"), context.default_cwd)
+            access = WorkspaceFileAccess(context.path_policy)
+            target = access.prepare_existing(
+                _string_arg(arguments, "path"),
+                context.default_cwd,
+            )
+            path = target.approved_path
             old_text = _string_arg(arguments, "old_text")
             new_text = arguments.get("new_text")
             if not isinstance(new_text, str):
@@ -226,7 +268,12 @@ class EditFileTool(DescriptorBackedTool):
 
         return PreparedToolCall(
             tool=self,
-            arguments={"path": path, "old_text": old_text, "new_text": new_text},
+            arguments={
+                "path": path,
+                "target": target,
+                "old_text": old_text,
+                "new_text": new_text,
+            },
             preview=ToolPreview(self.name, f"修改文件 {path}", _target(context, path), True),
         )
 
@@ -234,12 +281,15 @@ class EditFileTool(DescriptorBackedTool):
         path: Path = prepared.arguments["path"]
         old_text: str = prepared.arguments["old_text"]
         new_text: str = prepared.arguments["new_text"]
+        access = WorkspaceFileAccess(context.path_policy)
         try:
-            text = path.read_text(encoding="utf-8")
+            text = access.read_text(prepared.arguments["target"])
         except FileNotFoundError:
             return error_result(self.name, "file_not_found", f"文件不存在：{path}")
         except UnicodeDecodeError:
             return error_result(self.name, "decode_error", f"文件不是可读取的 UTF-8 文本：{path}")
+        except TargetChangedError as exc:
+            return error_result(self.name, exc.error_code, str(exc))
         except OSError as exc:
             return error_result(self.name, "read_error", f"读取文件失败：{exc}")
 
@@ -250,7 +300,15 @@ class EditFileTool(DescriptorBackedTool):
             return error_result(self.name, "old_text_not_unique", f"原文匹配了 {count} 次，文件未修改。")
 
         try:
-            path.write_text(text.replace(old_text, new_text, 1), encoding="utf-8")
+            access.atomic_write_text(
+                prepared.arguments["target"],
+                text.replace(old_text, new_text, 1),
+                overwrite=True,
+            )
+        except TargetChangedError as exc:
+            return error_result(self.name, exc.error_code, str(exc))
+        except AtomicWriteError as exc:
+            return error_result(self.name, exc.error_code, str(exc))
         except OSError as exc:
             return error_result(self.name, "write_error", f"写入文件失败：{exc}")
         return success_result(self.name, f"已修改文件：{path}", f"path: {path}")
@@ -285,20 +343,10 @@ class FindFilesTool(DescriptorBackedTool):
 
     async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
         pattern: str = prepared.arguments["pattern"]
-        matches: list[str] = []
-
-        if Path(pattern).is_absolute():
-            candidates = (Path(path) for path in glob.glob(pattern, recursive=True))
-        else:
-            candidates = (path for root in context.path_policy.allowed_roots for path in root.glob(pattern))
-
-        for candidate in candidates:
-            try:
-                resolved = candidate.resolve()
-            except OSError:
-                continue
-            if resolved.is_file() and context.path_policy.is_allowed(resolved):
-                matches.append(str(resolved))
+        matches = [
+            str(path)
+            for path in WorkspaceFileAccess(context.path_policy).find_files(pattern)
+        ]
 
         content = "\n".join(sorted(set(matches)))
         return success_result(self.name, f"找到 {len(set(matches))} 个匹配文件。", content)
@@ -325,31 +373,39 @@ class SearchTextTool(DescriptorBackedTool):
         try:
             query = _string_arg(arguments, "query")
             raw_path = arguments.get("path")
-            path = None
+            target: FileTargetSnapshot | None = None
             if raw_path is not None:
                 if not isinstance(raw_path, str) or not raw_path.strip():
                     raise ValueError("参数 path 必须是非空字符串。")
-                path = context.path_policy.resolve_existing_path(raw_path, context.default_cwd)
+                target = WorkspaceFileAccess(context.path_policy).prepare_existing(
+                    raw_path,
+                    context.default_cwd,
+                )
         except Exception as exc:
             return _prepare_error(self.name, exc)
 
-        target = _target(context, path) if path is not None else "."
+        display_target = target.display_target if target is not None else "."
         return PreparedToolCall(
             tool=self,
-            arguments={"query": query, "path": path},
-            preview=ToolPreview(self.name, f"搜索文本 {query}", target, False),
+            arguments={"query": query, "target": target},
+            preview=ToolPreview(self.name, f"搜索文本 {query}", display_target, False),
         )
 
     async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
         query: str = prepared.arguments["query"]
-        path: Path | None = prepared.arguments["path"]
-        files = _iter_search_files(path, context)
+        access = WorkspaceFileAccess(context.path_policy)
+        try:
+            files = access.search_files(
+                prepared.arguments["target"]
+            )
+        except TargetChangedError as exc:
+            return error_result(self.name, exc.error_code, str(exc))
         matches: list[dict[str, Any]] = []
         skipped = 0
 
         for file_path in files:
             try:
-                lines = file_path.read_text(encoding="utf-8").splitlines()
+                lines = access.read_current_text(file_path).splitlines()
             except UnicodeDecodeError:
                 skipped += 1
                 continue
@@ -370,24 +426,5 @@ class SearchTextTool(DescriptorBackedTool):
         return success_result(self.name, f"找到 {len(matches)} 处匹配。", content)
 
 
-def _iter_search_files(path: Path | None, context: ToolRunContext) -> list[Path]:
-    roots = [path] if path is not None else list(context.path_policy.allowed_roots)
-    files: list[Path] = []
-    for root in roots:
-        if root.is_file() and context.path_policy.is_allowed(root):
-            files.append(root)
-        elif root.is_dir() and context.path_policy.is_allowed(root):
-            for candidate in root.rglob("*"):
-                try:
-                    if candidate.is_file() and context.path_policy.is_allowed(candidate.resolve()):
-                        files.append(candidate.resolve())
-                except OSError:
-                    continue
-    return files
-
-
 def _target(context: ToolRunContext, path: Path) -> str:
-    relative_target = getattr(context.path_policy, "relative_target", None)
-    if callable(relative_target):
-        return relative_target(path)
-    return str(path)
+    return WorkspaceFileAccess(context.path_policy).display_target(path)
