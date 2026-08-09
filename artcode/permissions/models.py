@@ -17,12 +17,12 @@ class PermissionMode(StrEnum):
     EDIT = "edit"
     FULL = "full"
 
-    def default_for(self, tool_name: str) -> PermissionAction:
-        if tool_name in {"read_file", "find_files", "search_text"}:
+    def default_for_effect(self, effect: str) -> PermissionAction:
+        if effect == "read":
             return PermissionAction.ALLOW
-        if tool_name in {"write_file", "edit_file"}:
+        if effect == "write":
             return PermissionAction.ASK if self is PermissionMode.DEFAULT else PermissionAction.ALLOW
-        raise ValueError(f"权限模式不负责工具：{tool_name}")
+        raise ValueError(f"权限模式不负责工具效果：{effect}")
 
 
 class ShellPolicy(StrEnum):
@@ -46,6 +46,15 @@ class PermissionState:
     mode: PermissionMode = PermissionMode.DEFAULT
     shell_policy: ShellPolicy = ShellPolicy.SANDBOX_AUTO
 
+    def snapshot(self) -> "PermissionSnapshot":
+        return PermissionSnapshot(self.mode, self.shell_policy)
+
+
+@dataclass(frozen=True)
+class PermissionSnapshot:
+    mode: PermissionMode
+    shell_policy: ShellPolicy
+
 
 class RuleSource(StrEnum):
     USER = "user"
@@ -65,6 +74,8 @@ class PermissionRequest:
     target: str
     workspace: Path
     plan_mode: bool = False
+    effect: str | None = None
+    rule_configurable: bool = True
 
 
 @dataclass(frozen=True)

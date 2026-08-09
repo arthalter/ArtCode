@@ -15,7 +15,17 @@ from artcode.errors import ContextWindowExceededError
 from artcode.errors import NetworkError
 from artcode.providers.events import content_delta_event, done_event, token_usage_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
-from artcode.tools import AllowedPathPolicy, PreparedToolCall, ToolExecutionContext, ToolPreview, ToolRegistry, success_result
+from artcode.tools import (
+    AllowedPathPolicy,
+    DescriptorBackedTool,
+    PreparedToolCall,
+    ToolDescriptor,
+    ToolEffect,
+    ToolExecutionContext,
+    ToolPreview,
+    ToolRegistry,
+    success_result,
+)
 
 
 def valid_summary() -> str:
@@ -40,11 +50,13 @@ class QueueProvider:
             yield event
 
 
-class LargeTool:
-    name = "read_file"
-    description = "large"
-    parameters_schema = {"type": "object", "properties": {}}
-    requires_confirmation = False
+class LargeTool(DescriptorBackedTool):
+    descriptor = ToolDescriptor(
+        "read_file",
+        "large",
+        {"type": "object", "properties": {}},
+        ToolEffect.READ,
+    )
 
     def prepare(self, arguments, context):
         return PreparedToolCall(self, arguments, ToolPreview(self.name, "large", "large", False))

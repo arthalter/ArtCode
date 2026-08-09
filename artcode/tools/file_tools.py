@@ -5,7 +5,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .base import PreparedToolCall, ToolExecutionContext, ToolPreview
+from .base import (
+    DescriptorBackedTool,
+    PreparedToolCall,
+    ToolDescriptor,
+    ToolEffect,
+    ToolPreview,
+    ToolRunContext,
+)
 from .results import ToolResult, error_result, success_result
 from artcode.context_management.estimator import estimate_text_tokens
 from artcode.context_management.models import SINGLE_TOOL_RESULT_TOKENS
@@ -59,23 +66,25 @@ def _prepare_error(tool_name: str, exc: Exception, code: str = "invalid_argument
     return error_result(tool_name, error_code, str(exc))
 
 
-class ReadFileTool:
-    name = "read_file"
-    description = (
-        "读取允许目录内的 UTF-8 文本文件，可选按行范围读取。"
-        "用于理解代码、查看配置、获取编辑前上下文；修改已有文件前应先用本工具读取目标文件或相关片段。"
-    )
-    requires_confirmation = False
-    parameters_schema = _schema(
-        {
-            "path": {"type": "string", "description": "要读取的文件路径。"},
-            "start_line": {"type": "integer", "description": "可选，起始行号，1 起算。"},
-            "end_line": {"type": "integer", "description": "可选，结束行号，包含该行。"},
-        },
-        ["path"],
+class ReadFileTool(DescriptorBackedTool):
+    descriptor = ToolDescriptor(
+        name="read_file",
+        description=(
+            "读取允许目录内的 UTF-8 文本文件，可选按行范围读取。"
+            "用于理解代码、查看配置、获取编辑前上下文；修改已有文件前应先用本工具读取目标文件或相关片段。"
+        ),
+        parameters_schema=_schema(
+            {
+                "path": {"type": "string", "description": "要读取的文件路径。"},
+                "start_line": {"type": "integer", "description": "可选，起始行号，1 起算。"},
+                "end_line": {"type": "integer", "description": "可选，结束行号，包含该行。"},
+            },
+            ["path"],
+        ),
+        effect=ToolEffect.READ,
     )
 
-    def prepare(self, arguments: dict[str, Any], context: ToolExecutionContext) -> PreparedToolCall | ToolResult:
+    def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:
         try:
             path = context.path_policy.resolve_existing_path(_string_arg(arguments, "path"), context.default_cwd)
             start_line = _optional_int_arg(arguments, "start_line")
@@ -108,7 +117,7 @@ class ReadFileTool:
             preview=ToolPreview(self.name, f"读取文件 {path}", _target(context, path), False),
         )
 
-    async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
+    async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
         path: Path = prepared.arguments["path"]
         try:
             text = path.read_text(encoding="utf-8")
@@ -137,23 +146,25 @@ class ReadFileTool:
         return success_result(self.name, f"已读取文件：{path}", text)
 
 
-class WriteFileTool:
-    name = "write_file"
-    description = (
-        "在允许目录内创建或覆盖完整 UTF-8 文本文件，默认不覆盖已有文件。"
-        "适合写入新文件或整文件生成；覆盖已有文件前必须确认意图，避免用它做小范围替换。"
-    )
-    requires_confirmation = True
-    parameters_schema = _schema(
-        {
-            "path": {"type": "string", "description": "要写入的文件路径。"},
-            "content": {"type": "string", "description": "要写入的 UTF-8 文本内容。"},
-            "overwrite": {"type": "boolean", "description": "是否允许覆盖已有文件，默认 false。"},
-        },
-        ["path", "content"],
+class WriteFileTool(DescriptorBackedTool):
+    descriptor = ToolDescriptor(
+        name="write_file",
+        description=(
+            "在允许目录内创建或覆盖完整 UTF-8 文本文件，默认不覆盖已有文件。"
+            "适合写入新文件或整文件生成；覆盖已有文件前必须确认意图，避免用它做小范围替换。"
+        ),
+        parameters_schema=_schema(
+            {
+                "path": {"type": "string", "description": "要写入的文件路径。"},
+                "content": {"type": "string", "description": "要写入的 UTF-8 文本内容。"},
+                "overwrite": {"type": "boolean", "description": "是否允许覆盖已有文件，默认 false。"},
+            },
+            ["path", "content"],
+        ),
+        effect=ToolEffect.WRITE,
     )
 
-    def prepare(self, arguments: dict[str, Any], context: ToolExecutionContext) -> PreparedToolCall | ToolResult:
+    def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:
         try:
             path = context.path_policy.resolve_new_file_path(_string_arg(arguments, "path"), context.default_cwd)
             content = arguments.get("content")
@@ -173,7 +184,7 @@ class WriteFileTool:
             preview=ToolPreview(self.name, f"{action}文件 {path}", _target(context, path), True),
         )
 
-    async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
+    async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
         path: Path = prepared.arguments["path"]
         content: str = prepared.arguments["content"]
         try:
@@ -184,24 +195,26 @@ class WriteFileTool:
         return success_result(self.name, f"已写入文件：{path}", f"path: {path}")
 
 
-class EditFileTool:
-    name = "edit_file"
-    description = (
-        "在允许目录内对 UTF-8 文本文件执行严格原文唯一匹配替换。"
-        "编辑前必须先读取目标文件或相关上下文；old_text 必须来自实际文件内容，并且应唯一匹配。"
-        "适合小范围精确修改，不适合整文件重写。"
-    )
-    requires_confirmation = True
-    parameters_schema = _schema(
-        {
-            "path": {"type": "string", "description": "要修改的文件路径。"},
-            "old_text": {"type": "string", "description": "必须唯一匹配的原文。"},
-            "new_text": {"type": "string", "description": "替换后的新文本。"},
-        },
-        ["path", "old_text", "new_text"],
+class EditFileTool(DescriptorBackedTool):
+    descriptor = ToolDescriptor(
+        name="edit_file",
+        description=(
+            "在允许目录内对 UTF-8 文本文件执行严格原文唯一匹配替换。"
+            "编辑前必须先读取目标文件或相关上下文；old_text 必须来自实际文件内容，并且应唯一匹配。"
+            "适合小范围精确修改，不适合整文件重写。"
+        ),
+        parameters_schema=_schema(
+            {
+                "path": {"type": "string", "description": "要修改的文件路径。"},
+                "old_text": {"type": "string", "description": "必须唯一匹配的原文。"},
+                "new_text": {"type": "string", "description": "替换后的新文本。"},
+            },
+            ["path", "old_text", "new_text"],
+        ),
+        effect=ToolEffect.WRITE,
     )
 
-    def prepare(self, arguments: dict[str, Any], context: ToolExecutionContext) -> PreparedToolCall | ToolResult:
+    def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:
         try:
             path = context.path_policy.resolve_existing_path(_string_arg(arguments, "path"), context.default_cwd)
             old_text = _string_arg(arguments, "old_text")
@@ -217,7 +230,7 @@ class EditFileTool:
             preview=ToolPreview(self.name, f"修改文件 {path}", _target(context, path), True),
         )
 
-    async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
+    async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
         path: Path = prepared.arguments["path"]
         old_text: str = prepared.arguments["old_text"]
         new_text: str = prepared.arguments["new_text"]
@@ -243,21 +256,23 @@ class EditFileTool:
         return success_result(self.name, f"已修改文件：{path}", f"path: {path}")
 
 
-class FindFilesTool:
-    name = "find_files"
-    description = (
-        "按 glob 模式查找允许目录内的文件。"
-        "用于定位候选文件，优先于 shell find；找到文件后通常再配合 read_file 或 search_text 理解内容。"
-    )
-    requires_confirmation = False
-    parameters_schema = _schema(
-        {
-            "pattern": {"type": "string", "description": "glob 文件匹配模式，例如 **/*.py。"},
-        },
-        ["pattern"],
+class FindFilesTool(DescriptorBackedTool):
+    descriptor = ToolDescriptor(
+        name="find_files",
+        description=(
+            "按 glob 模式查找允许目录内的文件。"
+            "用于定位候选文件，优先于 shell find；找到文件后通常再配合 read_file 或 search_text 理解内容。"
+        ),
+        parameters_schema=_schema(
+            {
+                "pattern": {"type": "string", "description": "glob 文件匹配模式，例如 **/*.py。"},
+            },
+            ["pattern"],
+        ),
+        effect=ToolEffect.READ,
     )
 
-    def prepare(self, arguments: dict[str, Any], context: ToolExecutionContext) -> PreparedToolCall | ToolResult:
+    def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:
         try:
             pattern = _string_arg(arguments, "pattern")
         except Exception as exc:
@@ -268,7 +283,7 @@ class FindFilesTool:
             preview=ToolPreview(self.name, f"查找文件 {pattern}", ".", False),
         )
 
-    async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
+    async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
         pattern: str = prepared.arguments["pattern"]
         matches: list[str] = []
 
@@ -289,22 +304,24 @@ class FindFilesTool:
         return success_result(self.name, f"找到 {len(set(matches))} 个匹配文件。", content)
 
 
-class SearchTextTool:
-    name = "search_text"
-    description = (
-        "在允许目录内按普通文本搜索 UTF-8 文本文件内容。"
-        "用于查找符号、配置、错误文本或相关上下文，优先于 shell grep；修改前可用它定位需要读取的片段。"
-    )
-    requires_confirmation = False
-    parameters_schema = _schema(
-        {
-            "query": {"type": "string", "description": "要搜索的普通文本。"},
-            "path": {"type": "string", "description": "可选，搜索的文件或目录，默认所有允许目录。"},
-        },
-        ["query"],
+class SearchTextTool(DescriptorBackedTool):
+    descriptor = ToolDescriptor(
+        name="search_text",
+        description=(
+            "在允许目录内按普通文本搜索 UTF-8 文本文件内容。"
+            "用于查找符号、配置、错误文本或相关上下文，优先于 shell grep；修改前可用它定位需要读取的片段。"
+        ),
+        parameters_schema=_schema(
+            {
+                "query": {"type": "string", "description": "要搜索的普通文本。"},
+                "path": {"type": "string", "description": "可选，搜索的文件或目录，默认所有允许目录。"},
+            },
+            ["query"],
+        ),
+        effect=ToolEffect.READ,
     )
 
-    def prepare(self, arguments: dict[str, Any], context: ToolExecutionContext) -> PreparedToolCall | ToolResult:
+    def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:
         try:
             query = _string_arg(arguments, "query")
             raw_path = arguments.get("path")
@@ -323,7 +340,7 @@ class SearchTextTool:
             preview=ToolPreview(self.name, f"搜索文本 {query}", target, False),
         )
 
-    async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
+    async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
         query: str = prepared.arguments["query"]
         path: Path | None = prepared.arguments["path"]
         files = _iter_search_files(path, context)
@@ -353,7 +370,7 @@ class SearchTextTool:
         return success_result(self.name, f"找到 {len(matches)} 处匹配。", content)
 
 
-def _iter_search_files(path: Path | None, context: ToolExecutionContext) -> list[Path]:
+def _iter_search_files(path: Path | None, context: ToolRunContext) -> list[Path]:
     roots = [path] if path is not None else list(context.path_policy.allowed_roots)
     files: list[Path] = []
     for root in roots:
@@ -369,7 +386,7 @@ def _iter_search_files(path: Path | None, context: ToolExecutionContext) -> list
     return files
 
 
-def _target(context: ToolExecutionContext, path: Path) -> str:
+def _target(context: ToolRunContext, path: Path) -> str:
     relative_target = getattr(context.path_policy, "relative_target", None)
     if callable(relative_target):
         return relative_target(path)

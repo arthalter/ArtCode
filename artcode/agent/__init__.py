@@ -13,7 +13,7 @@ from .events import (
 from .loop import AgentLoop, AgentRunResult
 from .request import AgentRunRequest, PreparedModelRequest, RequestPreparer
 from .memory import PlanMemory
-from .modes import DO_MODE, NORMAL_AGENT_MODE, PLAN_MODE, READ_ONLY_TOOL_NAMES, AgentMode, ToolAccessPolicy
+from .modes import DO_MODE, NORMAL_AGENT_MODE, PLAN_MODE, AgentMode, ToolAccessPolicy
 from .stream import StreamCollector
 from .tools import ToolBatchExecutor, ToolExecutionBatch, ToolExecutionPlan, ToolSafety
 
@@ -35,7 +35,6 @@ __all__ = [
     "NaturalTurnObserver",
     "PLAN_MODE",
     "PlanMemory",
-    "READ_ONLY_TOOL_NAMES",
     "StopReason",
     "StreamCollector",
     "TokenUsage",

@@ -18,7 +18,7 @@ class Approver:
     def __init__(self) -> None:
         self.count = 0
 
-    async def request_mcp_approval(self, preview) -> bool:
+    async def request_mcp_approval(self, preview, plan_mode: bool) -> bool:
         self.count += 1
         return True
 

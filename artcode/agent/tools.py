@@ -20,25 +20,24 @@ from artcode.providers.tool_calls import ToolCall
 from artcode.tools import (
     PreparedToolCall,
     Tool,
+    ToolDescriptor,
+    ToolEffect,
     ToolExecutionContext,
     ToolOrigin,
     ToolRegistry,
     ToolResult,
+    ToolRunContext,
     error_result,
 )
 
 from .events import AgentEvent, StopReason, tool_batch_started_event, tool_result_event
-from .modes import ToolAccessPolicy
+from .modes import AgentMode, NORMAL_AGENT_MODE, PLAN_MODE, ToolAccessPolicy
 
 
 class ToolSafety(StrEnum):
     READ_ONLY = "read_only"
     SIDE_EFFECT = "side_effect"
     MCP_EXTERNAL = "mcp_external"
-
-
-READ_ONLY_TOOLS = frozenset({"read_file", "find_files", "search_text"})
-SIDE_EFFECT_TOOLS = frozenset({"write_file", "edit_file", "run_command"})
 
 
 @dataclass(frozen=True)
@@ -71,7 +70,7 @@ class PermissionApprover(Protocol):
     async def request_approval(self, request: ApprovalRequest) -> ApprovalChoice:
         ...
 
-    async def request_mcp_approval(self, preview) -> bool:
+    async def request_mcp_approval(self, preview, plan_mode: bool) -> bool:
         ...
 
 
@@ -88,10 +87,11 @@ class ToolBatchExecutor:
         self.tool_registry = tool_registry
         self.tool_context = tool_context
         self.permission_engine = permission_engine
-        self.permission_state = permission_state or PermissionState()
+        self.permission_state = permission_state or PermissionState(
+            shell_policy=tool_context.shell_policy
+        )
         self.approver = approver
         self.rule_writer = rule_writer
-        self.plan_mode = False
 
     def build_plan(
         self,
@@ -99,14 +99,13 @@ class ToolBatchExecutor:
         policy: ToolAccessPolicy,
     ) -> ToolExecutionPlan | ToolExecutionBlocked:
         for tool_call in tool_calls:
-            registered_tool = self.tool_registry.get(tool_call.name)
-            if registered_tool is None:
+            descriptor = self.tool_registry.descriptor(tool_call.name)
+            if descriptor is None:
                 return ToolExecutionBlocked(
                     tool_call,
                     error_result(tool_call.name or "unknown_tool", "tool_not_found", f"未知工具：{tool_call.name}"),
                 )
-            is_mcp = getattr(registered_tool, "origin", ToolOrigin.BUILTIN) == ToolOrigin.MCP
-            if not is_mcp and not policy.allows(tool_call.name):
+            if not policy.allows(descriptor):
                 return ToolExecutionBlocked(
                     tool_call,
                     error_result(
@@ -139,13 +138,9 @@ class ToolBatchExecutor:
                 current_mcp.clear()
 
         for tool_call in tool_calls:
-            registered = self.tool_registry.get(tool_call.name)
-            safety = (
-                ToolSafety.MCP_EXTERNAL
-                if registered is not None
-                and getattr(registered, "origin", ToolOrigin.BUILTIN) == ToolOrigin.MCP
-                else classify_tool(tool_call.name)
-            )
+            descriptor = self.tool_registry.descriptor(tool_call.name)
+            assert descriptor is not None
+            safety = classify_tool(descriptor)
             if safety == ToolSafety.READ_ONLY:
                 flush_mcp()
                 current_read_only.append(tool_call)
@@ -166,43 +161,40 @@ class ToolBatchExecutor:
         flush_mcp()
         return ToolExecutionPlan(tuple(batches))
 
-    async def execute_plan(self, plan: ToolExecutionPlan, *, plan_mode: bool = False):
-        self.plan_mode = plan_mode
+    async def execute_plan(
+        self,
+        plan: ToolExecutionPlan,
+        *,
+        mode: AgentMode | None = None,
+        plan_mode: bool | None = None,
+    ):
+        if mode is not None and plan_mode is not None:
+            raise ValueError("pass mode or plan_mode, not both")
+        selected_mode = mode or (PLAN_MODE if plan_mode else NORMAL_AGENT_MODE)
+        run_context = self.tool_context.to_run_context(selected_mode, self.permission_state)
         for batch in plan.batches:
             yield tool_batch_started_event(batch.index, batch.safety.value, len(batch.tool_calls))
-            if self.permission_engine is not None:
-                prepared_items: list[tuple[ToolCall, PreparedToolCall] | tuple[ToolCall, ToolResult]] = []
-                for tool_call in batch.tool_calls:
-                    prepared_items.append((tool_call, await self._prepare_and_authorize(tool_call)))
-                if batch.safety in {ToolSafety.READ_ONLY, ToolSafety.MCP_EXTERNAL}:
-                    coroutines = [
-                        self._execute_prepared(item)
-                        for item in prepared_items
-                    ]
-                    results = await asyncio.gather(*coroutines)
-                else:
-                    results = []
-                    for item in prepared_items:
-                        results.append(await self._execute_prepared(item))
-                for (tool_call, _), result in zip(prepared_items, results):
-                    yield tool_result_event(tool_call, result)
-                continue
-            if batch.safety == ToolSafety.READ_ONLY:
-                results = await asyncio.gather(*(self._execute_one(tool_call) for tool_call in batch.tool_calls))
-                for tool_call, result in zip(batch.tool_calls, results):
-                    yield tool_result_event(tool_call, result)
+            prepared_items: list[tuple[ToolCall, PreparedToolCall] | tuple[ToolCall, ToolResult]] = []
+            for tool_call in batch.tool_calls:
+                prepared_items.append(
+                    (tool_call, await self._prepare_and_authorize(tool_call, run_context))
+                )
+            if batch.safety in {ToolSafety.READ_ONLY, ToolSafety.MCP_EXTERNAL}:
+                results = await asyncio.gather(
+                    *(self._execute_prepared(item, run_context) for item in prepared_items)
+                )
             else:
-                for tool_call in batch.tool_calls:
-                    result = await self._execute_one(tool_call)
-                    yield tool_result_event(tool_call, result)
+                results = []
+                for item in prepared_items:
+                    results.append(await self._execute_prepared(item, run_context))
+            for (tool_call, _), result in zip(prepared_items, results):
+                yield tool_result_event(tool_call, result)
 
-    async def _execute_one(self, tool_call: ToolCall) -> ToolResult:
-        prepared = await self._prepare_and_authorize(tool_call)
-        if isinstance(prepared, ToolResult):
-            return prepared
-        return await prepared.tool.execute(prepared, self.tool_context)
-
-    async def _prepare_and_authorize(self, tool_call: ToolCall) -> PreparedToolCall | ToolResult:
+    async def _prepare_and_authorize(
+        self,
+        tool_call: ToolCall,
+        context: ToolRunContext,
+    ) -> PreparedToolCall | ToolResult:
         parsed = self._parse_arguments(tool_call)
         if isinstance(parsed, ToolResult):
             return parsed
@@ -211,29 +203,34 @@ class ToolBatchExecutor:
         if tool is None:
             return error_result(tool_call.name or "unknown_tool", "tool_not_found", f"未知工具：{tool_call.name}")
 
-        prepared = tool.prepare(parsed, self.tool_context)
+        prepared = tool.prepare(parsed, context)
         if isinstance(prepared, ToolResult):
             return prepared
 
-        if getattr(tool, "origin", ToolOrigin.BUILTIN) == ToolOrigin.MCP:
+        if tool.descriptor.origin is ToolOrigin.MCP:
             if self.approver is None:
                 return error_result(tool_call.name, "permission_required", "MCP 工具需要人工确认，但审批器不可用。")
-            handler = getattr(self.approver, "request_mcp_approval", None)
-            allowed = await handler(prepared.preview) if callable(handler) else False
+            allowed = await self.approver.request_mcp_approval(
+                prepared.preview,
+                context.mode == PLAN_MODE,
+            )
             if not allowed:
                 return error_result(tool_call.name, "user_denied", "用户拒绝执行该 MCP 工具。")
             return prepared
 
         if self.permission_engine is not None:
+            descriptor = tool.descriptor
             try:
                 decision = self.permission_engine.decide(
                     PermissionRequest(
                         tool_name=prepared.preview.tool_name,
                         target=_permission_target(prepared),
-                        workspace=self.tool_context.default_cwd or self.tool_context.path_policy.allowed_roots[0],
-                        plan_mode=self.plan_mode,
+                        workspace=context.default_cwd or context.path_policy.allowed_roots[0],
+                        plan_mode=context.mode == PLAN_MODE,
+                        effect=descriptor.effect.value,
+                        rule_configurable=descriptor.rule_configurable,
                     ),
-                    self.permission_state,
+                    context.permission,
                 )
             except Exception as exc:
                 return error_result(tool_call.name, "permission_rule_error", str(exc))
@@ -250,9 +247,9 @@ class ToolBatchExecutor:
                     ApprovalRequest(
                         tool_name=tool_call.name,
                         target=_permission_target(prepared),
-                        workspace=self.tool_context.default_cwd or self.tool_context.path_policy.allowed_roots[0],
-                        permission_mode=self.permission_state.mode,
-                        shell_policy=self.permission_state.shell_policy,
+                        workspace=context.default_cwd or context.path_policy.allowed_roots[0],
+                        permission_mode=context.permission.mode,
+                        shell_policy=context.permission.shell_policy,
                         source=decision.reason,
                     )
                 )
@@ -278,11 +275,12 @@ class ToolBatchExecutor:
     async def _execute_prepared(
         self,
         item: tuple[ToolCall, PreparedToolCall] | tuple[ToolCall, ToolResult],
+        context: ToolRunContext,
     ) -> ToolResult:
         _tool_call, prepared = item
         if isinstance(prepared, ToolResult):
             return prepared
-        return await prepared.tool.execute(prepared, self.tool_context)
+        return await prepared.tool.execute(prepared, context)
 
     def _parse_arguments(self, tool_call: ToolCall) -> dict[str, Any] | ToolResult:
         try:
@@ -294,9 +292,11 @@ class ToolBatchExecutor:
         return parsed
 
 
-def classify_tool(tool_name: str) -> ToolSafety:
-    if tool_name in READ_ONLY_TOOLS:
+def classify_tool(descriptor: ToolDescriptor) -> ToolSafety:
+    if descriptor.effect is ToolEffect.READ:
         return ToolSafety.READ_ONLY
+    if descriptor.effect is ToolEffect.EXTERNAL:
+        return ToolSafety.MCP_EXTERNAL
     return ToolSafety.SIDE_EFFECT
 
 

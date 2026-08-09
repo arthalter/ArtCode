@@ -7,30 +7,39 @@ import signal
 from pathlib import Path
 from typing import Any
 
-from .base import PreparedToolCall, ToolExecutionContext, ToolPreview
+from .base import (
+    DescriptorBackedTool,
+    PreparedToolCall,
+    ToolDescriptor,
+    ToolEffect,
+    ToolPreview,
+    ToolRunContext,
+)
 from .policy import AllowedPathPolicy
 from .results import ToolResult, error_result, success_result
 
 
-class RunCommandTool:
-    name = "run_command"
-    description = (
-        "在允许目录内执行一段 shell 命令。"
-        "命令始终视为有副作用工具，应谨慎使用；已有 read_file、find_files、search_text、write_file 或 edit_file "
-        "等专用工具能完成时，优先使用专用工具，不要用 shell 命令替代。"
-    )
-    requires_confirmation = True
-    parameters_schema = {
-        "type": "object",
-        "properties": {
-            "command": {"type": "string", "description": "要执行的 shell 命令。"},
-            "cwd": {"type": "string", "description": "可选，命令工作目录。"},
+class RunCommandTool(DescriptorBackedTool):
+    descriptor = ToolDescriptor(
+        name="run_command",
+        description=(
+            "在允许目录内执行一段 shell 命令。"
+            "命令始终视为有副作用工具，应谨慎使用；已有 read_file、find_files、search_text、write_file 或 edit_file "
+            "等专用工具能完成时，优先使用专用工具，不要用 shell 命令替代。"
+        ),
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "要执行的 shell 命令。"},
+                "cwd": {"type": "string", "description": "可选，命令工作目录。"},
+            },
+            "required": ["command"],
+            "additionalProperties": False,
         },
-        "required": ["command"],
-        "additionalProperties": False,
-    }
+        effect=ToolEffect.SHELL,
+    )
 
-    def prepare(self, arguments: dict[str, Any], context: ToolExecutionContext) -> PreparedToolCall | ToolResult:
+    def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:
         command = arguments.get("command")
         if not isinstance(command, str) or not command.strip():
             return error_result(self.name, "invalid_arguments", "参数 command 必须是非空字符串。")
@@ -55,11 +64,13 @@ class RunCommandTool:
             preview=ToolPreview(self.name, f"执行命令：{command}", f"{cwd}$ {command}", True),
         )
 
-    async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
+    async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
         command: str = prepared.arguments["command"]
         cwd: Path = prepared.arguments["cwd"]
         argv = ["/bin/zsh", "-f", "-c", command]
-        if context.shell_policy.uses_sandbox:
+        state = context.permission_state
+        shell_policy = state.shell_policy if state is not None else context.shell_policy
+        if shell_policy.uses_sandbox:
             if context.seatbelt is None:
                 return error_result(self.name, "sandbox_error", "Seatbelt 未初始化，拒绝执行命令。")
             try:
@@ -132,7 +143,7 @@ def validate_shell_command(command: str, policy: AllowedPathPolicy) -> ToolResul
     return None
 
 
-def _resolve_cwd(raw_cwd: Any, context: ToolExecutionContext) -> Path | ToolResult:
+def _resolve_cwd(raw_cwd: Any, context: ToolRunContext) -> Path | ToolResult:
     if raw_cwd is None:
         return context.default_cwd or context.path_policy.allowed_roots[0]
     if not isinstance(raw_cwd, str) or not raw_cwd.strip():
@@ -147,7 +158,7 @@ def _resolve_cwd(raw_cwd: Any, context: ToolExecutionContext) -> Path | ToolResu
     return cwd
 
 
-def _safe_environment(context: ToolExecutionContext) -> dict[str, str]:
+def _safe_environment(context: ToolRunContext) -> dict[str, str]:
     allowed = ("PATH", "LANG", "LC_ALL", "TERM")
     environment = {key: os.environ[key] for key in allowed if key in os.environ}
     environment.setdefault("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")

@@ -4,11 +4,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from artcode.tools.base import (
+    DescriptorBackedTool,
     PreparedToolCall,
-    ToolApprovalPolicy,
-    ToolExecutionContext,
+    ToolDescriptor,
+    ToolEffect,
     ToolOrigin,
     ToolPreview,
+    ToolRunContext,
 )
 from artcode.tools.results import ToolResult, error_result
 
@@ -30,25 +32,20 @@ def validate_schema(schema: Any) -> dict[str, Any]:
 
 
 @dataclass(frozen=True)
-class McpToolAdapter:
+class McpToolAdapter(DescriptorBackedTool):
     manager: Any
-    name: str
+    descriptor: ToolDescriptor
     remote_name: str
     server_name: str
-    description: str
-    parameters_schema: dict[str, Any]
-    requires_confirmation: bool = True
-    origin: ToolOrigin = ToolOrigin.MCP
-    approval_policy: ToolApprovalPolicy = ToolApprovalPolicy.ALWAYS_ASK_ONCE
 
-    def prepare(self, arguments: dict[str, Any], context: ToolExecutionContext):
+    def prepare(self, arguments: dict[str, Any], context: ToolRunContext):
         return PreparedToolCall(
             self,
             arguments,
             ToolPreview(self.name, safe_json_preview(arguments), f"{self.server_name}/{self.remote_name}", True),
         )
 
-    async def execute(self, prepared: PreparedToolCall, context: ToolExecutionContext) -> ToolResult:
+    async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
         try:
             result = await self.manager.call_tool(self.server_name, self.remote_name, prepared.arguments)
             return convert_call_result(self.name, result)
@@ -65,6 +62,15 @@ def create_adapter(manager: Any, server_name: str, remote_tool: Any) -> McpToolA
     if not isinstance(description, str) or not description.strip():
         description = f"来自 MCP Server {server_name} 的工具 {remote_name}。"
     return McpToolAdapter(
-        manager, registered_tool_name(server_name, remote_name), remote_name,
-        server_name, description, schema,
+        manager,
+        ToolDescriptor(
+            name=registered_tool_name(server_name, remote_name),
+            description=description,
+            parameters_schema=schema,
+            effect=ToolEffect.EXTERNAL,
+            origin=ToolOrigin.MCP,
+            rule_configurable=False,
+        ),
+        remote_name,
+        server_name,
     )

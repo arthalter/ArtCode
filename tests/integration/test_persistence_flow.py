@@ -10,7 +10,10 @@ from artcode.providers.events import content_delta_event, done_event, tool_calls
 from artcode.providers.tool_calls import ToolCall
 from artcode.tools import (
     AllowedPathPolicy,
+    DescriptorBackedTool,
     PreparedToolCall,
+    ToolDescriptor,
+    ToolEffect,
     ToolExecutionContext,
     ToolPreview,
     ToolRegistry,
@@ -30,11 +33,13 @@ class ScriptedProvider:
             yield event
 
 
-class ReadProjectTool:
-    name = "read_project"
-    description = "读取项目标记"
-    parameters_schema = {"type": "object", "properties": {}}
-    requires_confirmation = False
+class ReadProjectTool(DescriptorBackedTool):
+    descriptor = ToolDescriptor(
+        "read_project",
+        "读取项目标记",
+        {"type": "object", "properties": {}},
+        ToolEffect.READ,
+    )
 
     def prepare(self, arguments, context):
         return PreparedToolCall(self, arguments, ToolPreview(self.name, "read", "project", False))

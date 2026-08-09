@@ -77,6 +77,9 @@ class FakeTui:
     def show_agent_stopped(self, reason: str, message: str = "") -> None:
         self.output.append(f"stopped:{reason}")
 
+    def set_display_mode(self, mode) -> None:
+        self.output.append(f"mode:{mode.value}")
+
 
 class FakeProvider:
     def __init__(self, responses: list[list[dict]]) -> None:

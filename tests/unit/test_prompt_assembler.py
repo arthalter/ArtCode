@@ -10,7 +10,13 @@ def tool_context(tmp_path):
 
 
 def openai_tool(name: str) -> dict:
-    return {"type": "function", "function": {"name": name, "description": name, "parameters": {}}}
+    effect = "read" if name in {"read_file", "find_files", "search_text"} else "write"
+    return {
+        "type": "function",
+        "x-artcode-origin": "builtin",
+        "x-artcode-effect": effect,
+        "function": {"name": name, "description": name, "parameters": {}},
+    }
 
 
 def test_assembler_appends_reminder_without_mutating_history(tmp_path) -> None:

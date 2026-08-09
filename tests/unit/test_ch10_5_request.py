@@ -18,6 +18,7 @@ def tool_context(tmp_path) -> ToolExecutionContext:
 
 
 def schema(name: str) -> dict:
+    effect = "read" if name in {"read_file", "find_files", "search_text"} else "write"
     return {
         "type": "function",
         "function": {
@@ -26,6 +27,8 @@ def schema(name: str) -> dict:
             "parameters": {"type": "object", "properties": {}},
         },
         "x-artcode-origin": "builtin",
+        "x-artcode-effect": effect,
+        "x-artcode-rule-configurable": True,
     }
 
 

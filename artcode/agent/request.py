@@ -173,11 +173,16 @@ class RequestPreparer:
             else None
         )
         durable = self.durable_prompt.build_system_prompt() if self.durable_prompt else None
+        run_context = (
+            self.tool_context.to_run_context(mode)
+            if mode is not None
+            else self.tool_context
+        )
         return self.assembler.assemble(
             self.conversation.export_messages(),
             mode,
             tools,
-            self.tool_context,
+            run_context,
             durable_system_prompt=durable,
             include_resume_reminder=self._resume_reminder_pending,
         )

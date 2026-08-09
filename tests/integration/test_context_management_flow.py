@@ -17,7 +17,10 @@ from artcode.providers.events import content_delta_event, done_event, token_usag
 from artcode.providers.tool_calls import ToolCall
 from artcode.tools import (
     AllowedPathPolicy,
+    DescriptorBackedTool,
     PreparedToolCall,
+    ToolDescriptor,
+    ToolEffect,
     ToolExecutionContext,
     ToolPreview,
     ToolRegistry,
@@ -65,11 +68,13 @@ class ScenarioEstimator:
         self.anchor = (prompt_tokens, list(messages), tools)
 
 
-class LargeOutputTool:
-    name = "large_output"
-    description = "产生多行大结果"
-    parameters_schema = {"type": "object", "properties": {}}
-    requires_confirmation = False
+class LargeOutputTool(DescriptorBackedTool):
+    descriptor = ToolDescriptor(
+        "large_output",
+        "产生多行大结果",
+        {"type": "object", "properties": {}},
+        ToolEffect.READ,
+    )
 
     def prepare(self, arguments, context):
         return PreparedToolCall(self, arguments, ToolPreview(self.name, "large", "large", False))

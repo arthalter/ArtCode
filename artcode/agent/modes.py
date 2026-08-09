@@ -3,21 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-
-READ_ONLY_TOOL_NAMES = frozenset({"read_file", "find_files", "search_text"})
+from artcode.tools import ToolDescriptor, ToolEffect, ToolOrigin
 
 
 @dataclass(frozen=True)
 class ToolAccessPolicy:
-    allowed_tool_names: frozenset[str] | None = None
+    allowed_effects: frozenset[ToolEffect] | None = None
 
-    def allows(self, tool_name: str) -> bool:
-        if self.allowed_tool_names is None:
+    def allows(self, descriptor: ToolDescriptor) -> bool:
+        if descriptor.origin is ToolOrigin.MCP:
             return True
-        return tool_name in self.allowed_tool_names
+        if self.allowed_effects is None:
+            return True
+        return descriptor.effect in self.allowed_effects
 
     def filter_openai_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if self.allowed_tool_names is None:
+        if self.allowed_effects is None:
             return list(tools)
         filtered: list[dict[str, Any]] = []
         for tool in tools:
@@ -26,7 +27,17 @@ class ToolAccessPolicy:
                 continue
             name = function.get("name")
             origin = tool.get("x-artcode-origin", "builtin")
-            if isinstance(name, str) and (origin == "mcp" or self.allows(name)):
+            effect = tool.get("x-artcode-effect")
+            if not isinstance(name, str):
+                continue
+            if origin == ToolOrigin.MCP.value:
+                filtered.append(tool)
+                continue
+            try:
+                selected_effect = ToolEffect(effect)
+            except (TypeError, ValueError):
+                continue
+            if selected_effect in self.allowed_effects:
                 filtered.append(tool)
         return filtered
 
@@ -46,7 +57,7 @@ NORMAL_AGENT_MODE = AgentMode(
 
 PLAN_MODE = AgentMode(
     name="plan",
-    tool_policy=ToolAccessPolicy(READ_ONLY_TOOL_NAMES),
+    tool_policy=ToolAccessPolicy(frozenset({ToolEffect.READ})),
     purpose="只读规划模式，只允许读取文件、查找文件和搜索文本。",
 )
 

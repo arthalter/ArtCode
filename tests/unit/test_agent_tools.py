@@ -7,19 +7,36 @@ from typing import Any
 from artcode.agent import AgentEventType, ToolAccessPolicy
 from artcode.agent.tools import ToolBatchExecutor, ToolExecutionBlocked, ToolSafety, classify_tool
 from artcode.providers.tool_calls import ToolCall
-from artcode.tools import AllowedPathPolicy, PreparedToolCall, ToolExecutionContext, ToolOrigin, ToolPreview, ToolRegistry
+from artcode.tools import (
+    AllowedPathPolicy,
+    DescriptorBackedTool,
+    PreparedToolCall,
+    ToolDescriptor,
+    ToolEffect,
+    ToolExecutionContext,
+    ToolOrigin,
+    ToolPreview,
+    ToolRegistry,
+)
 from artcode.tools.results import ToolResult, error_result, success_result
 
 
-class FakeTool:
-    description = "fake"
-    parameters_schema = {"type": "object", "properties": {}, "additionalProperties": True}
-
+class FakeTool(DescriptorBackedTool):
     def __init__(self, name: str, delay: float = 0.0, result: ToolResult | None = None) -> None:
-        self.name = name
+        effect = {
+            "read_file": ToolEffect.READ,
+            "find_files": ToolEffect.READ,
+            "search_text": ToolEffect.READ,
+            "run_command": ToolEffect.SHELL,
+        }.get(name, ToolEffect.WRITE)
+        self.descriptor = ToolDescriptor(
+            name,
+            "fake",
+            {"type": "object", "properties": {}, "additionalProperties": True},
+            effect,
+        )
         self.delay = delay
         self.result = result
-        self.requires_confirmation = name not in {"read_file", "find_files", "search_text"}
         self.started: list[str] = []
         self.finished: list[str] = []
 
@@ -37,7 +54,16 @@ class FakeTool:
 
 
 class FakeMcpTool(FakeTool):
-    origin = ToolOrigin.MCP
+    def __init__(self, name: str, delay: float = 0.0, result: ToolResult | None = None) -> None:
+        super().__init__(name, delay, result)
+        self.descriptor = ToolDescriptor(
+            name,
+            "fake mcp",
+            {"type": "object", "properties": {}},
+            ToolEffect.EXTERNAL,
+            ToolOrigin.MCP,
+            False,
+        )
 
 
 class FakeMcpApprover:
@@ -45,8 +71,8 @@ class FakeMcpApprover:
         self.choices = choices
         self.previews = []
 
-    async def request_mcp_approval(self, preview) -> bool:
-        self.previews.append(preview)
+    async def request_mcp_approval(self, preview, plan_mode: bool) -> bool:
+        self.previews.append((preview, plan_mode))
         return self.choices.pop(0)
 
 
@@ -62,8 +88,8 @@ def registry_with(*tools: FakeTool) -> ToolRegistry:
 
 
 def test_classifies_run_command_as_side_effect() -> None:
-    assert classify_tool("read_file") == ToolSafety.READ_ONLY
-    assert classify_tool("run_command") == ToolSafety.SIDE_EFFECT
+    assert classify_tool(FakeTool("read_file").descriptor) == ToolSafety.READ_ONLY
+    assert classify_tool(FakeTool("run_command").descriptor) == ToolSafety.SIDE_EFFECT
 
 
 def test_build_plan_groups_adjacent_read_only_tools(tmp_path) -> None:
@@ -100,7 +126,10 @@ def test_build_plan_blocks_unknown_tool(tmp_path) -> None:
 def test_build_plan_blocks_disallowed_tool(tmp_path) -> None:
     executor = ToolBatchExecutor(registry_with(FakeTool("write_file")), context_for(tmp_path))
 
-    result = executor.build_plan([ToolCall("1", "write_file", "{}")], ToolAccessPolicy(frozenset({"read_file"})))
+    result = executor.build_plan(
+        [ToolCall("1", "write_file", "{}")],
+        ToolAccessPolicy(frozenset({ToolEffect.READ})),
+    )
 
     assert isinstance(result, ToolExecutionBlocked)
     assert result.result.error_code == "tool_not_allowed"
@@ -153,6 +182,7 @@ async def test_mcp_batch_asks_each_call_and_runs_approved_calls(tmp_path) -> Non
 
     assert plan.batches[0].safety is ToolSafety.MCP_EXTERNAL
     assert len(approver.previews) == 2
+    assert all(plan_mode for _, plan_mode in approver.previews)
     assert first.started
     assert not second.started
     assert results[1].error_code == "user_denied"

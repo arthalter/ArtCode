@@ -166,7 +166,7 @@ class AgentLoop:
                         yield event
                     return
 
-                async for event in self.tool_executor.execute_plan(plan, plan_mode=request.mode == PLAN_MODE):
+                async for event in self.tool_executor.execute_plan(plan, mode=request.mode):
                     if event.type == AgentEventType.TOOL_RESULT:
                         tool_call = event.payload["tool_call"]
                         result = event.payload["result"]

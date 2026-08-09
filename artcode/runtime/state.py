@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from artcode.commands.base import DisplayMode
-from artcode.permissions import PermissionState
+from artcode.permissions import PermissionMode, PermissionSnapshot, PermissionState, ShellPolicy
 
 if TYPE_CHECKING:
     from artcode.agent.events import TokenUsage
@@ -67,3 +67,61 @@ class RuntimeState:
     permission: PermissionState
     display_mode: DisplayMode = DisplayMode.DEFAULT
     last_token_usage: TokenUsage | None = None
+
+    @property
+    def permission_snapshot(self) -> PermissionSnapshot:
+        return self.permission.snapshot()
+
+    def set_permission_mode(self, mode: PermissionMode) -> None:
+        self.permission.mode = mode
+
+    def set_shell_policy(self, policy: ShellPolicy) -> None:
+        self.permission.shell_policy = policy
+
+    def set_display_mode(self, mode: DisplayMode) -> None:
+        self.display_mode = mode
+
+    def record_usage(self, usage: TokenUsage) -> None:
+        self.last_token_usage = usage
+
+    def startup_snapshot(
+        self,
+        config: ArtCodeConfig,
+        *,
+        workspace: str = "",
+        seatbelt_status: str = "not initialized",
+    ) -> StartupStatusSnapshot:
+        permission = self.permission_snapshot
+        return replace(
+            StartupStatusSnapshot.from_config(config),
+            workspace=workspace,
+            permission_mode=permission.mode.value,
+            shell_policy=permission.shell_policy.value,
+            seatbelt_status=seatbelt_status,
+        )
+
+    def status_snapshot(
+        self,
+        *,
+        model: str,
+        workspace: str,
+        seatbelt_status: str,
+        session_id: str | None,
+        session_state: str,
+        estimated_context_tokens: int | None,
+        context_window_tokens: int,
+    ) -> RuntimeStatusSnapshot:
+        permission = self.permission_snapshot
+        return RuntimeStatusSnapshot(
+            model=model,
+            workspace=workspace,
+            display_mode=self.display_mode,
+            permission_mode=permission.mode.value,
+            shell_policy=permission.shell_policy.value,
+            seatbelt_status=seatbelt_status,
+            session_id=session_id,
+            session_state=session_state,
+            estimated_context_tokens=estimated_context_tokens,
+            context_window_tokens=context_window_tokens,
+            last_token_usage=self.last_token_usage,
+        )

@@ -11,7 +11,16 @@ from artcode.persistence import SessionJournal, MAX_RECORD_BYTES
 from artcode.errors import StreamInterruptedError
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
-from artcode.tools import AllowedPathPolicy, PreparedToolCall, ToolExecutionContext, ToolPreview, ToolRegistry
+from artcode.tools import (
+    AllowedPathPolicy,
+    DescriptorBackedTool,
+    PreparedToolCall,
+    ToolDescriptor,
+    ToolEffect,
+    ToolExecutionContext,
+    ToolPreview,
+    ToolRegistry,
+)
 from artcode.tools.results import ToolResult, error_result, success_result
 
 
@@ -31,13 +40,15 @@ class FakeProvider:
             yield event
 
 
-class FakeTool:
-    description = "fake"
-    parameters_schema = {"type": "object", "properties": {}, "additionalProperties": True}
-
+class FakeTool(DescriptorBackedTool):
     def __init__(self, name: str, result: ToolResult | None = None) -> None:
-        self.name = name
-        self.requires_confirmation = False
+        effect = ToolEffect.READ if name in {"read_file", "find_files", "search_text"} else ToolEffect.WRITE
+        self.descriptor = ToolDescriptor(
+            name,
+            "fake",
+            {"type": "object", "properties": {}, "additionalProperties": True},
+            effect,
+        )
         self.result = result
         self.executions = 0
 

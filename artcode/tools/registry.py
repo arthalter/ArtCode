@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
-from .base import Tool
+from .base import Tool, ToolDescriptor
 
 
 class ToolRegistry:
@@ -10,17 +11,19 @@ class ToolRegistry:
         self._tools: dict[str, Tool] = {}
 
     def register(self, tool: Tool) -> None:
-        if tool.name in self._tools:
-            raise ValueError(f"Tool already registered: {tool.name}")
-        self._tools[tool.name] = tool
+        descriptor = _require_descriptor(tool)
+        if descriptor.name in self._tools:
+            raise ValueError(f"Tool already registered: {descriptor.name}")
+        self._tools[descriptor.name] = tool
 
     def register_many(self, tools: list[Tool] | tuple[Tool, ...]) -> list[str]:
         issues: list[str] = []
         for tool in tools:
-            if tool.name in self._tools:
-                issues.append(f"Tool already registered: {tool.name}")
+            descriptor = _require_descriptor(tool)
+            if descriptor.name in self._tools:
+                issues.append(f"Tool already registered: {descriptor.name}")
                 continue
-            self._tools[tool.name] = tool
+            self._tools[descriptor.name] = tool
         return issues
 
     def all(self) -> tuple[Tool, ...]:
@@ -35,22 +38,31 @@ class ToolRegistry:
             raise KeyError(f"Unknown tool: {name}")
         return tool
 
+    def descriptor(self, name: str) -> ToolDescriptor | None:
+        tool = self.get(name)
+        return None if tool is None else tool.descriptor
+
+    def descriptors(self) -> tuple[ToolDescriptor, ...]:
+        return tuple(tool.descriptor for tool in self._tools.values())
+
     def openai_tools(self, *, include_internal_metadata: bool = False) -> list[dict[str, Any]]:
         result = [
             ({
                 "type": "function",
-                "x-artcode-origin": getattr(tool, "origin", "builtin"),
+                "x-artcode-origin": tool.descriptor.origin.value,
+                "x-artcode-effect": tool.descriptor.effect.value,
+                "x-artcode-rule-configurable": tool.descriptor.rule_configurable,
                 "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters_schema,
+                    "name": tool.descriptor.name,
+                    "description": tool.descriptor.description,
+                    "parameters": deepcopy(dict(tool.descriptor.parameters_schema)),
                 },
             } if include_internal_metadata else {
                 "type": "function",
                 "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters_schema,
+                    "name": tool.descriptor.name,
+                    "description": tool.descriptor.description,
+                    "parameters": deepcopy(dict(tool.descriptor.parameters_schema)),
                 },
             })
             for tool in self._tools.values()
@@ -73,3 +85,10 @@ def create_default_tool_registry() -> ToolRegistry:
     ):
         registry.register(tool)
     return registry
+
+
+def _require_descriptor(tool: Tool) -> ToolDescriptor:
+    descriptor = getattr(tool, "descriptor", None)
+    if not isinstance(descriptor, ToolDescriptor):
+        raise TypeError("registered tools must expose a ToolDescriptor")
+    return descriptor

@@ -52,7 +52,7 @@ from artcode.agent.tools import ToolBatchExecutor
 from artcode.context_management import ContextManager
 from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.persistence import PersistenceCoordinator
-from artcode.runtime.state import RuntimeStatusSnapshot, StartupStatusSnapshot
+from artcode.runtime.state import RuntimeState, RuntimeStatusSnapshot, StartupStatusSnapshot
 
 
 class TuiApp(Protocol):
@@ -145,7 +145,8 @@ class ArtCodeRuntime:
     plan_memory: PlanMemory | None = None
     agent_loop: AgentLoop | None = None
     workspace: Workspace | None = None
-    permission_state: PermissionState = field(default_factory=PermissionState)
+    permission_state: PermissionState | None = None
+    state: RuntimeState | None = None
     permission_engine: PermissionEngine | None = None
     rule_writer: RuleWriter | None = None
     context_manager: ContextManager | None = None
@@ -153,17 +154,29 @@ class ArtCodeRuntime:
     request_preparer: RequestPreparer | None = None
     persistence: PersistenceCoordinator | None = None
     command_dispatcher: CommandDispatcher = field(init=False)
-    _display_mode: DisplayMode = field(init=False, default=DisplayMode.DEFAULT)
-    _last_token_usage: TokenUsage | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self.command_dispatcher = CommandDispatcher(self.commands)
+        if self.state is None:
+            self.state = RuntimeState(self.permission_state or PermissionState())
+        elif self.permission_state is not None and self.permission_state is not self.state.permission:
+            raise ValueError("permission_state must be the RuntimeState permission instance")
+        self.permission_state = self.state.permission
         if self.tool_registry is None:
             self.tool_registry = create_default_tool_registry()
         if self.tool_context is None:
             selected = self.workspace or Workspace.from_path(self.config.workspace)
             policy = AllowedPathPolicy((selected.root,))
-            self.tool_context = ToolExecutionContext(policy, default_cwd=selected.root)
+            self.tool_context = ToolExecutionContext(
+                policy,
+                default_cwd=selected.root,
+                permission_state=self.state.permission,
+            )
+        elif self.tool_context.permission_state is not self.state.permission:
+            self.tool_context = replace(
+                self.tool_context,
+                permission_state=self.state.permission,
+            )
         if self.plan_memory is None:
             self.plan_memory = self.persistence.plan_memory if self.persistence is not None else PlanMemory()
         if self.persistence is not None:
@@ -206,21 +219,17 @@ class ArtCodeRuntime:
             )
 
     async def run(self) -> int:
-        status = StartupStatusSnapshot.from_config(self.config)
-        if self.workspace is not None:
-            status = replace(
-                status,
-                workspace=str(self.workspace.root),
-                permission_mode=self.permission_state.mode.value,
-                shell_policy=self.permission_state.shell_policy.value,
-                seatbelt_status=(
-                    "self-test passed"
-                    if self.tool_context is not None
-                    and self.tool_context.seatbelt is not None
-                    and self.tool_context.seatbelt.self_tested
-                    else "not initialized"
-                ),
-            )
+        status = self.state.startup_snapshot(
+            self.config,
+            workspace=str(self.workspace.root) if self.workspace is not None else "",
+            seatbelt_status=(
+                "self-test passed"
+                if self.tool_context is not None
+                and self.tool_context.seatbelt is not None
+                and self.tool_context.seatbelt.self_tested
+                else "not initialized"
+            ),
+        )
         if self.persistence is not None:
             persistent = self.persistence.status
             status = replace(
@@ -270,13 +279,11 @@ class ArtCodeRuntime:
             handler()
 
     def set_display_mode(self, mode: DisplayMode) -> None:
-        self._display_mode = mode
-        handler = getattr(self.tui, "set_display_mode", None)
-        if callable(handler):
-            handler(mode)
+        self.state.set_display_mode(mode)
+        self.tui.set_display_mode(mode)
 
     def get_token_usage(self) -> TokenUsage | None:
-        return self._last_token_usage
+        return self.state.last_token_usage
 
     def refresh_status(self) -> None:
         persistence_status = self.persistence.status if self.persistence is not None else None
@@ -300,24 +307,16 @@ class ArtCodeRuntime:
             seatbelt_status = "initialized"
         estimated = self.agent_loop.estimate_next_request(NORMAL_AGENT_MODE)
         workspace = self.workspace.root if self.workspace is not None else self.config.workspace
-        snapshot = RuntimeStatusSnapshot(
+        snapshot = self.state.status_snapshot(
             model=self.config.model,
             workspace=str(workspace) if workspace is not None else "",
-            display_mode=self._display_mode,
-            permission_mode=self.permission_state.mode.value,
-            shell_policy=self.permission_state.shell_policy.value,
             seatbelt_status=seatbelt_status,
             session_id=persistence_status.session_id if persistence_status is not None else None,
             session_state=session_state,
             estimated_context_tokens=estimated,
             context_window_tokens=self.config.context.window_tokens,
-            last_token_usage=self._last_token_usage,
         )
-        handler = getattr(self.tui, "show_runtime_status", None)
-        if callable(handler):
-            handler(snapshot)
-        else:
-            self.tui.show_help(str(snapshot))
+        self.tui.show_runtime_status(snapshot)
 
     async def send_user_message(self, content: str, mode) -> None:
         await self._run_agent(content, mode)
@@ -337,11 +336,10 @@ class ArtCodeRuntime:
         allowed = await self.tui.confirm_tool_execution(preview)
         return ApprovalChoice.ALLOW_ONCE if allowed else ApprovalChoice.DENY_ONCE
 
-    async def request_mcp_approval(self, preview: ToolPreview) -> bool:
+    async def request_mcp_approval(self, preview: ToolPreview, plan_mode: bool) -> bool:
         handler = getattr(self.tui, "confirm_mcp_tool", None)
         if callable(handler):
-            executor = getattr(self.agent_loop, "tool_executor", None)
-            return await handler(preview, bool(getattr(executor, "plan_mode", False)))
+            return await handler(preview, plan_mode)
         return await self.tui.confirm_tool_execution(preview)
 
     def handle_permission(self, argument: str) -> None:
@@ -351,7 +349,7 @@ class ArtCodeRuntime:
             )
             return
         try:
-            self.permission_state.mode = PermissionMode(argument.lower())
+            self.state.set_permission_mode(PermissionMode(argument.lower()))
         except ValueError:
             self.tui.show_help("权限模式只能是 default、edit 或 full。")
             return
@@ -384,9 +382,7 @@ class ArtCodeRuntime:
             if not allowed:
                 self.tui.show_help("已取消切换，Shell 策略保持不变。")
                 return
-        self.permission_state.shell_policy = selected
-        if self.tool_context is not None:
-            object.__setattr__(self.tool_context, "shell_policy", selected)
+        self.state.set_shell_policy(selected)
         self.tui.show_help(f"Shell 策略已切换为：{selected.value}")
 
     async def _run_agent(self, user_content, mode) -> None:
@@ -434,7 +430,7 @@ class ArtCodeRuntime:
         elif event.type == AgentEventType.TOOL_RESULT:
             self.tui.show_tool_result_summary(event.payload["result"])
         elif event.type == AgentEventType.TOKEN_USAGE:
-            self._last_token_usage = TokenUsage.from_event_payload(event.payload)
+            self.state.record_usage(TokenUsage.from_event_payload(event.payload))
             self.tui.show_token_usage(
                 event.payload.get("prompt_tokens"),
                 event.payload.get("completion_tokens"),

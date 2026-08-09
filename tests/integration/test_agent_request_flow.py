@@ -17,7 +17,10 @@ from artcode.providers.events import content_delta_event, done_event, tool_calls
 from artcode.providers.tool_calls import ToolCall
 from artcode.tools import (
     AllowedPathPolicy,
+    DescriptorBackedTool,
     PreparedToolCall,
+    ToolDescriptor,
+    ToolEffect,
     ToolExecutionContext,
     ToolPreview,
     ToolRegistry,
@@ -41,11 +44,13 @@ class ScriptedProvider:
             yield event
 
 
-class CountingTool:
-    name = "read_file"
-    description = "read"
-    parameters_schema = {"type": "object", "properties": {}}
-    requires_confirmation = False
+class CountingTool(DescriptorBackedTool):
+    descriptor = ToolDescriptor(
+        "read_file",
+        "read",
+        {"type": "object", "properties": {}},
+        ToolEffect.READ,
+    )
 
     def __init__(self) -> None:
         self.executions = 0

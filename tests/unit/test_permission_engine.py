@@ -38,7 +38,12 @@ def test_file_mode_matrix(
     expected: PermissionAction,
 ) -> None:
     decision = engine(tmp_path).decide(
-        PermissionRequest(tool, "a.txt", tmp_path),
+        PermissionRequest(
+            tool,
+            "a.txt",
+            tmp_path,
+            effect="read" if tool == "read_file" else "write",
+        ),
         PermissionState(mode=mode),
     )
     assert decision.action is expected
@@ -58,7 +63,7 @@ def test_shell_policy_matrix(
     expected: PermissionAction,
 ) -> None:
     decision = engine(tmp_path).decide(
-        PermissionRequest("run_command", "git status", tmp_path),
+        PermissionRequest("run_command", "git status", tmp_path, effect="shell"),
         PermissionState(shell_policy=policy),
     )
     assert decision.action is expected
@@ -70,7 +75,7 @@ def test_plan_write_is_hard_denied_before_rules(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     decision = engine(tmp_path).decide(
-        PermissionRequest("write_file", "a.txt", tmp_path, plan_mode=True),
+        PermissionRequest("write_file", "a.txt", tmp_path, plan_mode=True, effect="write"),
         PermissionState(mode=PermissionMode.FULL),
     )
     assert decision.action is PermissionAction.DENY
@@ -83,7 +88,7 @@ def test_dangerous_command_is_hard_denied_before_allow_rule(tmp_path: Path) -> N
         encoding="utf-8",
     )
     decision = engine(tmp_path).decide(
-        PermissionRequest("run_command", "git reset --hard", tmp_path),
+        PermissionRequest("run_command", "git reset --hard", tmp_path, effect="shell"),
         PermissionState(),
     )
     assert decision.action is PermissionAction.DENY

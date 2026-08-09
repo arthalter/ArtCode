@@ -4,6 +4,7 @@ import json
 
 from artcode.config import ArtCodeConfig, ThinkingConfig
 from artcode.conversation import ConversationContext
+from artcode.permissions import PermissionState
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
 from artcode.providers.tool_calls import ToolCall
 from artcode.runtime import ArtCodeRuntime
@@ -79,6 +80,9 @@ class FakeTui:
     def show_agent_stopped(self, reason: str, message: str = "") -> None:
         self.output.append(f"stopped:{reason}")
 
+    def set_display_mode(self, mode) -> None:
+        self.output.append(f"mode:{mode.value}")
+
 
 class FakeProvider:
     def __init__(self, tool_calls: list[ToolCall], final_reply: str) -> None:
@@ -130,6 +134,11 @@ async def run_flow(tmp_path, user_input: str, tool_calls: list[ToolCall], final_
         conversation=context,
         tui=tui,
         tool_context=tool_context,
+        permission_state=(
+            PermissionState(shell_policy=tool_context.shell_policy)
+            if tool_context is not None
+            else None
+        ),
     )
 
     await runtime.run()

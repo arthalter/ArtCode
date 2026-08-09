@@ -19,6 +19,8 @@ unknown_keys = st.sets(
     min_size=1,
     max_size=8,
 )
+thinking_unknown_keys = unknown_keys.filter(lambda keys: "enabled" not in keys)
+context_unknown_keys = unknown_keys.filter(lambda keys: "window_tokens" not in keys)
 
 
 @given(unknown_keys)
@@ -30,7 +32,7 @@ def test_all_top_level_unknown_keys_are_reported(keys: set[str]) -> None:
     assert all(key in captured.value.user_message for key in keys)
 
 
-@given(unknown_keys)
+@given(thinking_unknown_keys)
 def test_all_thinking_unknown_keys_are_reported(keys: set[str]) -> None:
     raw = base()
     raw["thinking"] = {"enabled": True, **dict.fromkeys(keys, 1)}
@@ -39,7 +41,7 @@ def test_all_thinking_unknown_keys_are_reported(keys: set[str]) -> None:
     assert all(key in captured.value.user_message for key in keys)
 
 
-@given(unknown_keys)
+@given(context_unknown_keys)
 def test_all_context_unknown_keys_are_reported(keys: set[str]) -> None:
     raw = base()
     raw["context"] = {"window_tokens": 500_000, **dict.fromkeys(keys, 1)}

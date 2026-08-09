@@ -5,7 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from artcode.tools import ToolExecutionContext
+from artcode.tools import ToolExecutionContext, ToolRunContext
 
 if TYPE_CHECKING:
     from artcode.agent.modes import AgentMode
@@ -30,7 +30,7 @@ class PromptRequestAssembler:
         conversation_messages: Sequence[dict[str, Any]],
         mode: AgentMode | None,
         all_tools: Sequence[dict[str, Any]] | None,
-        tool_context: ToolExecutionContext,
+        tool_context: ToolExecutionContext | ToolRunContext,
         *,
         durable_system_prompt: str | None = None,
         include_resume_reminder: bool = False,
@@ -82,5 +82,6 @@ def _tool_names(tools: Sequence[dict[str, Any]]) -> tuple[str, ...]:
 
 def _without_internal_metadata(tool: dict[str, Any]) -> dict[str, Any]:
     clean = deepcopy(tool)
-    clean.pop("x-artcode-origin", None)
+    for key in ("x-artcode-origin", "x-artcode-effect", "x-artcode-rule-configurable"):
+        clean.pop(key, None)
     return clean

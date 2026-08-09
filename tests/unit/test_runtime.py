@@ -386,7 +386,7 @@ async def test_runtime_clear_only_changes_visible_terminal(tmp_path) -> None:
         tui,
         plan_memory=memory,
     )
-    runtime._last_token_usage = TokenUsage(total_tokens=99)
+    runtime.state.record_usage(TokenUsage(total_tokens=99))
     runtime.permission_state.mode = PermissionMode.EDIT
     runtime.permission_state.shell_policy = ShellPolicy.SANDBOX_ASK
     before = context.export_messages()
