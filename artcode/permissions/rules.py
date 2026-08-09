@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Iterable
 from typing import Any
 
 import yaml
@@ -10,11 +11,6 @@ from artcode.workspace import ArtCodePaths, Workspace
 
 from .glob import glob_match
 from .models import PermissionAction, RuleSource
-
-TOOL_NAMES = frozenset(
-    {"read_file", "write_file", "edit_file", "find_files", "search_text", "run_command"}
-)
-
 
 class PermissionRuleError(ValueError):
     def __init__(self, path: Path, reason: str) -> None:
@@ -31,7 +27,12 @@ class PermissionRule:
     pattern: str
 
     @classmethod
-    def parse(cls, match: str, action: str) -> PermissionRule:
+    def parse(
+        cls,
+        match: str,
+        action: str,
+        allowed_tool_names: Iterable[str] | None = None,
+    ) -> PermissionRule:
         if not isinstance(match, str):
             raise ValueError("match 必须是字符串")
         left = match.find("(")
@@ -40,7 +41,12 @@ class PermissionRule:
             raise ValueError("match 必须使用 工具名(pattern) 格式")
         tool_name = match[:left]
         pattern = match[left + 1 : right]
-        if tool_name not in TOOL_NAMES:
+        names = frozenset(
+            default_rule_tool_names()
+            if allowed_tool_names is None
+            else allowed_tool_names
+        )
+        if tool_name not in names:
             raise ValueError(f"未知工具名称：{tool_name}")
         try:
             parsed_action = PermissionAction(action)
@@ -82,8 +88,17 @@ class RulePaths:
 
 
 class RuleLoader:
-    def __init__(self, paths: RulePaths) -> None:
+    def __init__(
+        self,
+        paths: RulePaths,
+        allowed_tool_names: Iterable[str] | None = None,
+    ) -> None:
         self.paths = paths
+        self.allowed_tool_names = frozenset(
+            default_rule_tool_names()
+            if allowed_tool_names is None
+            else allowed_tool_names
+        )
 
     def validate_all(self) -> None:
         for path in (self.paths.user, self.paths.project, self.paths.local):
@@ -109,7 +124,13 @@ class RuleLoader:
             if not isinstance(item, dict) or set(item) != {"match", "action"}:
                 raise PermissionRuleError(path, f"第 {index} 条规则必须且只能包含 match、action")
             try:
-                rules.append(PermissionRule.parse(item["match"], item["action"]))
+                rules.append(
+                    PermissionRule.parse(
+                        item["match"],
+                        item["action"],
+                        self.allowed_tool_names,
+                    )
+                )
             except (ValueError, TypeError) as exc:
                 raise PermissionRuleError(path, f"第 {index} 条规则：{exc}") from exc
         return rules
@@ -138,3 +159,13 @@ class RuleLoader:
 
 def rules_document(rules: list[PermissionRule]) -> dict[str, Any]:
     return {"rules": [{"match": rule.match, "action": rule.action.value} for rule in rules]}
+
+
+def default_rule_tool_names() -> frozenset[str]:
+    from artcode.tools import ToolOrigin, create_default_tool_registry
+
+    return frozenset(
+        descriptor.name
+        for descriptor in create_default_tool_registry().descriptors()
+        if descriptor.origin is ToolOrigin.BUILTIN and descriptor.rule_configurable
+    )

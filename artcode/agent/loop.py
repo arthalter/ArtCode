@@ -33,7 +33,7 @@ from .memory import PlanMemory
 from .modes import AgentMode, PLAN_MODE
 from .request import AgentRunRequest, PreparedModelRequest, RequestPreparer
 from .stream import StreamCollector
-from .tools import ToolBatchExecutor, ToolExecutionBlocked
+from artcode.tools.execution import ToolExecutionBlocked, ToolExecutionService
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,7 @@ class AgentLoop:
         tool_context: ToolExecutionContext,
         plan_memory: PlanMemory | None = None,
         stream_collector: StreamCollector | None = None,
-        tool_executor: ToolBatchExecutor | None = None,
+        tool_executor: ToolExecutionService | None = None,
         request_assembler: PromptRequestAssembler | None = None,
         request_preparer: RequestPreparer | None = None,
         context_manager: ContextManager | None = None,
@@ -67,7 +67,7 @@ class AgentLoop:
         self.tool_context = tool_context
         self.plan_memory = plan_memory or PlanMemory()
         self.stream_collector = stream_collector or StreamCollector()
-        self.tool_executor = tool_executor or ToolBatchExecutor(tool_registry, tool_context)
+        self.tool_executor = tool_executor or ToolExecutionService(tool_registry, tool_context)
         self.context_manager = context_manager
         self.request_preparer = request_preparer or RequestPreparer(
             conversation,

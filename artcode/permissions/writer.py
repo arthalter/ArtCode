@@ -17,7 +17,11 @@ class RuleWriter:
     def write_exact(self, match: str, action: PermissionAction) -> None:
         path = self.loader.paths.local
         try:
-            new_rule = PermissionRule.parse(match, action.value)
+            new_rule = PermissionRule.parse(
+                match,
+                action.value,
+                self.loader.allowed_tool_names,
+            )
             rules = [rule for rule in self.loader.load_file(path) if rule.match != match]
             rules.append(new_rule)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -38,7 +42,8 @@ class RuleWriter:
                         user=Path("/nonexistent"),
                         project=Path("/nonexistent"),
                         local=temp_path,
-                    )
+                    ),
+                    allowed_tool_names=self.loader.allowed_tool_names,
                 ).load_file(temp_path)
                 os.replace(temp_path, path)
             finally:

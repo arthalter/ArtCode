@@ -38,6 +38,7 @@ from artcode.permissions import (
     RuleWriter,
     ShellPolicy,
 )
+from artcode.permissions.service import PermissionService
 from artcode.tools import (
     AllowedPathPolicy,
     ToolExecutionContext,
@@ -48,7 +49,7 @@ from artcode.tools import (
 )
 from artcode.tui import UserRequestedExit
 from artcode.workspace import Workspace
-from artcode.agent.tools import ToolBatchExecutor
+from artcode.tools.execution import ToolExecutionService
 from artcode.context_management import ContextManager
 from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.persistence import PersistenceCoordinator
@@ -193,13 +194,16 @@ class ArtCodeRuntime:
                         self.persistence.prompt_context if self.persistence is not None else None
                     ),
                 )
-            executor = ToolBatchExecutor(
-                self.tool_registry,
-                self.tool_context,
-                permission_engine=self.permission_engine,
-                permission_state=self.permission_state,
+            permission_service = PermissionService(
+                self.permission_state,
+                engine=self.permission_engine,
                 approver=self if self.permission_engine is not None else None,
                 rule_writer=self.rule_writer,
+            )
+            executor = ToolExecutionService(
+                self.tool_registry,
+                self.tool_context,
+                permission_service,
             )
             self.agent_loop = AgentLoop(
                 provider=self.provider,
