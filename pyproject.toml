@@ -18,8 +18,10 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
+  "hypothesis>=6.100.0",
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
+  "pytest-cov>=5.0.0",
 ]
 
 [project.scripts]
@@ -36,3 +38,11 @@ include = ["artcode*"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+  "ch10_5: scenarios added for the ch10.5 summary refactor",
+  "live: uses a real external service or operating-system integration",
+  "slow: intentionally long-running verification",
+  "property: randomized or generative invariant verification",
+  "fault: deterministic failure-injection verification",
+  "soak: repeated lifecycle or resource-stability verification",
+]
