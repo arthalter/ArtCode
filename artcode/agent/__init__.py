@@ -1,6 +1,8 @@
 from .events import (
     AgentEvent,
     AgentEventType,
+    CompletedTurn,
+    CompletedTurnObserver,
     ModelTurn,
     NaturalTurn,
     NaturalTurnObserver,
@@ -17,6 +19,8 @@ from .tools import ToolBatchExecutor, ToolExecutionBatch, ToolExecutionPlan, Too
 __all__ = [
     "AgentEvent",
     "AgentEventType",
+    "CompletedTurn",
+    "CompletedTurnObserver",
     "AgentLoop",
     "AgentMode",
     "AgentRunRequest",

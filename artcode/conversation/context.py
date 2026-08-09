@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from dataclasses import dataclass, replace
+from collections.abc import Sequence
 from typing import Any, Iterable, Protocol
 
 from artcode.prompts import SYSTEM_PROMPT
@@ -118,26 +119,33 @@ class ConversationContext:
         return self._append("assistant", content, mode=mode)
 
     def append_assistant_tool_call(
-        self, tool_calls: list[ToolCall], *, mode: str = "normal"
+        self,
+        tool_calls: Sequence[ToolCall],
+        *,
+        reasoning_content: str = "",
+        mode: str = "normal",
     ) -> ConversationEntry:
-        entry = self._make_entry(
+        payload: Message = {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
                 {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
-                        {
-                            "id": tool_call.id,
-                            "type": "function",
-                            "function": {
-                                "name": tool_call.name,
-                                "arguments": tool_call.arguments_json,
-                            },
-                        }
-                        for tool_call in tool_calls
-                    ],
-                },
-                mode=mode,
-            )
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.name,
+                        "arguments": tool_call.arguments_json,
+                    },
+                }
+                for tool_call in tool_calls
+            ],
+        }
+        if reasoning_content:
+            payload["reasoning_content"] = reasoning_content
+        entry = self._make_entry(
+            payload,
+            mode=mode,
+        )
         self._preflight(entry)
         self._entries.append(entry)
         self._changed()

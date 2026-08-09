@@ -41,7 +41,7 @@ class ModelTurn:
 
 
 @dataclass(frozen=True)
-class NaturalTurn:
+class CompletedTurn:
     session_id: str
     mode: str
     user_content: str
@@ -50,9 +50,14 @@ class NaturalTurn:
     tool_summaries: tuple[dict[str, Any], ...] = ()
 
 
-class NaturalTurnObserver(Protocol):
-    def submit(self, turn: NaturalTurn) -> None:
+class CompletedTurnObserver(Protocol):
+    def submit(self, turn: CompletedTurn) -> None:
         ...
+
+
+# Transitional compatibility until persistence callers finish migrating in T11.
+NaturalTurn = CompletedTurn
+NaturalTurnObserver = CompletedTurnObserver
 
 
 @dataclass(frozen=True)
@@ -137,4 +142,3 @@ def context_status_event(
 
 def stopped_event(reason: StopReason, message: str = "") -> AgentEvent:
     return AgentEvent(AgentEventType.STOPPED, {"reason": reason.value, "message": message})
-

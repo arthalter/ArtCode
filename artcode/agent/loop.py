@@ -128,7 +128,10 @@ class AgentLoop:
                         entry_ids.append(assistant_entry.id)
                         if request.mode == PLAN_MODE:
                             self.plan_memory.save(model_turn.text)
-                        if self.natural_turn_observer is not None:
+                        if (
+                            self.natural_turn_observer is not None
+                            and model_turn.finish_reason != "length"
+                        ):
                             self.natural_turn_observer.submit(
                                 NaturalTurn(
                                     session_id=self.session_id,
@@ -144,7 +147,9 @@ class AgentLoop:
 
                 try:
                     tool_call_entry = self.conversation.append_assistant_tool_call(
-                        model_turn.tool_calls, mode=request.mode.name
+                        model_turn.tool_calls,
+                        reasoning_content=model_turn.reasoning_content,
+                        mode=request.mode.name,
                     )
                 except ConversationPersistenceRejected as exc:
                     yield stopped_event(StopReason.STREAM_ERROR, str(exc))

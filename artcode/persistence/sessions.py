@@ -343,6 +343,8 @@ def _valid_message(message: dict[str, Any]) -> bool:
         return False
     if not isinstance(message.get("content", ""), str):
         return False
+    if "reasoning_content" in message and not isinstance(message["reasoning_content"], str):
+        return False
     if role == "tool":
         return isinstance(message.get("tool_call_id"), str) and isinstance(message.get("name"), str)
     if role == "assistant" and "tool_calls" in message:
