@@ -45,6 +45,19 @@ class SystemReminderBuilder:
         return {"role": "user", "content": "\n".join(lines)}
 
 
+def build_resume_reminder_message() -> dict[str, str]:
+    """Build the request-only reminder used after a long session gap."""
+    return {
+        "role": "user",
+        "content": (
+            "<system-reminder>\n"
+            "恢复会话距最后有效消息已超过 24 小时。文件、依赖、进程和运行环境可能已变化；"
+            "继续任务前应重新读取或验证相关现状，不要仅依据旧会话假设。\n"
+            "</system-reminder>"
+        ),
+    }
+
+
 def collect_runtime_reminder_context(
     mode: AgentMode,
     all_tool_names: tuple[str, ...],

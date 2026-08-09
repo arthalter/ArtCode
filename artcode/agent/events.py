@@ -66,14 +66,14 @@ class AgentEvent:
     payload: dict[str, Any]
 
 
-def run_started_event(mode: str, max_iterations: int) -> AgentEvent:
+def run_started_event(mode: str, max_iterations: int | None) -> AgentEvent:
     return AgentEvent(
         AgentEventType.RUN_STARTED,
         {"mode": mode, "max_iterations": max_iterations},
     )
 
 
-def iteration_started_event(current: int, maximum: int) -> AgentEvent:
+def iteration_started_event(current: int, maximum: int | None) -> AgentEvent:
     return AgentEvent(
         AgentEventType.ITERATION_STARTED,
         {"current": current, "maximum": maximum},

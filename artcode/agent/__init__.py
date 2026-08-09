@@ -10,7 +10,8 @@ from .events import (
     TokenUsage,
     context_status_event,
 )
-from .loop import AgentLoop, AgentRunRequest, AgentRunResult
+from .loop import AgentLoop, AgentRunResult
+from .request import AgentRunRequest, PreparedModelRequest, RequestPreparer
 from .memory import PlanMemory
 from .modes import DO_MODE, NORMAL_AGENT_MODE, PLAN_MODE, READ_ONLY_TOOL_NAMES, AgentMode, ToolAccessPolicy
 from .stream import StreamCollector
@@ -25,6 +26,8 @@ __all__ = [
     "AgentMode",
     "AgentRunRequest",
     "AgentRunResult",
+    "PreparedModelRequest",
+    "RequestPreparer",
     "DO_MODE",
     "ModelTurn",
     "NORMAL_AGENT_MODE",

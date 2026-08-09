@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from typing import Any
+from collections.abc import AsyncIterator, Sequence
+from typing import Any, Callable
 
 from artcode.errors import StreamInterruptedError
 from artcode.providers.base import ProviderRequest, StreamingProvider, stream_provider
@@ -21,14 +21,18 @@ class StreamCollector:
     async def collect(
         self,
         provider: StreamingProvider,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
+        messages: Sequence[dict[str, Any]],
+        tools: Sequence[dict[str, Any]] | None,
+        *,
+        on_dispatch: Callable[[], None] | None = None,
     ) -> AsyncIterator[AgentEvent | ModelTurn]:
         parts: list[str] = []
         reasoning_parts: list[str] = []
         tool_calls: tuple[ToolCall, ...] = ()
         usage: TokenUsage | None = None
         request = ProviderRequest.from_parts(messages, tools)
+        if on_dispatch is not None:
+            on_dispatch()
 
         async for event in stream_provider(provider, request):
             if isinstance(event, ContentDelta):

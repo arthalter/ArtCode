@@ -23,7 +23,7 @@ def test_assembler_appends_reminder_without_mutating_history(tmp_path) -> None:
     )
 
     assert len(history) == 2
-    assert request.messages[:-1] == history
+    assert request.messages[:-1] == tuple(history)
     assert request.messages[-1]["role"] == "user"
     assert "<system-reminder>" in request.messages[-1]["content"]
 

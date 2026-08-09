@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from artcode.agent import NORMAL_AGENT_MODE
+from artcode.agent import NORMAL_AGENT_MODE, RequestPreparer
 from artcode.context_management.models import CompressionReport, CompressionTrigger
 from artcode.persistence import (
     PersistenceCoordinator,
@@ -16,7 +16,7 @@ from artcode.persistence import (
     SessionSelection,
 )
 from artcode.prompting.assembler import PromptRequestAssembler
-from artcode.tools import AllowedPathPolicy, ToolExecutionContext
+from artcode.tools import AllowedPathPolicy, ToolExecutionContext, ToolRegistry
 from artcode.workspace import ArtCodePaths, Workspace
 
 
@@ -138,26 +138,30 @@ async def test_gap_reminder_and_restore_preparation_run_once(tmp_path: Path) -> 
             assert trigger is CompressionTrigger.RESTORE
             return CompressionReport(trigger, "success", 2, 1)
 
-    assembler = PromptRequestAssembler(durable_prompt=resumed.prompt_context)
+    assembler = PromptRequestAssembler()
     tool_context = ToolExecutionContext(
         AllowedPathPolicy((workspace.root,)), default_cwd=workspace.root
     )
+    preparer = RequestPreparer(
+        resumed.conversation,
+        assembler,
+        ToolRegistry(),
+        tool_context,
+        context_manager=FakeManager(),
+        durable_prompt=resumed.prompt_context,
+    )
     try:
         report = await resumed.prepare_restored_context(
-            FakeManager(), assembler, NORMAL_AGENT_MODE, [], tool_context
+            preparer.context_manager, preparer, NORMAL_AGENT_MODE
         )
         second = await resumed.prepare_restored_context(
-            FakeManager(), assembler, NORMAL_AGENT_MODE, [], tool_context
+            preparer.context_manager, preparer, NORMAL_AGENT_MODE
         )
-        first_request = assembler.assemble(
-            resumed.conversation.export_messages(), NORMAL_AGENT_MODE, [], tool_context
-        )
-        next_request = assembler.assemble(
-            resumed.conversation.export_messages(), NORMAL_AGENT_MODE, [], tool_context
-        )
+        first_request = preparer.preview_request(NORMAL_AGENT_MODE)
+        next_request = preparer.preview_request(NORMAL_AGENT_MODE)
         assert report.attempted and report.status == "success"
         assert second.status == "already_prepared"
         assert "超过 24 小时" in str(first_request.messages)
-        assert "超过 24 小时" not in str(next_request.messages)
+        assert "超过 24 小时" in str(next_request.messages)
     finally:
         await resumed.close()

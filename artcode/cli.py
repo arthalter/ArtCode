@@ -17,7 +17,7 @@ from .security import DangerousCommandValidator
 from .sandbox import SeatbeltError, SeatbeltSession
 from .mcp import McpManager, load_mcp_configuration
 from .context_management import ContextArtifactStore, ContextManager, ContextSummarizer, LightweightCompactor
-from .agent import NORMAL_AGENT_MODE
+from .agent import NORMAL_AGENT_MODE, RequestPreparer
 from .persistence import PersistenceCoordinator, SessionError, SessionSelection
 from .prompting.assembler import PromptRequestAssembler
 from importlib.resources import files
@@ -119,13 +119,19 @@ async def run_app(
             ContextSummarizer(provider, conversation),
             lightweight_compactor=LightweightCompactor(artifact_store),
         )
-        request_assembler = PromptRequestAssembler(durable_prompt=persistence.prompt_context)
+        request_assembler = PromptRequestAssembler()
+        request_preparer = RequestPreparer(
+            conversation,
+            request_assembler,
+            registry,
+            tool_context,
+            context_manager=context_manager,
+            durable_prompt=persistence.prompt_context,
+        )
         await persistence.prepare_restored_context(
             context_manager,
-            request_assembler,
+            request_preparer,
             NORMAL_AGENT_MODE,
-            registry.openai_tools(include_internal_metadata=True),
-            tool_context,
         )
         runtime = ArtCodeRuntime(
             config=config,
@@ -141,6 +147,7 @@ async def run_app(
             context_manager=context_manager,
             plan_memory=persistence.plan_memory,
             request_assembler=request_assembler,
+            request_preparer=request_preparer,
             persistence=persistence,
         )
         renderer.show_mcp_startup(mcp_report)

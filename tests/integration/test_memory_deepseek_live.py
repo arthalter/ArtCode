@@ -7,7 +7,7 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, NaturalTurn
+from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, NaturalTurn, RequestPreparer
 from artcode.config import ArtCodeConfig, ConfigError, load_config
 from artcode.persistence import (
     MemoryNoteStore,
@@ -120,7 +120,13 @@ async def test_live_memory_extracts_cross_project_preference_and_deduplicates(tm
         resumed.conversation,
         ToolRegistry(),
         context,
-        request_assembler=PromptRequestAssembler(durable_prompt=resumed.prompt_context),
+        request_preparer=RequestPreparer(
+            resumed.conversation,
+            PromptRequestAssembler(),
+            ToolRegistry(),
+            context,
+            durable_prompt=resumed.prompt_context,
+        ),
         natural_turn_observer=resumed.turn_observer,
         session_id=resumed.status.session_id,
     )

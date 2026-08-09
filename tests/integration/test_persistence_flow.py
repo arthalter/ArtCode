@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE
+from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, RequestPreparer
 from artcode.persistence import PersistenceCoordinator, SessionSelection
 from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.providers.events import content_delta_event, done_event, tool_calls_event
@@ -85,7 +85,13 @@ async def test_persistence_end_to_end_restores_session_and_new_memory(tmp_path: 
         first.conversation,
         registry,
         tool_context,
-        request_assembler=PromptRequestAssembler(durable_prompt=first.prompt_context),
+        request_preparer=RequestPreparer(
+            first.conversation,
+            PromptRequestAssembler(),
+            registry,
+            tool_context,
+            durable_prompt=first.prompt_context,
+        ),
         natural_turn_observer=first.turn_observer,
         session_id=session_id,
     )
@@ -120,7 +126,13 @@ async def test_persistence_end_to_end_restores_session_and_new_memory(tmp_path: 
         resumed.conversation,
         registry,
         tool_context,
-        request_assembler=PromptRequestAssembler(durable_prompt=resumed.prompt_context),
+        request_preparer=RequestPreparer(
+            resumed.conversation,
+            PromptRequestAssembler(),
+            registry,
+            tool_context,
+            durable_prompt=resumed.prompt_context,
+        ),
         natural_turn_observer=resumed.turn_observer,
         session_id=session_id,
     )

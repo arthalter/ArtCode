@@ -14,6 +14,7 @@ from artcode.agent import (
     AgentLoop,
     AgentRunRequest,
     PlanMemory,
+    RequestPreparer,
     TokenUsage,
 )
 from artcode.commands import (
@@ -94,7 +95,7 @@ class TuiApp(Protocol):
     def show_tool_result_summary(self, result: ToolResult) -> None:
         ...
 
-    def show_agent_iteration(self, current: int, maximum: int) -> None:
+    def show_agent_iteration(self, current: int, maximum: int | None) -> None:
         ...
 
     def show_tool_calls_received(self, count: int) -> None:
@@ -149,6 +150,7 @@ class ArtCodeRuntime:
     rule_writer: RuleWriter | None = None
     context_manager: ContextManager | None = None
     request_assembler: PromptRequestAssembler | None = None
+    request_preparer: RequestPreparer | None = None
     persistence: PersistenceCoordinator | None = None
     command_dispatcher: CommandDispatcher = field(init=False)
     _display_mode: DisplayMode = field(init=False, default=DisplayMode.DEFAULT)
@@ -167,6 +169,17 @@ class ArtCodeRuntime:
         if self.persistence is not None:
             self.persistence.add_memory_callback(self._show_memory_report)
         if self.agent_loop is None:
+            if self.request_preparer is None:
+                self.request_preparer = RequestPreparer(
+                    self.conversation,
+                    self.request_assembler or PromptRequestAssembler(),
+                    self.tool_registry,
+                    self.tool_context,
+                    context_manager=self.context_manager,
+                    durable_prompt=(
+                        self.persistence.prompt_context if self.persistence is not None else None
+                    ),
+                )
             executor = ToolBatchExecutor(
                 self.tool_registry,
                 self.tool_context,
@@ -183,7 +196,7 @@ class ArtCodeRuntime:
                 plan_memory=self.plan_memory,
                 tool_executor=executor,
                 context_manager=self.context_manager,
-                request_assembler=self.request_assembler,
+                request_preparer=self.request_preparer,
                 natural_turn_observer=(
                     self.persistence.turn_observer if self.persistence is not None else None
                 ),

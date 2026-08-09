@@ -246,7 +246,7 @@ async def test_blocked_multi_tool_turn_writes_result_for_every_tool_call(tmp_pat
     assert provider.tools_seen[1] is None
 
 
-async def test_iteration_limit_stops_at_12_and_summarizes_without_tools(tmp_path) -> None:
+async def test_explicit_iteration_limit_stops_at_12_and_summarizes_without_tools(tmp_path) -> None:
     context = ConversationContext()
     provider = FakeProvider(
         [[tool_calls_event([ToolCall(f"call_{i}", "read_file", "{}")]), done_event()] for i in range(12)]
@@ -254,7 +254,10 @@ async def test_iteration_limit_stops_at_12_and_summarizes_without_tools(tmp_path
     )
     loop = AgentLoop(provider, context, registry_with(FakeTool("read_file")), context_for(tmp_path))
 
-    events = await collect(loop, AgentRunRequest("循环", NORMAL_AGENT_MODE))
+    events = await collect(
+        loop,
+        AgentRunRequest("循环", NORMAL_AGENT_MODE, max_iterations=12),
+    )
 
     assert [event.payload["current"] for event in events if event.type == AgentEventType.ITERATION_STARTED][-1] == 12
     assert events[-1].payload["reason"] == StopReason.ITERATION_LIMIT.value

@@ -171,8 +171,9 @@ class TuiRenderer:
         style = "green" if result.ok else "red"
         self.console.print(detail, style=style)
 
-    def show_agent_iteration(self, current: int, maximum: int) -> None:
-        self.console.print(f"Agent Loop：第 {current}/{maximum} 轮", style="cyan")
+    def show_agent_iteration(self, current: int, maximum: int | None) -> None:
+        label = f"第 {current} 轮" if maximum is None else f"第 {current}/{maximum} 轮"
+        self.console.print(f"Agent Loop：{label}", style="cyan")
 
     def show_tool_calls_received(self, count: int) -> None:
         self.console.print(f"模型请求 {count} 个工具调用。", style="yellow")

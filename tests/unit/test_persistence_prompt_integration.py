@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from artcode.agent import NORMAL_AGENT_MODE
+from artcode.agent import NORMAL_AGENT_MODE, RequestPreparer
 from artcode.conversation import ConversationContext
 from artcode.persistence import (
     DurablePaths,
@@ -15,7 +15,7 @@ from artcode.persistence import (
     MemoryScope,
 )
 from artcode.prompting.assembler import PromptRequestAssembler
-from artcode.tools import AllowedPathPolicy, ToolExecutionContext
+from artcode.tools import AllowedPathPolicy, ToolExecutionContext, ToolRegistry
 from artcode.workspace import ArtCodePaths, Workspace
 
 
@@ -65,14 +65,21 @@ def test_dynamic_prompt_orders_instructions_and_marks_memory_as_read_only(tmp_pa
 def test_assembler_reads_latest_index_without_mutating_conversation(tmp_path: Path) -> None:
     workspace, paths, user, project = _setup(tmp_path)
     durable = DurablePromptContext(InstructionLoader(paths).load(), user, project)
-    assembler = PromptRequestAssembler(durable_prompt=durable)
+    assembler = PromptRequestAssembler()
     conversation = ConversationContext("STATIC SYSTEM")
     conversation.append_user("hello")
     context = ToolExecutionContext(AllowedPathPolicy((workspace.root,)), default_cwd=workspace.root)
 
-    first = assembler.assemble(conversation.export_messages(), NORMAL_AGENT_MODE, [], context)
+    preparer = RequestPreparer(
+        conversation,
+        assembler,
+        ToolRegistry(),
+        context,
+        durable_prompt=durable,
+    )
+    first = preparer.preview_request(NORMAL_AGENT_MODE)
     project.index_path.write_text("# NEW INDEX UNIQUE\n", encoding="utf-8")
-    second = assembler.assemble(conversation.export_messages(), NORMAL_AGENT_MODE, [], context)
+    second = preparer.preview_request(NORMAL_AGENT_MODE)
 
     assert "NEW INDEX UNIQUE" not in first.messages[0]["content"]
     assert "NEW INDEX UNIQUE" in second.messages[0]["content"]
@@ -80,19 +87,28 @@ def test_assembler_reads_latest_index_without_mutating_conversation(tmp_path: Pa
     assert "LOCAL UNIQUE" not in str(conversation.export_messages())
 
 
-def test_resume_reminder_is_injected_once_and_not_persisted(tmp_path: Path) -> None:
+async def test_resume_reminder_is_committed_only_after_dispatch_and_not_persisted(tmp_path: Path) -> None:
     workspace, paths, user, project = _setup(tmp_path)
-    assembler = PromptRequestAssembler(
-        durable_prompt=DurablePromptContext(InstructionLoader(paths).load(), user, project),
-        resume_reminder_required=True,
-    )
+    assembler = PromptRequestAssembler()
     conversation = ConversationContext("static")
     conversation.append_user("continue")
     context = ToolExecutionContext(AllowedPathPolicy((workspace.root,)), default_cwd=workspace.root)
+    preparer = RequestPreparer(
+        conversation,
+        assembler,
+        ToolRegistry(),
+        context,
+        durable_prompt=DurablePromptContext(InstructionLoader(paths).load(), user, project),
+        resume_reminder_required=True,
+    )
 
-    first = assembler.assemble(conversation.export_messages(), NORMAL_AGENT_MODE, [], context)
-    second = assembler.assemble(conversation.export_messages(), NORMAL_AGENT_MODE, [], context)
+    first = preparer.preview_request(NORMAL_AGENT_MODE)
+    second = preparer.preview_request(NORMAL_AGENT_MODE)
+    prepared = await preparer.prepare(NORMAL_AGENT_MODE)
+    preparer.mark_dispatched(prepared)
+    third = preparer.preview_request(NORMAL_AGENT_MODE)
 
     assert "超过 24 小时" in str(first.messages)
-    assert "超过 24 小时" not in str(second.messages)
+    assert "超过 24 小时" in str(second.messages)
+    assert "超过 24 小时" not in str(third.messages)
     assert "超过 24 小时" not in str(conversation.export_messages())

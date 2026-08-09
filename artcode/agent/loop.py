@@ -7,11 +7,11 @@ from typing import Any
 
 from artcode.conversation import ConversationContext, ConversationPersistenceRejected
 from artcode.errors import ContextWindowExceededError, RequestError
-from artcode.prompting.assembler import PromptRequest, PromptRequestAssembler
+from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.providers.base import StreamingProvider
 from artcode.tools import ToolExecutionContext, ToolRegistry, error_result
 from artcode.context_management.manager import ContextManager
-from artcode.context_management.models import CompressionReport, CompressionTrigger
+from artcode.context_management.models import CompressionTrigger
 
 from .events import (
     AgentEvent,
@@ -31,20 +31,9 @@ from .events import (
 )
 from .memory import PlanMemory
 from .modes import AgentMode, PLAN_MODE
+from .request import AgentRunRequest, PreparedModelRequest, RequestPreparer
 from .stream import StreamCollector
 from .tools import ToolBatchExecutor, ToolExecutionBlocked
-
-
-DEFAULT_MAX_ITERATIONS = 12
-
-
-@dataclass(frozen=True)
-class AgentRunRequest:
-    user_content: str
-    mode: AgentMode
-    max_iterations: int = DEFAULT_MAX_ITERATIONS
-    append_user_message: bool = True
-    final_summary_on_abnormal_stop: bool = True
 
 
 @dataclass(frozen=True)
@@ -67,6 +56,7 @@ class AgentLoop:
         stream_collector: StreamCollector | None = None,
         tool_executor: ToolBatchExecutor | None = None,
         request_assembler: PromptRequestAssembler | None = None,
+        request_preparer: RequestPreparer | None = None,
         context_manager: ContextManager | None = None,
         natural_turn_observer: NaturalTurnObserver | None = None,
         session_id: str = "ephemeral",
@@ -78,8 +68,14 @@ class AgentLoop:
         self.plan_memory = plan_memory or PlanMemory()
         self.stream_collector = stream_collector or StreamCollector()
         self.tool_executor = tool_executor or ToolBatchExecutor(tool_registry, tool_context)
-        self.request_assembler = request_assembler or PromptRequestAssembler()
         self.context_manager = context_manager
+        self.request_preparer = request_preparer or RequestPreparer(
+            conversation,
+            request_assembler or PromptRequestAssembler(),
+            tool_registry,
+            tool_context,
+            context_manager=context_manager,
+        )
         self.natural_turn_observer = natural_turn_observer
         self.session_id = session_id
 
@@ -104,7 +100,8 @@ class AgentLoop:
 
         pending_tool_calls: dict[str, Any] = {}
         try:
-            for iteration in range(1, request.max_iterations + 1):
+            iteration = 1
+            while request.max_iterations is None or iteration <= request.max_iterations:
                 yield iteration_started_event(iteration, request.max_iterations)
                 turn = await self._collect_model_turn(request.mode)
                 for event in turn.events:
@@ -128,10 +125,7 @@ class AgentLoop:
                         entry_ids.append(assistant_entry.id)
                         if request.mode == PLAN_MODE:
                             self.plan_memory.save(model_turn.text)
-                        if (
-                            self.natural_turn_observer is not None
-                            and model_turn.finish_reason != "length"
-                        ):
+                        if self.natural_turn_observer is not None:
                             self.natural_turn_observer.submit(
                                 NaturalTurn(
                                     session_id=self.session_id,
@@ -183,6 +177,8 @@ class AgentLoop:
                         tool_summaries.append(_natural_tool_summary(tool_call, result))
                         pending_tool_calls.pop(tool_call.id, None)
                     yield event
+
+                iteration += 1
 
             async for event in self._summarize_if_needed(request, StopReason.ITERATION_LIMIT):
                 yield event
@@ -242,19 +238,16 @@ class AgentLoop:
             return
         lightweight = self.context_manager.run_lightweight(self.conversation)
         if lightweight.persisted_count or lightweight.failures:
-            yield self._lightweight_event(lightweight)
+            yield self.request_preparer.lightweight_event(lightweight)
         report = await self.context_manager.compact(
             self.conversation,
             CompressionTrigger.MANUAL,
         )
-        yield self._compression_event(report)
+        yield self.request_preparer.compression_event(report)
 
     def estimate_next_request(self, mode: AgentMode) -> int | None:
         """Estimate the next request without mutating conversation or context state."""
-        if self.context_manager is None:
-            return None
-        request = self._assemble_request(mode, include_tools=True)
-        return self.context_manager.estimate_request(request)
+        return self.request_preparer.estimate(mode, include_tools=True)
 
     async def _collect_contextual_turn(
         self,
@@ -262,39 +255,51 @@ class AgentLoop:
         *,
         include_tools: bool,
     ) -> "_CollectedTurn":
-        prepared = await self._prepare_model_request(mode, include_tools=include_tools)
+        try:
+            prepared = await self.request_preparer.prepare(
+                mode,
+                include_tools=include_tools,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            message = exc.user_message if isinstance(exc, RequestError) else "模型请求准备失败。"
+            return _CollectedTurn([], None, message, exc)
         if prepared.request is None:
-            return _CollectedTurn(prepared.events, None, prepared.error_message)
+            return _CollectedTurn(list(prepared.events), None, prepared.error_message)
 
-        collected = await self._collect_model_turn_with_messages(
-            prepared.request.messages,
-            prepared.request.tools,
-        )
+        collected = await self._collect_prepared_model_turn(prepared)
         events = [*prepared.events, *collected.events]
         if collected.model_turn is not None:
-            if self.context_manager is not None:
-                self.context_manager.record_usage(collected.model_turn.usage, prepared.request)
+            self.request_preparer.record_usage(collected.model_turn.usage, prepared.request)
             return _CollectedTurn(events, collected.model_turn)
 
-        if not isinstance(collected.error, ContextWindowExceededError) or self.context_manager is None:
+        if not isinstance(collected.error, ContextWindowExceededError):
             return _CollectedTurn(events, None, collected.error_message, collected.error)
 
-        emergency = await self.context_manager.compact(
-            self.conversation,
-            CompressionTrigger.EMERGENCY,
-        )
-        events.append(self._compression_event(emergency))
-        if emergency.status != "success":
-            return _CollectedTurn(events, None, emergency.message or collected.error_message, collected.error)
+        try:
+            retry = await self.request_preparer.prepare_emergency_retry(
+                mode,
+                include_tools=include_tools,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            message = exc.user_message if isinstance(exc, RequestError) else "紧急上下文准备失败。"
+            return _CollectedTurn(events, None, message, exc)
+        events.extend(retry.events)
+        if retry.request is None:
+            return _CollectedTurn(
+                events,
+                None,
+                retry.error_message or collected.error_message,
+                collected.error,
+            )
 
-        retry_request = self._assemble_request(mode, include_tools=include_tools)
-        retried = await self._collect_model_turn_with_messages(
-            retry_request.messages,
-            retry_request.tools,
-        )
+        retried = await self._collect_prepared_model_turn(retry)
         events.extend(retried.events)
         if retried.model_turn is not None:
-            self.context_manager.record_usage(retried.model_turn.usage, retry_request)
+            self.request_preparer.record_usage(retried.model_turn.usage, retry.request)
         return _CollectedTurn(
             events,
             retried.model_turn,
@@ -302,97 +307,21 @@ class AgentLoop:
             retried.error,
         )
 
-    async def _prepare_model_request(
+    async def _collect_prepared_model_turn(
         self,
-        mode: AgentMode | None,
-        *,
-        include_tools: bool,
-    ) -> "_PreparedRequest":
-        events: list[AgentEvent] = []
-        if self.context_manager is not None:
-            lightweight = self.context_manager.run_lightweight(self.conversation)
-            if lightweight.persisted_count or lightweight.failures:
-                events.append(self._lightweight_event(lightweight))
-
-        request = self._assemble_request(mode, include_tools=include_tools)
-        if self.context_manager is None:
-            return _PreparedRequest(request, events)
-        estimated = self.context_manager.estimate_request(request)
-        if self.context_manager.unsafe_persistence_failure(self.conversation, estimated):
-            events.append(
-                context_status_event(
-                    "lightweight",
-                    "blocked",
-                    estimated,
-                    estimated,
-                    lightweight.persisted_count,
-                    self.context_manager.circuit.open,
-                    "工具结果存盘失败，继续请求会越过安全边界。",
-                )
-            )
-            return _PreparedRequest(None, events, "工具结果存盘失败，模型请求未发送。")
-
-        trigger = self.context_manager.choose_trigger(estimated)
-        if trigger is not None:
-            report = await self.context_manager.compact(self.conversation, trigger)
-            events.append(self._compression_event(report, lightweight.persisted_count))
-            if report.status == "blocked":
-                return _PreparedRequest(None, events, report.message)
-            if report.status == "success":
-                request = self._assemble_request(mode, include_tools=include_tools)
-        return _PreparedRequest(request, events)
-
-    def _assemble_request(
-        self,
-        mode: AgentMode | None,
-        *,
-        include_tools: bool,
-    ) -> PromptRequest:
-        if not include_tools:
-            return self.request_assembler.assemble(
-                self.conversation.export_messages(),
-                mode,
-                None,
-                self.tool_context,
-            )
-        return self.request_assembler.assemble(
-            self.conversation.export_messages(),
-            mode,
-            self.tool_registry.openai_tools(include_internal_metadata=True),
-            self.tool_context,
-        )
-
-    def _lightweight_event(self, report) -> AgentEvent:
-        message = "; ".join(failure.message for failure in report.failures)
-        return context_status_event(
-            "lightweight",
-            "failed" if report.failures else "success",
-            report.before_tokens,
-            report.after_tokens,
-            report.persisted_count,
-            bool(self.context_manager and self.context_manager.circuit.open),
-            message,
-        )
-
-    def _compression_event(self, report: CompressionReport, persisted_count: int = 0) -> AgentEvent:
-        return context_status_event(
-            report.trigger.value,
-            report.status,
-            report.before_tokens,
-            report.after_tokens,
-            persisted_count or report.persisted_count,
-            report.circuit_open,
-            report.message,
-        )
-
-    async def _collect_model_turn_with_messages(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
+        prepared: PreparedModelRequest,
     ) -> "_CollectedTurn":
+        request = prepared.request
+        if request is None:
+            return _CollectedTurn([], None, prepared.error_message)
         events: list[AgentEvent] = []
         try:
-            async for item in self.stream_collector.collect(self.provider, messages, tools):
+            async for item in self.stream_collector.collect(
+                self.provider,
+                request.messages,
+                request.tools,
+                on_dispatch=lambda: self.request_preparer.mark_dispatched(prepared),
+            ):
                 if isinstance(item, ModelTurn):
                     return _CollectedTurn(events, item)
                 events.append(item)
@@ -400,6 +329,8 @@ class AgentLoop:
             raise
         except RequestError as exc:
             return _CollectedTurn(events, None, exc.user_message, exc)
+        except Exception as exc:
+            return _CollectedTurn(events, None, "流式响应出错。", exc)
         return _CollectedTurn(events, ModelTurn("", "", ()))
 
 
@@ -408,19 +339,12 @@ class _CollectedTurn:
     events: list[AgentEvent]
     model_turn: ModelTurn | None
     error_message: str = ""
-    error: RequestError | None = None
-
-
-@dataclass(frozen=True)
-class _PreparedRequest:
-    request: PromptRequest | None
-    events: list[AgentEvent]
-    error_message: str = ""
+    error: Exception | None = None
 
 
 def _stop_message(reason: StopReason) -> str:
     if reason == StopReason.ITERATION_LIMIT:
-        return "Agent Loop 达到 12 轮上限。"
+        return "Agent Loop 达到显式轮数上限。"
     if reason == StopReason.UNKNOWN_TOOL:
         return "模型请求了未知或当前模式不允许的工具。"
     if reason == StopReason.STREAM_ERROR:

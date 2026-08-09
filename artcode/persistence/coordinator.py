@@ -7,7 +7,6 @@ from artcode.agent.memory import PlanMemory
 from artcode.context_management.models import CompressionTrigger
 from artcode.conversation import ConversationContext
 from artcode.prompting.builder import PromptBuilder
-from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.prompting.sections import (
     default_fixed_sections,
     durable_instruction_sections,
@@ -41,8 +40,8 @@ from .updater import MemoryUpdater, MemoryUpdateWorker
 
 if TYPE_CHECKING:
     from artcode.agent.modes import AgentMode
+    from artcode.agent.request import RequestPreparer
     from artcode.context_management.manager import ContextManager
-    from artcode.tools import ToolExecutionContext
 
 
 class DurablePromptContext:
@@ -193,10 +192,8 @@ class PersistenceCoordinator:
     async def prepare_restored_context(
         self,
         context_manager: "ContextManager",
-        assembler: PromptRequestAssembler,
+        preparer: "RequestPreparer",
         mode: "AgentMode",
-        tools: list[dict[str, Any]],
-        tool_context: "ToolExecutionContext",
     ) -> RestorePreparationReport:
         if self._restore_prepared:
             return RestorePreparationReport(False, "already_prepared")
@@ -204,9 +201,7 @@ class PersistenceCoordinator:
         report = RestorePreparationReport()
         if self.status.restored and self.status.recovered_messages:
             context_manager.run_lightweight(self.conversation)
-            request = assembler.assemble(
-                self.conversation.export_messages(), mode, tools, tool_context
-            )
+            request = preparer.preview_request(mode, include_tools=True)
             estimated = context_manager.estimate_request(request)
             if estimated >= context_manager.config.automatic_threshold:
                 compressed = await context_manager.compact(
@@ -224,7 +219,7 @@ class PersistenceCoordinator:
                     False, "not_needed", estimated, estimated
                 )
         if self.gap_reminder_required:
-            assembler.require_resume_reminder()
+            preparer.require_resume_reminder()
         return report
 
     def sessions_summary(self, limit: int = 20) -> tuple[Any, ...]:

@@ -73,8 +73,9 @@ class FakeTui:
     def show_tool_result_summary(self, result) -> None:
         self.output.append(f"tool:{result.status}:{result.error_code}")
 
-    def show_agent_iteration(self, current: int, maximum: int) -> None:
-        self.output.append(f"iteration:{current}/{maximum}")
+    def show_agent_iteration(self, current: int, maximum: int | None) -> None:
+        suffix = str(current) if maximum is None else f"{current}/{maximum}"
+        self.output.append(f"iteration:{suffix}")
 
     def show_tool_calls_received(self, count: int) -> None:
         self.output.append(f"tool_calls:{count}")
@@ -162,7 +163,7 @@ async def test_runtime_routes_plain_input_through_agent_loop(tmp_path) -> None:
     assert context.export_messages()[-2] == {"role": "user", "content": "你好"}
     assert context.export_messages()[-1] == {"role": "assistant", "content": "你好"}
     assert provider.tools_seen[0] is not None
-    assert "iteration:1/12" in tui.output
+    assert "iteration:1" in tui.output
     assert "stopped:natural" in tui.output
 
 

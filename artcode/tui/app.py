@@ -133,7 +133,7 @@ class PromptToolkitTui:
     def show_tool_result_summary(self, result: ToolResult) -> None:
         self.renderer.show_tool_result_summary(result)
 
-    def show_agent_iteration(self, current: int, maximum: int) -> None:
+    def show_agent_iteration(self, current: int, maximum: int | None) -> None:
         self.renderer.show_agent_iteration(current, maximum)
 
     def show_tool_calls_received(self, count: int) -> None:
