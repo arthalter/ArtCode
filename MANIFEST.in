@@ -1,0 +1,3 @@
+prune artcode-eval-runs
+prune artcode-eval-compare
+global-exclude __pycache__ *.py[cod]

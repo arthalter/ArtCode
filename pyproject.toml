@@ -26,9 +26,11 @@ test = [
 
 [project.scripts]
 artcode = "artcode.cli:main"
+artcode-eval = "artcode.evaluation.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["artcode*"]
+namespaces = false
 
 [tool.setuptools.package-data]
 "artcode.security" = ["*.yml"]

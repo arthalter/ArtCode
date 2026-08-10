@@ -112,6 +112,21 @@ __main__ → cli → Bootstrap → ArtCodeRuntime → AgentLoop
 
 `RuntimeState` 是权限、Shell、显示模式和最近 Token 用量的进程内权威来源；请求级工具上下文使用其不可变权限快照。Runtime 只协调交互，不隐式创建第二套生产组件。
 
+## Agent 评测
+
+`artcode-eval` 是与被测 Agent 分离的本地 Harness。它从版本化 Benchmark 创建独立 Workspace，经同一个 `Bootstrap/AgentLoop` 执行任务，记录脱敏 Trace，以文件、命令、Trace 和指标 Verifier 判断结果，并输出 JSON/Markdown 报告。可选 LLM Judge 只做语义评分，不能覆盖确定性失败。
+
+```bash
+.venv/bin/artcode-eval validate benchmarks/agent_eval/benchmark.yml
+.venv/bin/artcode-eval run benchmarks/agent_eval/benchmark.yml \
+  --config ~/.artcode/config.yml \
+  --output-dir artcode-eval-runs
+.venv/bin/artcode-eval compare BASELINE/report.json CANDIDATE/report.json \
+  --output-dir artcode-eval-compare
+```
+
+官方 Benchmark 覆盖编码结果、危险命令权限拒绝和大工具结果上下文外置。每次尝试保留独立 Trace、Verifier 证据、Workspace 变更摘要及 Token、轮次、工具调用、重复调用、权限拒绝、上下文节省和耗时指标。若需 Judge，另传 `--judge-config`；建议使用与被测 Agent 独立的模型配置。
+
 ## 验证
 
 ```bash
@@ -119,6 +134,7 @@ __main__ → cli → Bootstrap → ArtCodeRuntime → AgentLoop
 .venv/bin/python -m pytest tests/property tests/fault -q
 .venv/bin/python -m pytest tests/live -q -m live -rs
 .venv/bin/python -m pytest tests/soak -q -m soak
+.venv/bin/python -m pytest tests/evaluation tests/integration/test_evaluation_agent_flow.py -q
 .venv/bin/python tests/tools/verify_test_inventory.py --baseline 413
 .venv/bin/python -m build
 ```
