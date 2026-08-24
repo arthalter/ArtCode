@@ -4,16 +4,16 @@
 # 然后编辑 ~/.artcode/config.yml，填写真实 API Key。
 
 protocol: openai
-model: deepseek-v4-flash
-base_url: https://api.deepseek.com
-api_key: your-deepseek-api-key
+model: your-model-id
+base_url: https://your-openai-compatible-endpoint/v1
+api_key: your-api-key
 
 thinking:
   enabled: false
 
-# DeepSeek V4 Flash 官方完整上下文窗口为 1M；可显式缩小到 200000–1000000。
+# 按所选模型的上下文窗口填写；ArtCode 支持 200000–1000000。
 context:
-  window_tokens: 1000000
+  window_tokens: 200000
 
 # 用户级 MCP Server。项目也可以在 <workspace>/.artcode/config.yml 中只声明
 # mcp_servers；同名项目条目会完整替换用户条目。

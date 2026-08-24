@@ -1,6 +1,6 @@
 # ArtCode
 
-ArtCode 是一个本地 Python CLI Coding Agent 学习项目。当前实现提供流式 DeepSeek 对话、Agent Loop、Plan/Do、本地工具、权限审批、macOS Seatbelt、MCP、上下文压缩、会话恢复和长期记忆。
+ArtCode 是一个本地 Python CLI Coding Agent 学习项目。当前实现提供流式 OpenAI-compatible 对话、Agent Loop、Plan/Do、本地工具、权限审批、macOS Seatbelt、MCP、上下文压缩、会话恢复和长期记忆。
 
 ## 安装与启动
 
@@ -13,7 +13,7 @@ mkdir -p ~/.artcode
 cp config.example.yml ~/.artcode/config.yml
 ```
 
-编辑 `~/.artcode/config.yml`，填入真实 DeepSeek API Key，然后在已有项目目录启动：
+编辑 `~/.artcode/config.yml`，填入模型服务配置，然后在已有项目目录启动：
 
 ```bash
 .venv/bin/artcode --workspace /path/to/project
@@ -34,18 +34,18 @@ cp config.example.yml ~/.artcode/config.yml
 
 ```yaml
 protocol: openai
-model: deepseek-v4-flash
-base_url: https://api.deepseek.com
+model: your-model-id
+base_url: https://your-openai-compatible-endpoint/v1
 api_key: your-real-api-key
 
 thinking:
   enabled: false
 
 context:
-  window_tokens: 1000000
+  window_tokens: 200000
 ```
 
-配置采用严格字段校验，未知字段会阻止启动。Thinking 关闭时请求会显式关闭 Thinking；开启时固定使用 high 强度。上下文窗口默认 1,000,000 Token，可显式配置为 200,000–1,000,000，压缩阈值随窗口等比例变化。
+配置采用严格字段校验，未知字段会阻止启动。模型、服务地址和 API Key 均为必填项。不同模型的推理参数兼容性由 Provider 处理；上下文窗口默认 1,000,000 Token，可显式配置为 200,000–1,000,000，压缩阈值随窗口等比例变化。
 
 用户级 MCP Server 写在 `~/.artcode/config.yml`，项目级 Server 写在 `<workspace>/.artcode/config.yml`。支持 `stdio` 与 `streamable_http`；单个 Server 的配置、连接或调用失败不会阻断内置工具和其他 Server。
 
@@ -103,7 +103,7 @@ Shell 默认通过 macOS Seatbelt 运行，并禁止公网、回环和本地监�
 ```text
 __main__ → cli → Bootstrap → ArtCodeRuntime → AgentLoop
                          ├─ RequestPreparer → ContextManager
-                         ├─ DeepSeekChatProvider
+                         ├─ OpenAI-compatible Provider
                          ├─ ToolExecutionService → PermissionService
                          │                        → WorkspaceFileAccess / ProcessSupervisor
                          ├─ SessionService / DurablePromptSource / MemoryService
@@ -139,4 +139,4 @@ __main__ → cli → Bootstrap → ArtCodeRuntime → AgentLoop
 .venv/bin/python -m build
 ```
 
-真实测试会使用本机 DeepSeek 配置，并覆盖真实 Seatbelt、进程树、MCP、CLI 和多进程 Session。缺少配置或系统能力应明确报告为环境阻塞，不能作为通过；DeepSeek 调用不会因为成本而跳过。
+真实测试会使用本机模型配置，并覆盖真实 Seatbelt、进程树、MCP、CLI 和多进程 Session。缺少配置或系统能力应明确报告为环境阻塞，不能作为通过；真实模型调用不会因为成本而跳过。

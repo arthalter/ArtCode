@@ -17,12 +17,17 @@ def write_config(tmp_path, raw: dict):
 
 
 def minimal() -> dict:
-    return {"protocol": "openai", "base_url": "https://api.deepseek.com", "api_key": "secret-value"}
+    return {
+        "protocol": "openai",
+        "model": "test-model",
+        "base_url": "https://api.example.test/v1",
+        "api_key": "secret-value",
+    }
 
 
-def test_minimal_file_loads_flash_with_full_window(tmp_path) -> None:
+def test_minimal_file_loads_configured_model_with_generic_window(tmp_path) -> None:
     config = load_config(write_config(tmp_path, minimal()))
-    assert (config.model, config.context.window_tokens) == ("deepseek-v4-flash", 1_000_000)
+    assert (config.model, config.context.window_tokens) == ("test-model", 1_000_000)
 
 
 def test_file_with_two_unknown_fields_reports_both_before_provider_start(tmp_path) -> None:

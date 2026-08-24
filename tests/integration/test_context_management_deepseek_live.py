@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-from pathlib import Path
-
 import pytest
 
 pytestmark = pytest.mark.live
@@ -23,11 +20,8 @@ from artcode.tools import ToolEnvironment, ToolRegistry
 from artcode.tools.execution import ToolExecutionService
 
 
-ROOT = Path(__file__).resolve().parents[2]
-
-
 def required_live_config() -> ArtCodeConfig:
-    return replace(load_live_config(), model="deepseek-v4-flash")
+    return load_live_config()
 
 
 async def test_live_deepseek_summary_and_followup_preserve_user_intent(tmp_path) -> None:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -80,10 +79,7 @@ async def test_live_deepseek_read_approve_edit_verify_and_summarize(tmp_path: Pa
             rule_writer=RuleWriter(rules),
         )
         executor = ToolExecutionService(registry, environment, permission_service)
-        config = replace(
-            load_live_config(),
-            model="deepseek-v4-flash",
-        )
+        config = load_live_config()
         context = ConversationContext()
         provider = DeepSeekChatProvider(config)
         preparer = RequestPreparer(

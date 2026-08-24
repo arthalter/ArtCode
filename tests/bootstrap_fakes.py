@@ -23,7 +23,7 @@ class BootstrapHarness:
     close_failure: str | None = None
 
 
-def write_config(home: Path, *, model: str = "deepseek-v4-flash") -> Path:
+def write_config(home: Path, *, model: str = "test-model") -> Path:
     home.mkdir(parents=True, exist_ok=True)
     path = home / "config.yml"
     path.write_text(

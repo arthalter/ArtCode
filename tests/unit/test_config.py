@@ -12,8 +12,8 @@ from artcode.runtime.state import StartupStatusSnapshot
 def valid_raw(allowed_dir: Path | None = None) -> dict:
     raw = {
         "protocol": "openai",
-        "model": "deepseek-v4-flash",
-        "base_url": "https://api.deepseek.com",
+        "model": "test-model",
+        "base_url": "https://api.example.test/v1",
         "api_key": "sk-test-secret-value",
         "thinking": {"enabled": True},
     }
@@ -25,8 +25,8 @@ def valid_raw(allowed_dir: Path | None = None) -> dict:
 def raw_without_tools() -> dict:
     return {
         "protocol": "openai",
-        "model": "deepseek-v4-flash",
-        "base_url": "https://api.deepseek.com",
+        "model": "test-model",
+        "base_url": "https://api.example.test/v1",
         "api_key": "sk-test-secret-value",
         "thinking": {"enabled": True},
     }
@@ -58,7 +58,7 @@ def test_top_level_must_be_map() -> None:
         parse_config(["not", "a", "map"])
 
 
-@pytest.mark.parametrize("field", ["protocol", "base_url", "api_key"])
+@pytest.mark.parametrize("field", ["protocol", "model", "base_url", "api_key"])
 def test_missing_required_fields(field: str) -> None:
     raw = valid_raw()
     raw.pop(field)
@@ -67,11 +67,12 @@ def test_missing_required_fields(field: str) -> None:
         parse_config(raw)
 
 
-def test_missing_model_uses_current_default() -> None:
+def test_missing_model_is_rejected() -> None:
     raw = valid_raw()
     raw.pop("model")
 
-    assert parse_config(raw).model == "deepseek-v4-flash"
+    with pytest.raises(ConfigError, match="配置缺少字段：model"):
+        parse_config(raw)
 
 
 @pytest.mark.parametrize("field", ["model", "base_url", "api_key"])

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -23,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def required_live_config(workspace: Path) -> ArtCodeConfig:
     return register_test_workspace(
-        replace(load_live_config(), model="deepseek-v4-flash"),
+        load_live_config(),
         workspace,
     )
 

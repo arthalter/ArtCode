@@ -10,7 +10,12 @@ pytestmark = [pytest.mark.ch10_5, pytest.mark.property]
 
 
 def base() -> dict:
-    return {"protocol": "openai", "base_url": "https://api.deepseek.com", "api_key": "secret"}
+    return {
+        "protocol": "openai",
+        "model": "test-model",
+        "base_url": "https://api.example.test/v1",
+        "api_key": "secret",
+    }
 
 
 unknown_keys = st.sets(

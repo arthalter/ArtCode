@@ -67,8 +67,8 @@ def config_for(root: Path) -> ArtCodeConfig:
     root.mkdir()
     return register_test_workspace(ArtCodeConfig(
         protocol="openai",
-        model="deepseek-v4-flash",
-        base_url="https://api.deepseek.com",
+        model="test-model",
+        base_url="https://api.example.test/v1",
         api_key="sk-integration-secret",
         thinking=ThinkingConfig(),
     ), root)
@@ -113,7 +113,7 @@ async def test_plain_message_and_local_commands_take_mutually_exclusive_paths(tm
     assert "/Unknown" in output
     assert "运行状态" in output
     assert "sk-integration-secret" not in output
-    assert session.prompts == ["[DEFAULT] deepseek-v4-flash > "] * 5
+    assert session.prompts == ["[DEFAULT] test-model > "] * 5
 
 
 async def test_plan_do_and_compatibility_commands_share_real_runtime_components(tmp_path) -> None:
@@ -170,7 +170,7 @@ async def test_plan_do_and_compatibility_commands_share_real_runtime_components(
     output = renderer.console.export_text()
     assert "[PLAN] User" in output
     assert "[DEFAULT] User" in output
-    assert session.prompts == ["[DEFAULT] deepseek-v4-flash > "] * 6
+    assert session.prompts == ["[DEFAULT] test-model > "] * 6
     assert not any(
         str(message.get("content", "")) in {"/do", "/compact", "/sessions", "/memory"}
         for message in context.export_messages()

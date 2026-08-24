@@ -12,7 +12,6 @@ from .errors import ConfigError
 
 CONFIG_FILENAME = "config.yml"
 SUPPORTED_PROTOCOL = "openai"
-DEFAULT_MODEL = "deepseek-v4-flash"
 DEFAULT_CONTEXT_WINDOW_TOKENS = 1_000_000
 MIN_CONTEXT_WINDOW_TOKENS = 200_000
 MAX_CONTEXT_WINDOW_TOKENS = 1_000_000
@@ -59,7 +58,7 @@ def load_config(config_path: Path | str | None = None) -> ArtCodeConfig:
     if not path.exists():
         raise ConfigError(
             f"找不到配置文件 {path}。",
-            "请复制 config.example.yml 到 ~/.artcode/config.yml，并填写 DeepSeek API key。",
+            "请复制 config.example.yml 到 ~/.artcode/config.yml，并填写模型、服务地址和 API key。",
         )
 
     try:
@@ -79,7 +78,7 @@ def parse_config(raw: Any) -> ArtCodeConfig:
 
     _reject_unknown_keys(raw, _TOP_LEVEL_FIELDS, "配置顶层")
     protocol = _required_non_empty_string(raw, "protocol")
-    model = _optional_non_empty_string(raw, "model", DEFAULT_MODEL)
+    model = _required_non_empty_string(raw, "model")
     base_url = _required_non_empty_string(raw, "base_url")
     api_key = _required_non_empty_string(raw, "api_key")
 

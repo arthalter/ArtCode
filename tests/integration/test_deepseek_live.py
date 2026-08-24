@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from pathlib import Path
-
 import pytest
 
 pytestmark = pytest.mark.live
 
 from artcode.agent import AgentLoop, AgentRunRequest, NORMAL_AGENT_MODE, RequestPreparer
-from artcode.config import ArtCodeConfig, ThinkingConfig, load_config
+from artcode.config import ArtCodeConfig, ThinkingConfig
+from tests.live.conftest import load_live_config
 from artcode.conversation import ConversationContext
-from artcode.errors import ConfigError
 from artcode.permissions import PermissionState
 from artcode.permissions.service import PermissionService
 from artcode.prompting.assembler import PromptRequestAssembler
@@ -20,17 +18,8 @@ from artcode.tools import ToolEnvironment, create_default_tool_registry
 from artcode.tools.execution import ToolExecutionService
 
 
-ROOT = Path(__file__).resolve().parents[2]
-
-
 def live_config() -> ArtCodeConfig:
-    try:
-        config = load_config(ROOT / "artcode.yaml")
-    except ConfigError as exc:
-        pytest.skip(f"live DeepSeek config unavailable: {exc.message}")
-    if "your-deepseek-api-key" in config.api_key or config.api_key.startswith("<"):
-        pytest.skip("artcode.yaml still contains a placeholder API key")
-    return replace(config, model="deepseek-v4-flash")
+    return load_live_config()
 
 
 async def collect_reply(provider: DeepSeekChatProvider, messages: list[dict[str, str]]) -> str:

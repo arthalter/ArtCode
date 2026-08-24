@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from artcode.config import DEFAULT_MODEL, parse_config
+from artcode.config import parse_config
 from artcode.errors import ConfigError
 from artcode.runtime.state import StartupStatusSnapshot
 
@@ -14,7 +14,8 @@ pytestmark = pytest.mark.ch10_5
 def valid_raw() -> dict:
     return {
         "protocol": "openai",
-        "base_url": "https://api.deepseek.com",
+        "model": "test-model",
+        "base_url": "https://api.example.test/v1",
         "api_key": "sk-probe-secret",
     }
 
@@ -109,8 +110,11 @@ def test_required_scalars_fail_closed(field: str, value) -> None:
         parse_config(raw)
 
 
-def test_model_defaults_to_current_flash_id() -> None:
-    assert parse_config(valid_raw()).model == DEFAULT_MODEL
+def test_model_is_required() -> None:
+    raw = valid_raw()
+    raw.pop("model")
+    with pytest.raises(ConfigError, match="配置缺少字段：model"):
+        parse_config(raw)
 
 
 def test_minimum_window_thresholds_are_proportional() -> None:

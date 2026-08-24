@@ -57,7 +57,7 @@ class DeepSeekChatProvider:
 
     async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
         if self._closed:
-            raise RuntimeError("DeepSeek provider is closed")
+            raise RuntimeError("模型 Provider 已关闭 (closed)")
         payload = build_provider_payload(self.config, request)
         headers = {
             "Authorization": f"Bearer {self.config.api_key}",
@@ -80,11 +80,11 @@ class DeepSeekChatProvider:
             raise
         except httpx.TimeoutException as exc:
             raise TimeoutError(
-                "请求 DeepSeek 超时。",
+                "请求模型服务超时。",
                 f"连接超时为 {int(CONNECT_TIMEOUT_SECONDS)} 秒，读取超时为 {int(READ_TIMEOUT_SECONDS)} 秒；请检查网络或稍后重试。",
             ) from exc
         except (httpx.ConnectError, httpx.NetworkError) as exc:
-            raise NetworkError("无法连接 DeepSeek API。", "请检查网络、代理或 base_url。") from exc
+            raise NetworkError("无法连接模型 API。", "请检查网络、代理或 base_url。") from exc
         except (httpx.RemoteProtocolError, httpx.ReadError, httpx.DecodingError) as exc:
             raise StreamInterruptedError("流式响应中途断开。", "本轮回复没有写入上下文，请稍后重试。") from exc
 
@@ -152,28 +152,37 @@ def build_provider_payload(config: ArtCodeConfig, request: ProviderRequest) -> d
     thinking_enabled = config.thinking.enabled
     if request.thinking_enabled is not None:
         thinking_enabled = request.thinking_enabled
+    model = request.model or config.model
     payload: dict[str, Any] = {
-        "model": request.model or config.model,
+        "model": model,
         "messages": [dict(message) for message in request.messages],
         "stream": True,
         "stream_options": {"include_usage": True},
-        "thinking": {"type": "enabled" if thinking_enabled else "disabled"},
     }
-    if thinking_enabled:
+    if _uses_xai_reasoning(model):
+        # Grok 4.6 reasons on every request and rejects DeepSeek's `thinking` field.
         payload["reasoning_effort"] = "high"
+    else:
+        payload["thinking"] = {"type": "enabled" if thinking_enabled else "disabled"}
+        if thinking_enabled:
+            payload["reasoning_effort"] = "high"
     if request.tools is not None:
         payload["tools"] = [dict(tool) for tool in request.tools]
-        if not thinking_enabled:
+        if not _uses_xai_reasoning(model) and not thinking_enabled:
             payload["tool_choice"] = "auto"
     if request.max_output_tokens is not None:
         payload["max_tokens"] = request.max_output_tokens
     return payload
 
 
+def _uses_xai_reasoning(model: str | None) -> bool:
+    return isinstance(model, str) and model.strip().casefold() == "grok-4.6"
+
+
 def map_http_error(status_code: int, response_body: str, secrets: Sequence[str]) -> Exception:
     safe_body = scrub_secrets(response_body, secrets)
     if status_code in {401, 403}:
-        return AuthenticationError("DeepSeek 认证失败。", "请检查 ~/.artcode/config.yml 中的 api_key 是否正确。")
+        return AuthenticationError("模型服务认证失败。", "请检查 ~/.artcode/config.yml 中的 api_key 是否正确。")
     if _looks_like_context_window_error(safe_body):
         return ContextWindowExceededError(
             "模型上下文窗口已超限。",
@@ -181,12 +190,12 @@ def map_http_error(status_code: int, response_body: str, secrets: Sequence[str])
         )
     if _looks_like_thinking_error(safe_body):
         return ThinkingModeUnsupportedError(
-            "DeepSeek 当前不接受 Thinking Mode 参数。",
+            "当前模型服务不接受推理参数。",
             "请尝试关闭 thinking.enabled，或确认当前模型是否支持 Thinking Mode。",
         )
     if status_code in {400, 404, 422}:
-        return ModelError("DeepSeek 请求或模型配置不可用。", f"服务端返回 HTTP {status_code}：{safe_body}")
-    return ModelError("DeepSeek API 返回错误。", f"HTTP {status_code}：{safe_body}")
+        return ModelError("模型请求或模型配置不可用。", f"服务端返回 HTTP {status_code}：{safe_body}")
+    return ModelError("模型 API 返回错误。", f"HTTP {status_code}：{safe_body}")
 
 
 def _events_from_sse_data(
@@ -196,7 +205,7 @@ def _events_from_sse_data(
     try:
         payload = json.loads(data)
     except json.JSONDecodeError as exc:
-        raise StreamInterruptedError("流式响应格式无法解析。", "DeepSeek 返回了非 JSON 的 SSE data。") from exc
+        raise StreamInterruptedError("流式响应格式无法解析。", "模型服务返回了非 JSON 的 SSE data。") from exc
     if not isinstance(payload, dict):
         raise StreamInterruptedError("流式响应结构异常。", "SSE data 顶层不是对象。")
 

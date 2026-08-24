@@ -8,9 +8,10 @@ from artcode.permissions import PermissionState
 from artcode.permissions.service import PermissionService
 from artcode.prompting.assembler import PromptRequestAssembler
 from artcode.providers.events import content_delta_event, done_event
+from artcode.providers.tool_calls import ToolCall
 from artcode.skills import LoadSkillTool, SkillService
-from artcode.skills.execution import SkillExecutionCoordinator
-from artcode.tools import ToolEnvironment, create_default_tool_registry
+from artcode.skills.execution import SkillExecutionCoordinator, _recent_complete_turns
+from artcode.tools import ToolEnvironment, create_default_tool_registry, success_result
 from artcode.tools.execution import ToolExecutionService
 
 
@@ -85,6 +86,27 @@ async def test_isolated_skill_selects_complete_recent_history_and_returns_only_s
 
     _ = [event async for event in loop.run(AgentRunRequest("normal", NORMAL_AGENT_MODE))]
     assert provider.requests[1].model is None
+
+
+def test_isolated_history_zero_omits_prior_turns_and_selected_turn_keeps_tool_protocol_intact() -> None:
+    conversation = ConversationContext(system_prompt="SYSTEM")
+    conversation.append_user("old user")
+    conversation.append_assistant("old answer")
+    conversation.append_user("recent user")
+    call = ToolCall("read-1", "read_file", '{"path":"note.txt"}')
+    conversation.append_assistant_tool_call((call,))
+    conversation.append_tool_result(call, success_result("read_file", "ok", "TOOL-UNIQUE"))
+    conversation.append_assistant("recent answer")
+
+    assert _recent_complete_turns(conversation.export_messages(), 0) == []
+    selected = _recent_complete_turns(conversation.export_messages(), 1)
+
+    assert [message["role"] for message in selected] == ["system", "user", "assistant", "tool", "assistant"]
+    assert selected[1]["content"] == "recent user"
+    assert all("old" not in str(message) for message in selected)
+    assert selected[2]["tool_calls"][0]["id"] == "read-1"
+    assert selected[3]["tool_call_id"] == "read-1"
+    assert "TOOL-UNIQUE" in selected[3]["content"]
 
 
 def _roots(tmp_path: Path) -> tuple[Path, Path, Path]:
