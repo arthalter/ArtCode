@@ -13,6 +13,7 @@ class ProviderRequest:
     tools: tuple[dict[str, Any], ...] | None = None
     max_output_tokens: int | None = None
     thinking_enabled: bool | None = None
+    model: str | None = None
 
     def __post_init__(self) -> None:
         if self.max_output_tokens is not None and (
@@ -23,6 +24,8 @@ class ProviderRequest:
             raise ValueError("max_output_tokens must be a positive integer or None")
         if self.thinking_enabled is not None and not isinstance(self.thinking_enabled, bool):
             raise TypeError("thinking_enabled must be a boolean or None")
+        if self.model is not None and (not isinstance(self.model, str) or not self.model.strip()):
+            raise ValueError("model must be a non-empty string or None")
 
     @classmethod
     def from_parts(
@@ -32,12 +35,14 @@ class ProviderRequest:
         *,
         max_output_tokens: int | None = None,
         thinking_enabled: bool | None = None,
+        model: str | None = None,
     ) -> "ProviderRequest":
         return cls(
             messages=tuple(dict(message) for message in messages),
             tools=None if tools is None else tuple(dict(tool) for tool in tools),
             max_output_tokens=max_output_tokens,
             thinking_enabled=thinking_enabled,
+            model=model,
         )
 
 

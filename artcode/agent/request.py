@@ -13,8 +13,9 @@ from artcode.tools import ToolEnvironment, ToolRegistry, ToolRunContext
 from .events import AgentEvent, context_status_event
 
 if TYPE_CHECKING:
-    from artcode.agent.modes import AgentMode
+    from artcode.agent.modes import AgentMode, ToolAccessPolicy
     from artcode.context_management.manager import ContextManager
+    from artcode.skills.service import SkillService
 
 
 class DurableSystemPromptSource(Protocol):
@@ -29,6 +30,7 @@ class AgentRunRequest:
     max_iterations: int | None = None
     append_user_message: bool = True
     final_summary_on_abnormal_stop: bool = True
+    model_override: str | None = None
 
     def __post_init__(self) -> None:
         value = self.max_iterations
@@ -36,6 +38,10 @@ class AgentRunRequest:
             isinstance(value, bool) or not isinstance(value, int) or value <= 0
         ):
             raise ValueError("max_iterations must be a positive integer or None")
+        if self.model_override is not None and (
+            not isinstance(self.model_override, str) or not self.model_override.strip()
+        ):
+            raise ValueError("model_override must be a non-empty string or None")
 
 
 @dataclass(frozen=True)
@@ -44,6 +50,7 @@ class PreparedModelRequest:
     events: tuple[AgentEvent, ...] = ()
     error_message: str = ""
     consumes_resume_reminder: bool = False
+    tool_policy: ToolAccessPolicy | None = None
 
 
 class RequestPreparer:
@@ -59,6 +66,7 @@ class RequestPreparer:
         *,
         context_manager: ContextManager | None = None,
         durable_prompt: DurableSystemPromptSource | None = None,
+        skill_service: SkillService | None = None,
         resume_reminder_required: bool = False,
     ) -> None:
         self.conversation = conversation
@@ -68,7 +76,9 @@ class RequestPreparer:
         self.permission_state = permission_state
         self.context_manager = context_manager
         self.durable_prompt = durable_prompt
+        self.skill_service = skill_service
         self._resume_reminder_pending = resume_reminder_required
+        self._last_tool_policy: ToolAccessPolicy | None = None
 
     @property
     def resume_reminder_pending(self) -> bool:
@@ -169,6 +179,11 @@ class RequestPreparer:
         if self.context_manager is not None:
             self.context_manager.record_usage(usage, request)
 
+    def consume_skill_model_override(self) -> str | None:
+        if self.skill_service is None:
+            return None
+        return self.skill_service.consume_model_override()
+
     def _assemble(self, mode: AgentMode | None, *, include_tools: bool) -> PromptRequest:
         tools = (
             self.tool_registry.openai_tools(include_internal_metadata=True)
@@ -176,6 +191,11 @@ class RequestPreparer:
             else None
         )
         durable = self.durable_prompt.build_system_prompt() if self.durable_prompt else None
+        skill_snapshot = self.skill_service.refresh() if self.skill_service is not None else None
+        policy = mode.tool_policy if mode is not None else None
+        if policy is not None and skill_snapshot is not None and skill_snapshot.allowed_tool_names is not None:
+            policy = policy.restricted_to(skill_snapshot.allowed_tool_names)
+        self._last_tool_policy = policy
         run_context = (
             ToolRunContext(
                 self.tool_environment,
@@ -192,10 +212,16 @@ class RequestPreparer:
             run_context,
             durable_system_prompt=durable,
             include_resume_reminder=self._resume_reminder_pending,
+            tool_policy=policy,
+            skill_system_messages=(
+                ()
+                if skill_snapshot is None
+                else _skill_messages(skill_snapshot)
+            ),
         )
 
-    @staticmethod
     def _prepared(
+        self,
         request: PromptRequest,
         events: list[AgentEvent],
     ) -> PreparedModelRequest:
@@ -204,6 +230,7 @@ class RequestPreparer:
             tuple(events),
             consumes_resume_reminder=request.includes_resume_reminder,
         )
+            tool_policy=self._last_tool_policy,
 
     def lightweight_event(self, report) -> AgentEvent:
         message = "; ".join(failure.message for failure in report.failures)
@@ -231,3 +258,9 @@ class RequestPreparer:
             report.circuit_open,
             report.message,
         )
+
+
+def _skill_messages(snapshot):
+    from artcode.skills.prompt import skill_prompt_messages
+
+    return skill_prompt_messages(snapshot)

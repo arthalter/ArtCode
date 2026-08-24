@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 class ToolOrigin(StrEnum):
     BUILTIN = "builtin"
     MCP = "mcp"
+    SYSTEM = "system"
 
 
 class ToolEffect(StrEnum):
@@ -54,6 +55,8 @@ class ToolDescriptor:
             raise ValueError("MCP tools must use the external effect")
         if self.origin is ToolOrigin.MCP and self.rule_configurable:
             raise ValueError("MCP tools cannot be rule configurable")
+        if self.origin is ToolOrigin.SYSTEM and self.rule_configurable:
+            raise ValueError("system tools cannot be rule configurable")
 
 
 class DescriptorBackedTool:

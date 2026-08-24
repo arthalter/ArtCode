@@ -100,6 +100,8 @@ async def _help(invocation: CommandInvocation, context: CommandExecutionContext)
                 f"{definition.name} [{definition.command_type.value}] — "
                 f"{definition.description} 用法：{definition.usage[0]}"
             )
+        for name, description, usage in _dynamic_commands(context.controller):
+            lines.append(f"{name} [ai] — {description} 用法：{usage}")
         context.controller.show_command_message("\n".join(lines))
         return CommandFlow.CONTINUE
 
@@ -108,6 +110,16 @@ async def _help(invocation: CommandInvocation, context: CommandExecutionContext)
         return CommandFlow.CONTINUE
     definition = context.registry.resolve(query)
     if definition is None:
+        dynamic = next(
+            (item for item in _dynamic_commands(context.controller) if item[0].lower() == query.lower()),
+            None,
+        )
+        if dynamic is not None:
+            name, description, usage = dynamic
+            context.controller.show_command_message(
+                "\n".join((f"命令：{name}", f"说明：{description}", "类型：ai", f"用法：\n  {usage}"))
+            )
+            return CommandFlow.CONTINUE
         context.controller.show_command_message(
             f"未知命令：{query}。请使用 /help 查看可用命令。"
         )
@@ -192,7 +204,18 @@ async def _clear(invocation: CommandInvocation, context: CommandExecutionContext
     if _reject_argument(invocation, context):
         return CommandFlow.CONTINUE
     context.controller.clear_screen()
+    clear_skills = getattr(context.controller, "clear_skills", None)
+    if callable(clear_skills):
+        clear_skills()
     return CommandFlow.CONTINUE
+
+
+def _dynamic_commands(controller) -> tuple[tuple[str, str, str], ...]:
+    provider = getattr(controller, "get_dynamic_command_definitions", None)
+    if not callable(provider):
+        return ()
+    result = provider()
+    return result if isinstance(result, tuple) else ()
 
 
 async def _status(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:

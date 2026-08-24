@@ -123,6 +123,34 @@ async def test_bootstrap_plain_message_uses_the_composed_agent_loop(
     assert "stopped:natural" in harness.events
 
 
+async def test_bootstrap_skill_slash_command_activates_and_clear_restores_defaults(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    harness = BootstrapHarness(inputs=["/review inspect this", "follow up", "/clear", "after clear", "/exit"])
+    install_bootstrap_fakes(monkeypatch, harness)
+    options = _options(tmp_path)
+    skill_path = options.workspace_path / ".artcode" / "skills" / "review.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text(
+        "---\nname: review\ndescription: Review code changes.\ntools: [read_file]\nmode: shared\n---\nBOOTSTRAP REVIEW SOP",
+        encoding="utf-8",
+    )
+
+    assert await run_application(options) == 0
+
+    agent_requests = [request for request in harness.provider_requests if request.tools is not None]
+    assert len(agent_requests) == 3
+    first, second, after_clear = agent_requests
+    assert "BOOTSTRAP REVIEW SOP" in "\n".join(str(item.get("content", "")) for item in first.messages)
+    assert "BOOTSTRAP REVIEW SOP" in "\n".join(str(item.get("content", "")) for item in second.messages)
+    assert "BOOTSTRAP REVIEW SOP" not in "\n".join(str(item.get("content", "")) for item in after_clear.messages)
+    assert {item["function"]["name"] for item in first.tools or ()} == {"read_file", "load_skill"}
+    assert {item["function"]["name"] for item in after_clear.tools or ()} == {
+        "read_file", "write_file", "edit_file", "run_command", "find_files", "search_text", "load_skill"
+    }
+
+
 async def test_bootstrap_status_command_is_local(
     tmp_path: Path,
     monkeypatch,

@@ -153,7 +153,7 @@ def build_provider_payload(config: ArtCodeConfig, request: ProviderRequest) -> d
     if request.thinking_enabled is not None:
         thinking_enabled = request.thinking_enabled
     payload: dict[str, Any] = {
-        "model": config.model,
+        "model": request.model or config.model,
         "messages": [dict(message) for message in request.messages],
         "stream": True,
         "stream_options": {"include_usage": True},

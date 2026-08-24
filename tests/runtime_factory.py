@@ -83,6 +83,7 @@ def build_test_runtime(
     session_service=None,
     memory_service=None,
     durable_prompt=None,
+    skill_service=None,
 ):
     selected_workspace = workspace or Workspace.from_path(_WORKSPACES[id(config)])
     selected_state = state or RuntimeState(permission_state or PermissionState())
@@ -97,6 +98,7 @@ def build_test_runtime(
         selected_state.permission,
         context_manager=context_manager,
         durable_prompt=durable_prompt,
+        skill_service=skill_service,
     )
     permission_service = PermissionService(
         selected_state.permission,
@@ -135,6 +137,7 @@ def build_test_runtime(
             workspace=str(selected_workspace.root),
         ),
         mcp_report=McpStartupReport(),
+        skill_service=skill_service,
     )
 
 

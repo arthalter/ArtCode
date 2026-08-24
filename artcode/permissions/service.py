@@ -51,6 +51,10 @@ class PermissionService:
             return None
 
         target = permission_target(descriptor, prepared)
+        if descriptor.origin is ToolOrigin.SYSTEM:
+            # System tools do not access the workspace or change permission state.
+            # Their own argument validation remains in the tool implementation.
+            return None
         try:
             decision = self.engine.decide(
                 PermissionRequest(

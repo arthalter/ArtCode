@@ -9,8 +9,16 @@ from artcode.tools import ToolDescriptor, ToolEffect, ToolOrigin
 @dataclass(frozen=True)
 class ToolAccessPolicy:
     allowed_effects: frozenset[ToolEffect] | None = None
+    allowed_names: frozenset[str] | None = None
+
+    def restricted_to(self, names: frozenset[str] | set[str]) -> "ToolAccessPolicy":
+        return ToolAccessPolicy(self.allowed_effects, frozenset(names))
 
     def allows(self, descriptor: ToolDescriptor) -> bool:
+        if descriptor.origin is ToolOrigin.SYSTEM:
+            return True
+        if self.allowed_names is not None and descriptor.name not in self.allowed_names:
+            return False
         if descriptor.origin is ToolOrigin.MCP:
             return True
         if self.allowed_effects is None:
@@ -18,7 +26,7 @@ class ToolAccessPolicy:
         return descriptor.effect in self.allowed_effects
 
     def filter_openai_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if self.allowed_effects is None:
+        if self.allowed_effects is None and self.allowed_names is None:
             return list(tools)
         filtered: list[dict[str, Any]] = []
         for tool in tools:
@@ -30,6 +38,11 @@ class ToolAccessPolicy:
             effect = tool.get("x-artcode-effect")
             if not isinstance(name, str):
                 continue
+            if origin == ToolOrigin.SYSTEM.value:
+                filtered.append(tool)
+                continue
+            if self.allowed_names is not None and name not in self.allowed_names:
+                continue
             if origin == ToolOrigin.MCP.value:
                 filtered.append(tool)
                 continue
@@ -37,7 +50,7 @@ class ToolAccessPolicy:
                 selected_effect = ToolEffect(effect)
             except (TypeError, ValueError):
                 continue
-            if selected_effect in self.allowed_effects:
+            if self.allowed_effects is None or selected_effect in self.allowed_effects:
                 filtered.append(tool)
         return filtered
 

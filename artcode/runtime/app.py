@@ -37,6 +37,8 @@ from artcode.workspace import Workspace
 from artcode.mcp import McpStartupReport
 from artcode.persistence import MemoryService, SessionService
 from artcode.runtime.state import RuntimeState, RuntimeStatusSnapshot, StartupStatusSnapshot
+from artcode.skills.execution import SkillExecutionCoordinator
+from artcode.skills.service import SkillService
 
 
 class TuiApp(Protocol):
@@ -132,10 +134,12 @@ class ArtCodeRuntime:
     memory_service: MemoryService
     startup_status: StartupStatusSnapshot
     mcp_report: McpStartupReport
+    skill_service: SkillService | None
 
     async def run(self) -> int:
         self.tui.show_startup(self.startup_status)
         self.tui.show_mcp_startup(self.mcp_report)
+        self._show_skill_diagnostics()
         while True:
             try:
                 user_input = await self.tui.read_input(self.config.model)
@@ -146,9 +150,12 @@ class ArtCodeRuntime:
             parsed = parse_input(user_input)
             if parsed.route is InputRoute.EMPTY:
                 continue
+            self._show_skill_diagnostics()
 
             if parsed.route is InputRoute.COMMAND:
                 assert parsed.invocation is not None
+                if await self._dispatch_skill_command(parsed.invocation):
+                    continue
                 flow = await self.command_dispatcher.dispatch(parsed.invocation, self)
                 if flow is CommandFlow.EXIT:
                     self.tui.show_exit()
@@ -162,6 +169,31 @@ class ArtCodeRuntime:
 
     def clear_screen(self) -> None:
         self.tui.clear_screen()
+
+    def clear_skills(self) -> None:
+        if self.skill_service is not None:
+            self.skill_service.clear()
+
+    def _show_skill_diagnostics(self) -> None:
+        if self.skill_service is None:
+            return
+        self.skill_service.refresh()
+        diagnostics = self.skill_service.take_unreported_diagnostics()
+        if diagnostics:
+            self.tui.show_help(
+                "Skill 诊断：\n" + "\n".join(item.render() for item in diagnostics)
+            )
+
+    def get_dynamic_command_definitions(self) -> tuple[tuple[str, str, str], ...]:
+        if self.skill_service is None:
+            return ()
+        snapshot = self.skill_service.refresh()
+        active_names = {item.definition.name for item in snapshot.active}
+        return tuple(
+            (f"/{item.name}", item.metadata.description, f"/{item.name} [附加要求]")
+            for item in snapshot.catalog.definitions
+            if item.name in active_names
+        )
 
     def set_display_mode(self, mode: DisplayMode) -> None:
         self.state.set_display_mode(mode)
@@ -242,12 +274,16 @@ class ArtCodeRuntime:
         self.state.set_shell_policy(selected)
         self.tui.show_help(f"Shell 策略已切换为：{selected.value}")
 
-    async def _run_agent(self, user_content, mode) -> None:
+    async def _run_agent(self, user_content, mode, *, model_override: str | None = None) -> None:
         display_mode = DisplayMode.PLAN if mode == PLAN_MODE else DisplayMode.DEFAULT
         self.set_display_mode(display_mode)
         self.tui.show_user_label()
         self.tui.show_assistant_label()
-        request = AgentRunRequest(user_content=user_content, mode=mode)
+        request = AgentRunRequest(
+            user_content=user_content,
+            mode=mode,
+            model_override=model_override,
+        )
         task = asyncio.create_task(self._consume_agent_events(request))
         self._install_generation_cancel_handler(task)
         try:
@@ -257,6 +293,51 @@ class ArtCodeRuntime:
         finally:
             self._remove_generation_cancel_handler()
             self.set_display_mode(DisplayMode.DEFAULT)
+
+    async def _dispatch_skill_command(self, invocation) -> bool:
+        if self.skill_service is None:
+            return False
+        name = invocation.normalized_identifier.removeprefix("/")
+        outcome = self.skill_service.activate(name)
+        if not outcome.ok:
+            return False
+        definition = outcome.definition
+        assert definition is not None
+        content = invocation.argument or f"请执行已激活的 Skill：{definition.name}。"
+        display_mode = DisplayMode.DEFAULT
+        self.set_display_mode(display_mode)
+        self.tui.show_user_label()
+        self.tui.show_assistant_label()
+        coordinator = SkillExecutionCoordinator(self.agent_loop)
+        task = asyncio.create_task(self._consume_skill_events(coordinator, definition, content))
+        self._install_generation_cancel_handler(task)
+        try:
+            await task
+        except asyncio.CancelledError:
+            self.tui.show_cancelled()
+        finally:
+            self._remove_generation_cancel_handler()
+            self.set_display_mode(DisplayMode.DEFAULT)
+        return True
+
+    async def _consume_skill_events(
+        self,
+        coordinator: SkillExecutionCoordinator,
+        definition,
+        content: str,
+    ) -> None:
+        previous_error = self.conversation.last_observer_error
+        async for event in coordinator.run(definition, content):
+            self._handle_agent_event(event)
+        current_error = self.conversation.last_observer_error
+        if current_error is not None and current_error is not previous_error:
+            self._show_persistence_payload(
+                {
+                    "kind": "journal",
+                    "status": "failed",
+                    "message": "当前轮可继续，但下次恢复可能不完整。",
+                }
+            )
 
     async def _consume_agent_events(self, request: AgentRunRequest) -> None:
         previous_error = self.conversation.last_observer_error

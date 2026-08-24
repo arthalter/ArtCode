@@ -68,6 +68,10 @@ class Workspace:
         return self.root / ".artcode" / "config.yml"
 
     @property
+    def project_skills_dir(self) -> Path:
+        return self.root / ".artcode" / "skills"
+
+    @property
     def local_permissions_file(self) -> Path:
         return self.root / "permissions.local.yml"
 

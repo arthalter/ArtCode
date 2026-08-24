@@ -88,9 +88,10 @@ class AgentLoop:
         pending_tool_calls: dict[str, Any] = {}
         try:
             iteration = 1
+            active_model_override = request.model_override
             while request.max_iterations is None or iteration <= request.max_iterations:
                 yield iteration_started_event(iteration, request.max_iterations)
-                turn = await self._collect_model_turn(request.mode)
+                turn = await self._collect_model_turn(request, active_model_override)
                 for event in turn.events:
                     yield event
                 if turn.model_turn is None:
@@ -139,7 +140,10 @@ class AgentLoop:
                 pending_tool_calls = {tool_call.id: tool_call for tool_call in model_turn.tool_calls}
                 yield tool_calls_received_event(len(model_turn.tool_calls))
 
-                plan = self.tool_executor.build_plan(model_turn.tool_calls, request.mode.tool_policy)
+                plan = self.tool_executor.build_plan(
+                    model_turn.tool_calls,
+                    turn.tool_policy or request.mode.tool_policy,
+                )
                 if isinstance(plan, ToolExecutionBlocked):
                     for tool_call, result in _blocked_tool_results(model_turn.tool_calls, plan):
                         result_entry = self.conversation.append_tool_result(
@@ -149,7 +153,11 @@ class AgentLoop:
                         tool_summaries.append(_natural_tool_summary(tool_call, result))
                         pending_tool_calls.pop(tool_call.id, None)
                         yield tool_result_event(tool_call, result)
-                    async for event in self._summarize_if_needed(request, plan.stop_reason):
+                    async for event in self._summarize_if_needed(
+                        request,
+                        plan.stop_reason,
+                        model_override=active_model_override,
+                    ):
                         yield event
                     return
 
@@ -165,9 +173,16 @@ class AgentLoop:
                         pending_tool_calls.pop(tool_call.id, None)
                     yield event
 
+                loaded_model = self.request_preparer.consume_skill_model_override()
+                if loaded_model is not None:
+                    active_model_override = loaded_model
                 iteration += 1
 
-            async for event in self._summarize_if_needed(request, StopReason.ITERATION_LIMIT):
+            async for event in self._summarize_if_needed(
+                request,
+                StopReason.ITERATION_LIMIT,
+                model_override=active_model_override,
+            ):
                 yield event
         except asyncio.CancelledError:
             repaired = self.conversation.repair_incomplete_tool_calls(
@@ -184,6 +199,8 @@ class AgentLoop:
         self,
         request: AgentRunRequest,
         reason: StopReason,
+        *,
+        model_override: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
         if not request.final_summary_on_abnormal_stop:
             yield stopped_event(reason, _stop_message(reason))
@@ -191,7 +208,7 @@ class AgentLoop:
 
         yield final_summary_started_event(reason)
         try:
-            turn = await self._collect_model_turn_without_tools()
+            turn = await self._collect_model_turn_without_tools(model_override)
         except asyncio.CancelledError:
             yield stopped_event(StopReason.USER_CANCELLED, "用户取消了最终总结。")
             return
@@ -209,13 +226,25 @@ class AgentLoop:
             yield model_turn_completed_event(turn.model_turn.text, len(turn.model_turn.tool_calls))
         yield stopped_event(reason, _stop_message(reason))
 
-    async def _collect_model_turn_without_tools(self) -> "_CollectedTurn":
+    async def _collect_model_turn_without_tools(self, model_override: str | None = None) -> "_CollectedTurn":
         self.conversation.repair_incomplete_tool_calls()
-        return await self._collect_contextual_turn(None, include_tools=False)
+        return await self._collect_contextual_turn(
+            None,
+            include_tools=False,
+            model_override=model_override,
+        )
 
-    async def _collect_model_turn(self, mode: AgentMode) -> "_CollectedTurn":
+    async def _collect_model_turn(
+        self,
+        request: AgentRunRequest,
+        model_override: str | None = None,
+    ) -> "_CollectedTurn":
         self.conversation.repair_incomplete_tool_calls()
-        return await self._collect_contextual_turn(mode, include_tools=True)
+        return await self._collect_contextual_turn(
+            request.mode,
+            include_tools=True,
+            model_override=model_override,
+        )
 
     async def compact_context(self) -> AsyncIterator[AgentEvent]:
         if self.context_manager is None:
@@ -241,6 +270,7 @@ class AgentLoop:
         mode: AgentMode | None,
         *,
         include_tools: bool,
+        model_override: str | None = None,
     ) -> "_CollectedTurn":
         try:
             prepared = await self.request_preparer.prepare(
@@ -253,16 +283,27 @@ class AgentLoop:
             message = exc.user_message if isinstance(exc, RequestError) else "模型请求准备失败。"
             return _CollectedTurn([], None, message, exc)
         if prepared.request is None:
-            return _CollectedTurn(list(prepared.events), None, prepared.error_message)
+            return _CollectedTurn(
+                list(prepared.events),
+                None,
+                prepared.error_message,
+                tool_policy=prepared.tool_policy,
+            )
 
-        collected = await self._collect_prepared_model_turn(prepared)
+        collected = await self._collect_prepared_model_turn(prepared, model_override=model_override)
         events = [*prepared.events, *collected.events]
         if collected.model_turn is not None:
             self.request_preparer.record_usage(collected.model_turn.usage, prepared.request)
-            return _CollectedTurn(events, collected.model_turn)
+            return _CollectedTurn(events, collected.model_turn, tool_policy=prepared.tool_policy)
 
         if not isinstance(collected.error, ContextWindowExceededError):
-            return _CollectedTurn(events, None, collected.error_message, collected.error)
+            return _CollectedTurn(
+                events,
+                None,
+                collected.error_message,
+                collected.error,
+                prepared.tool_policy,
+            )
 
         try:
             retry = await self.request_preparer.prepare_emergency_retry(
@@ -273,7 +314,7 @@ class AgentLoop:
             raise
         except Exception as exc:
             message = exc.user_message if isinstance(exc, RequestError) else "紧急上下文准备失败。"
-            return _CollectedTurn(events, None, message, exc)
+            return _CollectedTurn(events, None, message, exc, prepared.tool_policy)
         events.extend(retry.events)
         if retry.request is None:
             return _CollectedTurn(
@@ -281,9 +322,10 @@ class AgentLoop:
                 None,
                 retry.error_message or collected.error_message,
                 collected.error,
+                retry.tool_policy,
             )
 
-        retried = await self._collect_prepared_model_turn(retry)
+        retried = await self._collect_prepared_model_turn(retry, model_override=model_override)
         events.extend(retried.events)
         if retried.model_turn is not None:
             self.request_preparer.record_usage(retried.model_turn.usage, retry.request)
@@ -292,11 +334,14 @@ class AgentLoop:
             retried.model_turn,
             retried.error_message,
             retried.error,
+            retry.tool_policy,
         )
 
     async def _collect_prepared_model_turn(
         self,
         prepared: PreparedModelRequest,
+        *,
+        model_override: str | None = None,
     ) -> "_CollectedTurn":
         request = prepared.request
         if request is None:
@@ -308,6 +353,7 @@ class AgentLoop:
                 request.messages,
                 request.tools,
                 on_dispatch=lambda: self.request_preparer.mark_dispatched(prepared),
+                model=model_override,
             ):
                 if isinstance(item, ModelTurn):
                     return _CollectedTurn(events, item)
@@ -327,6 +373,7 @@ class _CollectedTurn:
     model_turn: ModelTurn | None
     error_message: str = ""
     error: Exception | None = None
+    tool_policy: ToolAccessPolicy | None = None
 
 
 def _stop_message(reason: StopReason) -> str:

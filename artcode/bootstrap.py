@@ -37,6 +37,7 @@ from artcode.prompting.durable import DurablePromptSource
 from artcode.providers import DeepSeekChatProvider
 from artcode.runtime import ArtCodeRuntime, RuntimeState
 from artcode.sandbox import SeatbeltSession
+from artcode.skills import LoadSkillTool, SkillService
 from artcode.security import DangerousCommandValidator
 from artcode.tools import ToolEnvironment, ToolPreview
 from artcode.tools import create_default_tool_registry
@@ -149,6 +150,23 @@ class Bootstrap:
         tool_registry = create_default_tool_registry()
         mcp_manager.register_into(tool_registry)
 
+        command_registry = create_default_registry()
+        skill_service = SkillService.from_paths(
+            workspace.project_skills_dir,
+            app_paths.skills_dir,
+            Path(__file__).with_name("skills") / "builtin",
+            known_tool_names={
+                *(item.name for item in tool_registry.descriptors()),
+                *(item.name for item in getattr(mcp_manager, "adapters", ())),
+            },
+            reserved_commands={
+                identifier
+                for definition in command_registry.definitions(include_hidden=True)
+                for identifier in (definition.name, *definition.aliases)
+            },
+        )
+        skill_service.start()
+        tool_registry.register(LoadSkillTool(skill_service))
         context_manager = ContextManager(
             config.context,
             ContextSummarizer(provider, session.conversation),
@@ -164,6 +182,7 @@ class Bootstrap:
             context_manager=context_manager,
             durable_prompt=prompt_source,
         )
+            skill_service=skill_service,
         await _prepare_restored_context(
             session_service,
             context_manager,
@@ -215,12 +234,13 @@ class Bootstrap:
             tool_environment=tool_environment,
             plan_memory=session.plan_memory,
             agent_loop=agent_loop,
-            command_dispatcher=CommandDispatcher(create_default_registry()),
+            command_dispatcher=CommandDispatcher(command_registry),
             session_service=session_service,
             memory_service=memory_service,
             startup_status=startup_status,
             mcp_report=mcp_manager.report,
         )
+            skill_service=skill_service,
         memory_service.add_callback(runtime.show_memory_report)
         return BootstrappedApplication(runtime, tui, mcp_manager.report)
 

@@ -63,6 +63,15 @@ def test_payload_without_tools_omits_tool_fields() -> None:
     assert "tool_choice" not in payload
 
 
+def test_request_model_override_is_forwarded_without_mutating_default_config() -> None:
+    payload = build_provider_payload(
+        config(False),
+        ProviderRequest.from_parts([{"role": "user", "content": "hi"}], model="skill-model"),
+    )
+
+    assert payload["model"] == "skill-model"
+
+
 def test_summary_options_limit_output_and_disable_thinking() -> None:
     payload = build_provider_payload(
         config(True),

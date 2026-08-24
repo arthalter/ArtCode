@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from artcode.tools import ToolEnvironment, ToolRunContext
 
 if TYPE_CHECKING:
-    from artcode.agent.modes import AgentMode
+    from artcode.agent.modes import AgentMode, ToolAccessPolicy
 
 from .reminder import (
     SystemReminderBuilder,
@@ -34,11 +34,15 @@ class PromptRequestAssembler:
         *,
         durable_system_prompt: str | None = None,
         include_resume_reminder: bool = False,
+        tool_policy: ToolAccessPolicy | None = None,
+        skill_system_messages: Sequence[dict[str, str]] = (),
     ) -> PromptRequest:
         messages = deepcopy(conversation_messages)
         if durable_system_prompt is not None and messages and messages[0].get("role") == "system":
             messages[0]["content"] = durable_system_prompt
-        tools = self._filtered_tools(mode, all_tools)
+        insertion = 1 if messages and messages[0].get("role") == "system" else 0
+        messages[insertion:insertion] = deepcopy(list(skill_system_messages))
+        tools = self._filtered_tools(mode, all_tools, tool_policy=tool_policy)
         if mode is not None:
             all_tool_names = _tool_names(all_tools or [])
             allowed_tool_names = _tool_names(tools or [])
@@ -61,10 +65,14 @@ class PromptRequestAssembler:
         self,
         mode: AgentMode | None,
         all_tools: Sequence[dict[str, Any]] | None,
+        *,
+        tool_policy: ToolAccessPolicy | None = None,
     ) -> list[dict[str, Any]] | None:
         if all_tools is None:
             return None
-        if mode is None:
+        if tool_policy is not None:
+            selected = tool_policy.filter_openai_tools(list(all_tools))
+        elif mode is None:
             selected = list(all_tools)
         else:
             selected = mode.tool_policy.filter_openai_tools(list(all_tools))

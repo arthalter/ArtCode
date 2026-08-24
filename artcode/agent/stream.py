@@ -25,12 +25,13 @@ class StreamCollector:
         tools: Sequence[dict[str, Any]] | None,
         *,
         on_dispatch: Callable[[], None] | None = None,
+        model: str | None = None,
     ) -> AsyncIterator[AgentEvent | ModelTurn]:
         parts: list[str] = []
         reasoning_parts: list[str] = []
         tool_calls: tuple[ToolCall, ...] = ()
         usage: TokenUsage | None = None
-        request = ProviderRequest.from_parts(messages, tools)
+        request = ProviderRequest.from_parts(messages, tools, model=model)
         if on_dispatch is not None:
             on_dispatch()
 
