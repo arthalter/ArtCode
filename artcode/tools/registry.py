@@ -52,6 +52,7 @@ class ToolRegistry:
                 "x-artcode-origin": tool.descriptor.origin.value,
                 "x-artcode-effect": tool.descriptor.effect.value,
                 "x-artcode-rule-configurable": tool.descriptor.rule_configurable,
+                "x-artcode-subagent-allowed": tool.descriptor.subagent_allowed,
                 "function": {
                     "name": tool.descriptor.name,
                     "description": tool.descriptor.description,

@@ -4,6 +4,7 @@ from .config import load_mcp_configuration
 from .manager import McpManager
 from .models import (
     McpConfigIssue,
+    McpLoadingStrategy,
     McpServerConfig,
     McpServerReport,
     McpStartupReport,
@@ -15,6 +16,7 @@ from .models import (
 __all__ = [
     "McpConfigIssue",
     "McpManager",
+    "McpLoadingStrategy",
     "McpServerConfig",
     "McpServerReport",
     "McpStartupReport",

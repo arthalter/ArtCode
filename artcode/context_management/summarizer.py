@@ -239,6 +239,7 @@ class ContextSummarizer:
             snapshot.version,
             (
                 system_entry,
+                *plan.preserved_system_entries,
                 summary_entry,
                 history_marker,
                 *preserved_users,

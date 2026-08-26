@@ -17,7 +17,7 @@ class ReminderContext:
     mode_purpose: str
     allowed_tool_names: tuple[str, ...]
     blocked_tool_names: tuple[str, ...]
-    cwd: Path
+    cwd: Path | None
     platform: str
     workspace: Path | None = None
     permission_mode: str = "default"
@@ -33,7 +33,7 @@ class SystemReminderBuilder:
             f"模式说明：{context.mode_purpose}",
             f"本轮允许工具：{_join_names(context.allowed_tool_names)}。",
             _blocked_tools_line(context.blocked_tool_names),
-            f"当前工作目录：{context.cwd}",
+            f"当前工作目录：{context.cwd or '（未指定）'}",
             f"当前平台：{context.platform}",
             f"Workspace：{context.workspace or context.cwd}",
             f"权限模式：{context.permission_mode}。",
@@ -72,7 +72,7 @@ def collect_runtime_reminder_context(
         mode_purpose=mode.purpose,
         allowed_tool_names=allowed,
         blocked_tool_names=blocked,
-        cwd=tool_context.default_cwd or Path.cwd(),
+        cwd=tool_context.default_cwd,
         platform=_current_platform(),
         workspace=tool_context.default_cwd,
         permission_mode=state.mode.value,

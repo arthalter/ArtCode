@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from artcode.conversation import ConversationContext, ConversationPersistenceRejected
 from artcode.errors import ContextWindowExceededError, RequestError
@@ -49,6 +49,7 @@ class AgentLoop:
         context_manager: ContextManager | None = None,
         natural_turn_observer: CompletedTurnObserver | None = None,
         session_id: str = "ephemeral",
+        before_run: Callable[[], None] | None = None,
     ) -> None:
         self.provider = provider
         self.conversation = conversation
@@ -65,8 +66,11 @@ class AgentLoop:
         self.request_preparer = request_preparer
         self.natural_turn_observer = natural_turn_observer
         self.session_id = session_id
+        self.before_run = before_run
 
     async def run(self, request: AgentRunRequest) -> AsyncIterator[AgentEvent]:
+        if self.before_run is not None:
+            self.before_run()
         # Repair history left by an older interrupted run before appending the
         # next user message, so tool results remain adjacent to tool_calls.
         self.conversation.repair_incomplete_tool_calls()

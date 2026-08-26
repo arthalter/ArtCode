@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Any, Awaitable, Callable
 
 from .adapter import create_adapter
+from .catalog import McpActivationResult, McpCatalog, McpToolSearchTool
 from .config import expand_config
 from .models import (
     FailureStage,
@@ -12,6 +13,7 @@ from .models import (
     McpServerConfig,
     McpServerReport,
     McpStartupReport,
+    McpLoadingStrategy,
     ServerSource,
     ServerState,
 )
@@ -29,14 +31,21 @@ class McpManager:
         workspace,
         issues: tuple[McpConfigIssue, ...] = (),
         approver: StartupApprover | None = None,
+        loading: McpLoadingStrategy = McpLoadingStrategy.EAGER,
     ) -> None:
         self.configs = configs
         self.workspace = workspace
         self.issues = issues
         self.approver = approver
+        self.loading = loading
         self.sessions: dict[str, McpSession] = {}
         self.adapters: tuple[Any, ...] = ()
-        self.report = McpStartupReport(configured_count=len(configs) + len(issues))
+        self.catalog = McpCatalog(())
+        self._activated_names: set[str] = set()
+        self.report = McpStartupReport(
+            configured_count=len(configs) + len(issues),
+            loading_strategy=loading,
+        )
         self._accepting = True
         self._active_calls: set[asyncio.Task[Any]] = set()
         self._started = False
@@ -81,10 +90,15 @@ class McpManager:
                 accepted += 1
             reports.append(_with_registration(report, accepted, registration_issues))
         self.adapters = tuple(adapter_items)
+        self.catalog = McpCatalog(self.adapters)
         self.report = McpStartupReport(
             configured_count=len(self.configs) + len(self.issues),
             server_reports=tuple([*issue_reports, *reports]),
-            registered_tool_count=len(self.adapters),
+            registered_tool_count=(
+                len(self.adapters) if self.loading is McpLoadingStrategy.EAGER else 0
+            ),
+            discovered_tool_count=len(self.adapters),
+            loading_strategy=self.loading,
         )
         self._started = True
         return self.report
@@ -162,6 +176,15 @@ class McpManager:
         if self._registered_registry is not None:
             raise RuntimeError("MCP 工具已经注册到另一个 ToolRegistry。")
 
+        if self.loading is McpLoadingStrategy.LAZY:
+            try:
+                registry.register(McpToolSearchTool(self))
+            except (TypeError, ValueError) as exc:
+                self._registered_registry = registry
+                return (sanitize_external_text(f"mcp_search_tools：{exc}"),)
+            self._registered_registry = registry
+            return ()
+
         conflicts: dict[str, list[str]] = {}
         accepted: list[Any] = []
         for adapter in self.adapters:
@@ -192,8 +215,54 @@ class McpManager:
                 registered_tool_count=len(accepted),
             )
         self.adapters = tuple(accepted)
+        self.catalog = McpCatalog(self.adapters)
+        self._activated_names = {adapter.name for adapter in accepted}
         self._registered_registry = registry
         return tuple(issue for issues in conflicts.values() for issue in issues)
+
+    @property
+    def activated_names(self) -> frozenset[str]:
+        return frozenset(self._activated_names)
+
+    def search(self, query: str, *, limit: int = 5):
+        return self.catalog.search(
+            query,
+            limit=limit,
+            activated_names=self.activated_names,
+        )
+
+    def activate(self, name: str) -> McpActivationResult:
+        if self.loading is not McpLoadingStrategy.LAZY:
+            return McpActivationResult(name, "eager", "当前使用 eager 策略，工具已统一注册。")
+        if not self._accepting or self._closed:
+            return McpActivationResult(name, "closed", "MCP Manager 正在关闭或已经关闭。")
+        if not self._started:
+            return McpActivationResult(name, "not_started", "MCP Manager 尚未启动。")
+        if self._registered_registry is None:
+            return McpActivationResult(name, "registry_unavailable", "ToolRegistry 尚未绑定。")
+        if name in self._activated_names:
+            return McpActivationResult(name, "already_active", "工具已在当前会话激活。")
+        adapter = self.catalog.get(name)
+        if adapter is None:
+            return McpActivationResult(name, "not_found", "目录中不存在该 MCP 工具。")
+        try:
+            self._registered_registry.register(adapter)
+        except (TypeError, ValueError) as exc:
+            return McpActivationResult(
+                name,
+                "conflict",
+                sanitize_external_text(str(exc)),
+            )
+        self._activated_names.add(name)
+        self.report = replace(
+            self.report,
+            registered_tool_count=len(self._activated_names),
+        )
+        return McpActivationResult(name, "activated", "工具已在当前会话激活。")
+
+    def search_and_activate(self, query: str, *, limit: int = 5):
+        hits = self.search(query, limit=limit)
+        return hits, tuple(self.activate(hit.name) for hit in hits)
 
     async def call_tool(self, server_name: str, tool_name: str, arguments: dict[str, Any]):
         if not self._accepting:

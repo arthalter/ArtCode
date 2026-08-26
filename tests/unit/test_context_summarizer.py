@@ -106,6 +106,35 @@ async def test_summarizer_uses_no_tools_and_commits_transactionally() -> None:
         assert context.user_records([user_id])[0].content not in messages[1]["content"]
 
 
+async def test_subagent_system_role_survives_compaction_verbatim() -> None:
+    context = ConversationContext("base-system")
+    context.append_system("ROLE {{VERBATIM}} UNIQUE\n", mode="subagent")
+    for index in range(12):
+        if index % 2 == 0:
+            context.append_user(f"user-{index}")
+        else:
+            context.append_assistant("a" * 100)
+    snapshot = context.snapshot()
+    plan = RetentionPlanner(recent_token_budget=50, minimum_messages=3).plan(snapshot)
+    provider = FakeProvider([content_delta_event(valid_summary()), done_event()])
+
+    result = await ContextSummarizer(provider, context).summarize(snapshot, plan)
+
+    assert result.succeeded
+    messages = context.export_messages()
+    assert messages[0] == {"role": "system", "content": "base-system"}
+    assert messages[1] == {
+        "role": "system",
+        "content": "ROLE {{VERBATIM}} UNIQUE\n",
+    }
+    role_entries = [
+        entry
+        for entry in context.snapshot().entries
+        if entry.payload.get("content") == "ROLE {{VERBATIM}} UNIQUE\n"
+    ]
+    assert len(role_entries) == 1 and role_entries[0].mode == "subagent"
+
+
 async def test_invalid_summary_or_tool_call_preserves_history() -> None:
     context, snapshot, plan = compressible_context()
     before = context.export_messages()

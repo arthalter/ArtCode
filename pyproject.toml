@@ -18,15 +18,13 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
-  "hypothesis>=6.100.0",
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
-  "pytest-cov>=5.0.0",
+  "hypothesis>=6.0",
 ]
 
 [project.scripts]
 artcode = "artcode.cli:main"
-artcode-eval = "artcode.evaluation.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["artcode*"]
@@ -36,6 +34,7 @@ namespaces = false
 "artcode.security" = ["*.yml"]
 "artcode.sandbox" = ["*.sb"]
 "artcode.skills" = ["builtin/.gitkeep"]
+"artcode.subagents" = ["builtin/.gitkeep"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -43,9 +42,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
   "ch10_5: scenarios added for the ch10.5 summary refactor",
-  "live: uses a real external service or operating-system integration",
-  "slow: intentionally long-running verification",
-  "property: randomized or generative invariant verification",
-  "fault: deterministic failure-injection verification",
-  "soak: repeated lifecycle or resource-stability verification",
+  "live: requires a real configured model API and may consume tokens",
+  "soak: long-running lifecycle or stress scenarios",
+  "slow: deliberately slow tests excluded from quick runs",
 ]

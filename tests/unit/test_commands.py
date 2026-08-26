@@ -65,6 +65,9 @@ class FakeController:
     def show_memory(self) -> None:
         self.calls.append(("memory", ""))
 
+    async def drop_worktree(self, task_id: str) -> None:
+        self.calls.append(("worktree-drop", task_id))
+
 
 async def _continue_handler(invocation, context) -> CommandFlow:
     context.controller.show_command_message(invocation.argument)
@@ -278,6 +281,10 @@ def test_default_registry_has_exact_public_command_metadata() -> None:
         "/sandbox": CommandType.UI_STATE,
         "/sessions": CommandType.LOCAL,
         "/memory": CommandType.LOCAL,
+        "/tasks": CommandType.LOCAL,
+        "/task": CommandType.LOCAL,
+        "/task-cancel": CommandType.LOCAL,
+        "/worktree-drop": CommandType.LOCAL,
         "/clear": CommandType.UI_STATE,
         "/status": CommandType.LOCAL,
     }

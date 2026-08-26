@@ -71,11 +71,10 @@ def test_module_entrypoint_uses_the_cli_main_function() -> None:
     assert __main__.main is main
 
 
-def test_console_scripts_keep_distinct_production_and_evaluation_targets() -> None:
+def test_console_scripts_expose_only_production_entrypoint() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert project["project"]["scripts"] == {
         "artcode": "artcode.cli:main",
-        "artcode-eval": "artcode.evaluation.cli:main",
     }
     assert project["tool"]["setuptools"]["packages"]["find"]["namespaces"] is False

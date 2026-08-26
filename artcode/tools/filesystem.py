@@ -21,6 +21,9 @@ class FilePathPolicy(Protocol):
     def is_allowed(self, path: Path) -> bool:
         ...
 
+    def ensure_writable(self, path: Path) -> Path:
+        ...
+
 
 class WorkspaceFileError(OSError):
     error_code = "file_access_error"
@@ -132,6 +135,12 @@ class WorkspaceFileAccess:
         overwrite: bool,
     ) -> Path:
         path = self.verify(snapshot)
+        ensure_writable = getattr(self.policy, "ensure_writable", None)
+        if callable(ensure_writable):
+            try:
+                ensure_writable(path)
+            except ValueError as exc:
+                raise SensitivePathError(str(exc)) from exc
         parent_fd = self._open_parent(snapshot.root, path, create=True)
         temp_name = f".{path.name}.artcode-{secrets.token_hex(8)}.tmp"
         created_temp = False

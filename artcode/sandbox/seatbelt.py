@@ -25,6 +25,9 @@ class SeatbeltSession:
     temp_dir: Path | None = None
     profile_path: Path | None = None
     self_tested: bool = False
+    isolation_root: Path | None = None
+    readable_paths: tuple[Path, ...] = ()
+    writable_paths: tuple[Path, ...] = ()
 
     async def start(self) -> SeatbeltSession:
         if not self.sandbox_exec.is_file():
@@ -39,10 +42,24 @@ class SeatbeltSession:
             sensitive_rules = "\n".join(
                 f"  (subpath {_quote(path)})" for path in sensitive_paths
             )
+            isolation_rule = _isolation_rule(
+                self.isolation_root,
+                (self.workspace, *self.readable_paths),
+            )
+            writable_rules = "\n".join(
+                (
+                    f"  (subpath {_quote(path)})"
+                    if path.is_dir()
+                    else f"  (literal {_quote(path)})"
+                )
+                for path in self.writable_paths
+            )
             profile = (
                 template.replace("{{WORKSPACE}}", _quote(self.workspace))
                 .replace("{{TEMP_DIR}}", _quote(self.temp_dir))
                 .replace("{{SENSITIVE_RULES}}", sensitive_rules or '  (literal "/dev/null/impossible")')
+                .replace("{{ISOLATION_RULE}}", isolation_rule)
+                .replace("{{WRITABLE_RULES}}", writable_rules or '  (literal "/dev/null/impossible")')
             )
             self.profile_path = profile_path
             self.profile_path.write_text(profile, encoding="utf-8")
@@ -83,3 +100,33 @@ class SeatbeltSession:
 
     async def __aexit__(self, *_args: object) -> None:
         self.close()
+
+
+def _isolation_rule(root: Path | None, readable_paths: tuple[Path, ...]) -> str:
+    if root is None:
+        return ""
+    resolved_root = root.resolve()
+    exclusions: list[Path] = []
+    traversal_literals: set[Path] = {resolved_root}
+    for path in readable_paths:
+        resolved = path.resolve()
+        if resolved == resolved_root or resolved_root not in resolved.parents:
+            raise SeatbeltError("Seatbelt 隔离例外必须位于隔离根内。")
+        exclusions.append(resolved)
+        cursor = resolved.parent
+        while cursor != resolved_root and resolved_root in cursor.parents:
+            traversal_literals.add(cursor)
+            cursor = cursor.parent
+    filters = "\n".join(
+        (
+            *(f"    (require-not (literal {_quote(path)}))" for path in sorted(traversal_literals)),
+            *(f"    (require-not (subpath {_quote(path)}))" for path in exclusions),
+        )
+    )
+    return (
+        "(deny file-read* file-write*\n"
+        "  (require-all\n"
+        f"    (subpath {_quote(resolved_root)})\n"
+        f"{filters}\n"
+        "  ))"
+    )

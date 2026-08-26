@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -10,7 +11,7 @@ from artcode.providers.events import TokenUsage
 from artcode.permissions import PermissionState
 from artcode.tools import ToolEnvironment, ToolRegistry, ToolRunContext
 
-from .events import AgentEvent, context_status_event
+from .events import AgentEvent, context_status_event, model_request_event
 
 if TYPE_CHECKING:
     from artcode.agent.modes import AgentMode, ToolAccessPolicy
@@ -51,6 +52,7 @@ class PreparedModelRequest:
     error_message: str = ""
     consumes_resume_reminder: bool = False
     tool_policy: ToolAccessPolicy | None = None
+    cache_prefix_preserved: bool | None = None
 
 
 class RequestPreparer:
@@ -68,6 +70,7 @@ class RequestPreparer:
         durable_prompt: DurableSystemPromptSource | None = None,
         skill_service: SkillService | None = None,
         resume_reminder_required: bool = False,
+        preserve_initial_prefix: bool = False,
     ) -> None:
         self.conversation = conversation
         self.assembler = assembler
@@ -79,6 +82,9 @@ class RequestPreparer:
         self.skill_service = skill_service
         self._resume_reminder_pending = resume_reminder_required
         self._last_tool_policy: ToolAccessPolicy | None = None
+        self._last_dispatched_request: PromptRequest | None = None
+        self._preserve_initial_prefix_pending = preserve_initial_prefix
+        self._initial_cache_prefix_preserved: bool | None = None
 
     @property
     def resume_reminder_pending(self) -> bool:
@@ -86,6 +92,20 @@ class RequestPreparer:
 
     def require_resume_reminder(self) -> None:
         self._resume_reminder_pending = True
+
+    @property
+    def last_tool_policy(self) -> ToolAccessPolicy | None:
+        return self._last_tool_policy
+
+    @property
+    def last_dispatched_request(self) -> PromptRequest | None:
+        return deepcopy(self._last_dispatched_request)
+
+    @property
+    def initial_cache_prefix_preserved(self) -> bool | None:
+        """Whether a fork's first model request retained its frozen parent prefix."""
+
+        return self._initial_cache_prefix_preserved
 
     def preview_request(
         self,
@@ -140,6 +160,18 @@ class RequestPreparer:
             )
 
         trigger = self.context_manager.choose_trigger(estimated)
+        cache_prefix_preserved: bool | None = None
+        if self._preserve_initial_prefix_pending:
+            if trigger is CompressionTrigger.AUTOMATIC:
+                # Forks deliberately keep the exact parent request prefix on their
+                # first turn unless the hard safety boundary requires compaction.
+                trigger = None
+                cache_prefix_preserved = True
+            elif trigger is CompressionTrigger.FORCED:
+                cache_prefix_preserved = False
+            else:
+                cache_prefix_preserved = True
+            self._initial_cache_prefix_preserved = cache_prefix_preserved
         if trigger is not None:
             report = await self.context_manager.compact(self.conversation, trigger)
             events.append(self.compression_event(report, persisted_count))
@@ -147,7 +179,11 @@ class RequestPreparer:
                 return PreparedModelRequest(None, tuple(events), report.message)
             if report.status == "success":
                 request = self._assemble(mode, include_tools=include_tools)
-        return self._prepared(request, events)
+        return self._prepared(
+            request,
+            events,
+            cache_prefix_preserved=cache_prefix_preserved,
+        )
 
     async def prepare_emergency_retry(
         self,
@@ -174,6 +210,9 @@ class RequestPreparer:
             raise ValueError("cannot dispatch an empty prepared request")
         if prepared.consumes_resume_reminder:
             self._resume_reminder_pending = False
+        if prepared.cache_prefix_preserved is not None:
+            self._preserve_initial_prefix_pending = False
+        self._last_dispatched_request = deepcopy(prepared.request)
 
     def record_usage(self, usage: TokenUsage | None, request: PromptRequest) -> None:
         if self.context_manager is not None:
@@ -224,13 +263,17 @@ class RequestPreparer:
         self,
         request: PromptRequest,
         events: list[AgentEvent],
+        *,
+        cache_prefix_preserved: bool | None = None,
     ) -> PreparedModelRequest:
+        events.append(model_request_event(request.tools))
         return PreparedModelRequest(
             request,
             tuple(events),
             consumes_resume_reminder=request.includes_resume_reminder,
-        )
             tool_policy=self._last_tool_policy,
+            cache_prefix_preserved=cache_prefix_preserved,
+        )
 
     def lightweight_event(self, report) -> AgentEvent:
         message = "; ".join(failure.message for failure in report.failures)

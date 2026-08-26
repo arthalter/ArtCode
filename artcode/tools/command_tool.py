@@ -34,6 +34,7 @@ class RunCommandTool(DescriptorBackedTool):
             "additionalProperties": False,
         },
         effect=ToolEffect.SHELL,
+        subagent_allowed=True,
     )
 
     def __init__(self, supervisor: ProcessSupervisor | None = None) -> None:

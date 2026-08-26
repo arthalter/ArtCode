@@ -16,6 +16,8 @@ MCP_CONNECT_TIMEOUT_SECONDS = 10.0
 MCP_SESSION_READ_TIMEOUT_SECONDS = 60.0
 MCP_TOOL_TIMEOUT_SECONDS = 60.0
 MCP_CLOSE_TIMEOUT_SECONDS = 5.0
+MCP_MAX_DISCOVERED_TOOLS = 500
+MCP_MAX_DISCOVERY_PAGES = 100
 
 
 class McpSession:
@@ -63,13 +65,13 @@ class McpSession:
         found: list[Any] = []
         cursor: str | None = None
         seen: set[str] = set()
-        for _ in range(100):
+        for _ in range(MCP_MAX_DISCOVERY_PAGES):
             result = await asyncio.wait_for(
                 self._client.list_tools(cursor=cursor), MCP_CONNECT_TIMEOUT_SECONDS
             )
-            remaining = 100 - len(found)
+            remaining = MCP_MAX_DISCOVERED_TOOLS - len(found)
             found.extend(list(result.tools)[:remaining])
-            if len(found) >= 100:
+            if len(found) >= MCP_MAX_DISCOVERED_TOOLS:
                 self.truncated = bool(result.nextCursor) or len(result.tools) > remaining
                 break
             cursor = result.nextCursor

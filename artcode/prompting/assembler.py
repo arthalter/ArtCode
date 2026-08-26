@@ -90,6 +90,11 @@ def _tool_names(tools: Sequence[dict[str, Any]]) -> tuple[str, ...]:
 
 def _without_internal_metadata(tool: dict[str, Any]) -> dict[str, Any]:
     clean = deepcopy(tool)
-    for key in ("x-artcode-origin", "x-artcode-effect", "x-artcode-rule-configurable"):
+    for key in (
+        "x-artcode-origin",
+        "x-artcode-effect",
+        "x-artcode-rule-configurable",
+        "x-artcode-subagent-allowed",
+    ):
         clean.pop(key, None)
     return clean

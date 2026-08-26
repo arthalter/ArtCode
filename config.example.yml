@@ -15,6 +15,25 @@ thinking:
 context:
   window_tokens: 200000
 
+# 可选：子 Agent 的逻辑模型档位与后台安全工具集合。角色使用 inherit
+# 时沿用主模型；haiku/sonnet/opus 必须在这里显式映射后才能使用。
+agents:
+  models:
+    haiku: your-fast-model-id
+    sonnet: your-balanced-model-id
+    opus: your-strong-model-id
+  background_tools:
+    - read_file
+    - write_file
+    - edit_file
+    - run_command
+    - find_files
+    - search_text
+
+# MCP 工具加载策略：eager（默认，启动时全部注册）或 lazy（按需检索激活）。
+mcp:
+  loading: eager
+
 # 用户级 MCP Server。项目也可以在 <workspace>/.artcode/config.yml 中只声明
 # mcp_servers；同名项目条目会完整替换用户条目。
 mcp_servers:

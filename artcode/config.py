@@ -8,6 +8,7 @@ from typing import Any, Mapping
 import yaml
 
 from .errors import ConfigError
+from .mcp.models import McpLoadingStrategy
 
 
 CONFIG_FILENAME = "config.yml"
@@ -16,10 +17,24 @@ DEFAULT_CONTEXT_WINDOW_TOKENS = 1_000_000
 MIN_CONTEXT_WINDOW_TOKENS = 200_000
 MAX_CONTEXT_WINDOW_TOKENS = 1_000_000
 _TOP_LEVEL_FIELDS = frozenset(
-    {"protocol", "model", "base_url", "api_key", "thinking", "context", "mcp_servers"}
+    {
+        "protocol", "model", "base_url", "api_key", "thinking", "context", "mcp",
+        "mcp_servers", "agents",
+    }
 )
 _THINKING_FIELDS = frozenset({"enabled"})
 _CONTEXT_FIELDS = frozenset({"window_tokens"})
+_MCP_FIELDS = frozenset({"loading"})
+_AGENT_FIELDS = frozenset({"models", "background_tools"})
+_AGENT_MODEL_FIELDS = frozenset({"haiku", "sonnet", "opus"})
+DEFAULT_BACKGROUND_TOOLS = (
+    "read_file",
+    "write_file",
+    "edit_file",
+    "run_command",
+    "find_files",
+    "search_text",
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +56,20 @@ class ContextConfig:
 
 
 @dataclass(frozen=True)
+class AgentConfig:
+    """Configuration intentionally limited to stable, logical model tiers.
+
+    Background concurrency and the foreground grace period are protocol
+    guarantees, rather than user-tunable knobs: four tasks and 120 seconds.
+    """
+
+    models: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    background_tools: tuple[str, ...] = DEFAULT_BACKGROUND_TOOLS
+    max_concurrent_tasks: int = 4
+    foreground_timeout_seconds: float = 120.0
+
+
+@dataclass(frozen=True)
 class ArtCodeConfig:
     protocol: str
     model: str
@@ -51,6 +80,8 @@ class ArtCodeConfig:
         default_factory=lambda: MappingProxyType({})
     )
     context: ContextConfig = ContextConfig()
+    mcp_loading: McpLoadingStrategy = McpLoadingStrategy.EAGER
+    agents: AgentConfig = AgentConfig()
 
 
 def load_config(config_path: Path | str | None = None) -> ArtCodeConfig:
@@ -96,6 +127,8 @@ def parse_config(raw: Any) -> ArtCodeConfig:
         thinking=_parse_thinking(raw.get("thinking")),
         context=_parse_context(raw.get("context")),
         mcp_servers_raw=_parse_mcp_servers(raw),
+        mcp_loading=_parse_mcp(raw.get("mcp")),
+        agents=_parse_agents(raw.get("agents")),
     )
 
 
@@ -154,6 +187,48 @@ def _parse_mcp_servers(raw: dict[str, Any]) -> Mapping[str, Any]:
     if not isinstance(value, dict):
         raise ConfigError("配置字段 mcp_servers 必须是对象/map。")
     return MappingProxyType(dict(value))
+
+
+def _parse_mcp(raw: Any) -> McpLoadingStrategy:
+    if raw is None:
+        return McpLoadingStrategy.EAGER
+    if not isinstance(raw, dict):
+        raise ConfigError("配置字段 mcp 必须是对象/map。")
+    _reject_unknown_keys(raw, _MCP_FIELDS, "配置字段 mcp")
+    value = raw.get("loading", McpLoadingStrategy.EAGER.value)
+    try:
+        return McpLoadingStrategy(value)
+    except (TypeError, ValueError):
+        raise ConfigError("配置字段 mcp.loading 只能是 eager 或 lazy。") from None
+
+
+def _parse_agents(raw: Any) -> AgentConfig:
+    if raw is None:
+        return AgentConfig()
+    if not isinstance(raw, dict):
+        raise ConfigError("配置字段 agents 必须是对象/map。")
+    _reject_unknown_keys(raw, _AGENT_FIELDS, "配置字段 agents")
+    tiers = raw.get("models", {})
+    if not isinstance(tiers, dict):
+        raise ConfigError("配置字段 agents.models 必须是对象/map。")
+    _reject_unknown_keys(tiers, _AGENT_MODEL_FIELDS, "配置字段 agents.models")
+    normalized: dict[str, str] = {}
+    for tier, model in tiers.items():
+        if not isinstance(model, str) or not model.strip():
+            raise ConfigError(f"agents.models.{tier} 必须是非空模型名。")
+        normalized[tier] = model.strip()
+    tools = raw.get("background_tools", list(DEFAULT_BACKGROUND_TOOLS))
+    if not isinstance(tools, list) or any(not isinstance(item, str) or not item for item in tools):
+        raise ConfigError("配置字段 agents.background_tools 必须是工具名字符串列表。")
+    if len(set(tools)) != len(tools):
+        raise ConfigError("配置字段 agents.background_tools 不能包含重复工具。")
+    unknown_tools = sorted(set(tools) - set(DEFAULT_BACKGROUND_TOOLS))
+    if unknown_tools:
+        raise ConfigError(
+            "配置字段 agents.background_tools 只能收窄默认安全工具集合；"
+            f"不允许：{'、'.join(unknown_tools)}。"
+        )
+    return AgentConfig(MappingProxyType(normalized), tuple(tools))
 
 
 def _reject_unknown_keys(raw: Mapping[str, Any], allowed: frozenset[str], path: str) -> None:

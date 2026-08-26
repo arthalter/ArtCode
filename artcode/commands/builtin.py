@@ -58,6 +58,10 @@ def create_default_registry() -> CommandRegistry:
         ),
         _definition("/sessions", "显示当前与最近会话。", ("/sessions",), CommandType.LOCAL, _sessions),
         _definition("/memory", "显示长期记忆摘要。", ("/memory",), CommandType.LOCAL, _memory),
+        _definition("/tasks", "列出当前子 Agent 任务。", ("/tasks",), CommandType.LOCAL, _tasks),
+        _definition("/task", "查看一个子 Agent 任务详情。", ("/task <task-id>",), CommandType.LOCAL, _task, "<task-id>"),
+        _definition("/task-cancel", "取消一个尚未结束的子 Agent 任务。", ("/task-cancel <task-id>",), CommandType.LOCAL, _task_cancel, "<task-id>"),
+        _definition("/worktree-drop", "确认后永久丢弃一个被保留的系统 Worktree 及其分支。", ("/worktree-drop <task-id>",), CommandType.LOCAL, _worktree_drop, "<task-id>"),
         _definition("/clear", "清空当前终端的可见内容。", ("/clear",), CommandType.UI_STATE, _clear),
         _definition("/status", "显示脱敏运行状态。", ("/status",), CommandType.LOCAL, _status),
     )
@@ -73,6 +77,7 @@ def _definition(
     command_type: CommandType,
     handler,
     argument_hint: str | None = None,
+    hidden: bool = False,
 ) -> CommandDefinition:
     return CommandDefinition(
         name=name,
@@ -82,6 +87,7 @@ def _definition(
         command_type=command_type,
         handler=handler,
         argument_hint=argument_hint,
+        hidden=hidden,
     )
 
 
@@ -197,6 +203,37 @@ async def _memory(invocation: CommandInvocation, context: CommandExecutionContex
     if _reject_argument(invocation, context):
         return CommandFlow.CONTINUE
     context.controller.show_memory()
+    return CommandFlow.CONTINUE
+
+
+async def _tasks(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    if _reject_argument(invocation, context):
+        return CommandFlow.CONTINUE
+    context.controller.show_tasks()
+    return CommandFlow.CONTINUE
+
+
+async def _task(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    if not invocation.argument or any(character.isspace() for character in invocation.argument):
+        context.controller.show_command_message("用法：/task <task-id>")
+        return CommandFlow.CONTINUE
+    context.controller.show_task(invocation.argument)
+    return CommandFlow.CONTINUE
+
+
+async def _task_cancel(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    if not invocation.argument or any(character.isspace() for character in invocation.argument):
+        context.controller.show_command_message("用法：/task-cancel <task-id>")
+        return CommandFlow.CONTINUE
+    context.controller.cancel_task(invocation.argument)
+    return CommandFlow.CONTINUE
+
+
+async def _worktree_drop(invocation: CommandInvocation, context: CommandExecutionContext) -> CommandFlow:
+    if not invocation.argument or any(character.isspace() for character in invocation.argument):
+        context.controller.show_command_message("用法：/worktree-drop <task-id>")
+        return CommandFlow.CONTINUE
+    await context.controller.drop_worktree(invocation.argument)
     return CommandFlow.CONTINUE
 
 

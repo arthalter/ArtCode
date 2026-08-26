@@ -20,3 +20,21 @@ def load_live_config() -> ArtCodeConfig:
     if config.api_key.startswith(("your-", "<")):
         pytest.skip("environment blocked: placeholder API key")
     return config
+
+def make_live_provider():
+    """A live provider with generous timeouts for slow thinking models.
+
+    Real tool-using tasks can take minutes; the interactive 60 s read
+    timeout is not appropriate for automated acceptance runs.
+    """
+    import httpx
+
+    from artcode.providers import DeepSeekChatProvider
+
+    config = load_live_config()
+    client = httpx.AsyncClient(
+        timeout=httpx.Timeout(
+            None, connect=30.0, read=300.0, write=30.0, pool=30.0
+        )
+    )
+    return DeepSeekChatProvider(config, client=client), client

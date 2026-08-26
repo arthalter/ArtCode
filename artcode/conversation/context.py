@@ -98,6 +98,34 @@ class ConversationContext:
         context._last_observer_error = None
         return context
 
+    @classmethod
+    def from_messages(
+        cls,
+        messages: Sequence[Message],
+        *,
+        observer: ConversationEntryObserver | None = None,
+    ) -> "ConversationContext":
+        """Build an isolated context from an already prepared model request."""
+        if not messages:
+            raise ValueError("messages cannot be empty")
+        context = cls(observer=None)
+        context._entries = []
+        context._next_id = 1
+        context._version = 0
+        context._user_archive = {}
+        for payload in messages:
+            copied = deepcopy(payload)
+            raw = _tool_result_from_message(copied) if copied.get("role") == "tool" else None
+            entry = context._make_entry(copied, raw_tool_result=raw)
+            context._entries.append(entry)
+            if copied.get("role") == "user" and isinstance(copied.get("content"), str):
+                context._user_archive[entry.id] = UserMessageRecord(
+                    entry.id, copied["content"], len(context._user_archive)
+                )
+        context._observer = observer
+        context._last_observer_error = None
+        return context
+
     @property
     def version(self) -> int:
         return self._version
@@ -117,6 +145,9 @@ class ConversationContext:
 
     def append_assistant(self, content: str, *, mode: str = "normal") -> ConversationEntry:
         return self._append("assistant", content, mode=mode)
+
+    def append_system(self, content: str, *, mode: str = "normal") -> ConversationEntry:
+        return self._append("system", content, mode=mode)
 
     def append_assistant_tool_call(
         self,
@@ -169,6 +200,30 @@ class ConversationContext:
 
     def snapshot(self) -> ConversationSnapshot:
         return ConversationSnapshot(self._version, tuple(deepcopy(self._entries)))
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: ConversationSnapshot,
+        *,
+        observer: ConversationEntryObserver | None = None,
+    ) -> "ConversationContext":
+        """Create an independent context from an instantaneous parent snapshot."""
+        if not snapshot.entries:
+            raise ValueError("conversation snapshot cannot be empty")
+        context = cls(observer=observer)
+        context._entries = list(deepcopy(snapshot.entries))
+        context._version = snapshot.version
+        context._next_id = 1
+        context._user_archive = {}
+        for ordinal, entry in enumerate(context._entries):
+            payload = entry.payload
+            if payload.get("role") == "user" and isinstance(payload.get("content"), str):
+                context._user_archive[entry.id] = UserMessageRecord(entry.id, payload["content"], ordinal)
+            if entry.id.startswith("msg-") and entry.id[4:].isdigit():
+                context._next_id = max(context._next_id, int(entry.id[4:]) + 1)
+        context._last_observer_error = None
+        return context
 
     def user_records(self, ids: Iterable[str]) -> tuple[UserMessageRecord, ...]:
         records = [self._user_archive[item] for item in ids if item in self._user_archive]

@@ -8,6 +8,9 @@
 (allow file-write*
   (subpath {{WORKSPACE}})
   (subpath {{TEMP_DIR}}))
+(allow file-write*
+{{WRITABLE_RULES}})
 (deny file-read* file-write*
 {{SENSITIVE_RULES}})
+{{ISOLATION_RULE}}
 (deny network*)

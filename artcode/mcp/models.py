@@ -10,6 +10,11 @@ class TransportKind(StrEnum):
     STREAMABLE_HTTP = "streamable_http"
 
 
+class McpLoadingStrategy(StrEnum):
+    EAGER = "eager"
+    LAZY = "lazy"
+
+
 class ServerSource(StrEnum):
     USER = "user"
     PROJECT = "project"
@@ -74,6 +79,8 @@ class McpStartupReport:
     configured_count: int = 0
     server_reports: tuple[McpServerReport, ...] = ()
     registered_tool_count: int = 0
+    discovered_tool_count: int = 0
+    loading_strategy: McpLoadingStrategy = McpLoadingStrategy.EAGER
 
     @property
     def connected_count(self) -> int:

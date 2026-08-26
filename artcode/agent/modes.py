@@ -10,13 +10,14 @@ from artcode.tools import ToolDescriptor, ToolEffect, ToolOrigin
 class ToolAccessPolicy:
     allowed_effects: frozenset[ToolEffect] | None = None
     allowed_names: frozenset[str] | None = None
+    allow_system: bool = True
 
     def restricted_to(self, names: frozenset[str] | set[str]) -> "ToolAccessPolicy":
-        return ToolAccessPolicy(self.allowed_effects, frozenset(names))
+        return ToolAccessPolicy(self.allowed_effects, frozenset(names), self.allow_system)
 
     def allows(self, descriptor: ToolDescriptor) -> bool:
         if descriptor.origin is ToolOrigin.SYSTEM:
-            return True
+            return self.allow_system
         if self.allowed_names is not None and descriptor.name not in self.allowed_names:
             return False
         if descriptor.origin is ToolOrigin.MCP:
@@ -26,7 +27,7 @@ class ToolAccessPolicy:
         return descriptor.effect in self.allowed_effects
 
     def filter_openai_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if self.allowed_effects is None and self.allowed_names is None:
+        if self.allowed_effects is None and self.allowed_names is None and self.allow_system:
             return list(tools)
         filtered: list[dict[str, Any]] = []
         for tool in tools:
@@ -39,7 +40,8 @@ class ToolAccessPolicy:
             if not isinstance(name, str):
                 continue
             if origin == ToolOrigin.SYSTEM.value:
-                filtered.append(tool)
+                if self.allow_system:
+                    filtered.append(tool)
                 continue
             if self.allowed_names is not None and name not in self.allowed_names:
                 continue

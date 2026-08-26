@@ -6,6 +6,8 @@ from importlib.resources import files
 from pathlib import Path
 
 from artcode.agent import AgentLoop, NORMAL_AGENT_MODE, RequestPreparer
+from artcode.background import BackgroundTaskManager, TaskNotificationInbox
+from artcode.background.tools import TaskCancelTool, TaskGetTool, TaskListTool
 from artcode.commands import CommandDispatcher, create_default_registry
 from artcode.config import ArtCodeConfig, load_config
 from artcode.context_management import (
@@ -38,12 +40,16 @@ from artcode.providers import DeepSeekChatProvider
 from artcode.runtime import ArtCodeRuntime, RuntimeState
 from artcode.sandbox import SeatbeltSession
 from artcode.skills import LoadSkillTool, SkillService
+from artcode.subagents import RoleCatalog
+from artcode.subagents.factory import SubagentFactory
+from artcode.subagents.tool import AgentTool
 from artcode.security import DangerousCommandValidator
 from artcode.tools import ToolEnvironment, ToolPreview
 from artcode.tools import create_default_tool_registry
 from artcode.tools.execution import ToolExecutionService
 from artcode.tui import PromptToolkitTui, TuiRenderer
 from artcode.workspace import ArtCodePaths, Workspace
+from artcode.worktrees import WorktreeCleanupService, WorktreeManager
 
 
 @dataclass(frozen=True)
@@ -129,6 +135,7 @@ class Bootstrap:
             workspace.root,
             mcp_issues,
             approver=tui.confirm_mcp_server,
+            loading=config.mcp_loading,
         )
         resources.push_async_callback(mcp_manager.close)
         await mcp_manager.start()
@@ -149,7 +156,6 @@ class Bootstrap:
         )
         tool_registry = create_default_tool_registry()
         mcp_manager.register_into(tool_registry)
-
         command_registry = create_default_registry()
         skill_service = SkillService.from_paths(
             workspace.project_skills_dir,
@@ -167,6 +173,7 @@ class Bootstrap:
         )
         skill_service.start()
         tool_registry.register(LoadSkillTool(skill_service))
+
         context_manager = ContextManager(
             config.context,
             ContextSummarizer(provider, session.conversation),
@@ -181,8 +188,8 @@ class Bootstrap:
             state.permission,
             context_manager=context_manager,
             durable_prompt=prompt_source,
-        )
             skill_service=skill_service,
+        )
         await _prepare_restored_context(
             session_service,
             context_manager,
@@ -199,6 +206,54 @@ class Bootstrap:
             approver=approval_port,
             rule_writer=RuleWriter(rule_loader),
         )
+        task_notifications = TaskNotificationInbox()
+        task_manager = BackgroundTaskManager(on_completed=task_notifications.add)
+        resources.push_async_callback(task_manager.close)
+        worktree_manager = WorktreeManager(workspace.root)
+        worktree_cleanup = WorktreeCleanupService(
+            worktree_manager,
+            lambda: (item.task_id for item in task_manager.active()),
+        )
+        await worktree_cleanup.start()
+        resources.push_async_callback(worktree_cleanup.close)
+        role_catalog = RoleCatalog(
+            project_dir=workspace.project_agents_dir,
+            user_dir=app_paths.agents_dir,
+            builtin_dir=Path(__file__).with_name("subagents") / "builtin",
+            plugin_dirs=tuple(
+                candidate / "agents"
+                for candidate in sorted(app_paths.plugins_dir.iterdir())
+                if candidate.is_dir() and not candidate.is_symlink()
+            ) if app_paths.plugins_dir.is_dir() and not app_paths.plugins_dir.is_symlink() else (),
+            model_tiers=config.agents.models,
+        )
+        subagent_factory = SubagentFactory(
+            provider=provider,
+            tool_registry=tool_registry,
+            base_environment=tool_environment,
+            permission_engine=permission_service.engine,
+            context_config=config.context,
+            worktrees=worktree_manager,
+            model_tiers=config.agents.models,
+            background_tools=frozenset(config.agents.background_tools),
+            durable_paths=durable_paths,
+        )
+        tool_registry.register(
+            AgentTool(
+                role_catalog,
+                subagent_factory,
+                task_manager,
+                session.conversation,
+                foreground_timeout_seconds=config.agents.foreground_timeout_seconds,
+                parent_request_provider=lambda: request_preparer.last_dispatched_request,
+                parent_policy_provider=lambda: request_preparer.last_tool_policy,
+            )
+        )
+        tool_registry.register_many((
+            TaskListTool(task_manager),
+            TaskGetTool(task_manager),
+            TaskCancelTool(task_manager),
+        ))
         tool_executor = ToolExecutionService(
             tool_registry,
             tool_environment,
@@ -215,6 +270,7 @@ class Bootstrap:
             request_preparer=request_preparer,
             natural_turn_observer=memory_service,
             session_id=session.status.session_id,
+            before_run=lambda: _inject_task_notifications(session.conversation, task_notifications),
         )
         startup_status = _startup_status(
             config,
@@ -239,8 +295,11 @@ class Bootstrap:
             memory_service=memory_service,
             startup_status=startup_status,
             mcp_report=mcp_manager.report,
-        )
             skill_service=skill_service,
+            task_manager=task_manager,
+            worktree_manager=worktree_manager,
+            startup_worktree_diagnostics=worktree_manager.last_cleanup_diagnostics,
+        )
         memory_service.add_callback(runtime.show_memory_report)
         return BootstrappedApplication(runtime, tui, mcp_manager.report)
 
@@ -311,6 +370,7 @@ def _sensitive_paths(
         app_paths.skills_dir,
         workspace.project_permissions_file,
         workspace.local_permissions_file,
+        workspace.worktrees_root,
         durable_paths.user_instruction,
         durable_paths.project_instruction,
         durable_paths.local_instruction,
@@ -320,6 +380,14 @@ def _sensitive_paths(
         Path(str(files("artcode.security").joinpath("dangerous_commands.yml"))),
         Path(str(files("artcode.sandbox").joinpath("seatbelt.sb"))),
     )
+
+
+def _inject_task_notifications(
+    conversation,
+    inbox: TaskNotificationInbox,
+) -> None:
+    for message in inbox.drain():
+        conversation.append_system(message, mode="task-notification")
 
 
 async def run_application(options: AppOptions) -> int:

@@ -75,6 +75,7 @@ class ToolExecutionService:
         for tool_call in tool_calls:
             descriptor = self.tool_registry.descriptor(tool_call.name)
             if descriptor is None:
+                self._record_runtime_denial(tool_call.name or "unknown_tool", "unknown_tool")
                 return ToolExecutionBlocked(
                     tool_call,
                     error_result(
@@ -84,12 +85,23 @@ class ToolExecutionService:
                     ),
                 )
             if not policy.allows(descriptor):
+                self._record_runtime_denial(tool_call.name, "tool_policy")
                 return ToolExecutionBlocked(
                     tool_call,
                     error_result(
                         tool_call.name,
                         "tool_not_allowed",
                         f"当前模式不允许调用工具：{tool_call.name}",
+                    ),
+                )
+            if not descriptor.subagent_allowed and getattr(self.environment, "is_subagent", False):
+                self._record_runtime_denial(tool_call.name, "subagent_origin_policy")
+                return ToolExecutionBlocked(
+                    tool_call,
+                    error_result(
+                        tool_call.name,
+                        "tool_not_allowed",
+                        f"子 Agent 不允许调用工具：{tool_call.name}",
                     ),
                 )
 
@@ -125,6 +137,11 @@ class ToolExecutionService:
         flush(current_read, ToolSafety.READ_ONLY)
         flush(current_external, ToolSafety.MCP_EXTERNAL)
         return ToolExecutionPlan(tuple(batches))
+
+    def _record_runtime_denial(self, tool_name: str, source: str) -> None:
+        recorder = getattr(self.permission_service, "record_runtime_denial", None)
+        if callable(recorder):
+            recorder(tool_name, source)
 
     async def execute_plan(
         self,

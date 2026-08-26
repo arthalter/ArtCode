@@ -90,6 +90,7 @@ class ReadFileTool(DescriptorBackedTool):
             ["path"],
         ),
         effect=ToolEffect.READ,
+        subagent_allowed=True,
     )
 
     def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:
@@ -133,18 +134,26 @@ class ReadFileTool(DescriptorBackedTool):
 
     async def execute(self, prepared: PreparedToolCall, context: ToolRunContext) -> ToolResult:
         path: Path = prepared.arguments["path"]
-        try:
-            text = WorkspaceFileAccess(context.path_policy).read_text(
-                prepared.arguments["target"]
-            )
-        except FileNotFoundError:
-            return error_result(self.name, "file_not_found", f"文件不存在：{path}")
-        except UnicodeDecodeError:
-            return error_result(self.name, "decode_error", f"文件不是可读取的 UTF-8 文本：{path}")
-        except TargetChangedError as exc:
-            return error_result(self.name, exc.error_code, str(exc))
-        except OSError as exc:
-            return error_result(self.name, "read_error", f"读取文件失败：{exc}")
+        cache = getattr(context.environment, "file_cache", None)
+        is_artifact = bool(prepared.arguments.get("is_artifact"))
+        text = None
+        if cache is not None and not is_artifact:
+            text = cache.get(path)
+        if text is None:
+            try:
+                text = WorkspaceFileAccess(context.path_policy).read_text(
+                    prepared.arguments["target"]
+                )
+            except FileNotFoundError:
+                return error_result(self.name, "file_not_found", f"文件不存在：{path}")
+            except UnicodeDecodeError:
+                return error_result(self.name, "decode_error", f"文件不是可读取的 UTF-8 文本：{path}")
+            except TargetChangedError as exc:
+                return error_result(self.name, exc.error_code, str(exc))
+            except OSError as exc:
+                return error_result(self.name, "read_error", f"读取文件失败：{exc}")
+            if cache is not None:
+                cache.put(path, text)
 
         start_line = prepared.arguments["start_line"]
         end_line = prepared.arguments["end_line"]
@@ -180,6 +189,7 @@ class WriteFileTool(DescriptorBackedTool):
             ["path", "content"],
         ),
         effect=ToolEffect.WRITE,
+        subagent_allowed=True,
     )
 
     def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:
@@ -249,6 +259,7 @@ class EditFileTool(DescriptorBackedTool):
             ["path", "old_text", "new_text"],
         ),
         effect=ToolEffect.WRITE,
+        subagent_allowed=True,
     )
 
     def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:
@@ -328,6 +339,7 @@ class FindFilesTool(DescriptorBackedTool):
             ["pattern"],
         ),
         effect=ToolEffect.READ,
+        subagent_allowed=True,
     )
 
     def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:
@@ -367,6 +379,7 @@ class SearchTextTool(DescriptorBackedTool):
             ["query"],
         ),
         effect=ToolEffect.READ,
+        subagent_allowed=True,
     )
 
     def prepare(self, arguments: dict[str, Any], context: ToolRunContext) -> PreparedToolCall | ToolResult:

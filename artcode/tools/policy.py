@@ -14,14 +14,17 @@ class PathPolicyError(ValueError):
 class WorkspacePathPolicy:
     workspace: Workspace
     sensitive_paths: tuple[Path, ...] = ()
+    readonly_paths: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
         normalized = tuple(path.expanduser().resolve() for path in self.sensitive_paths)
         object.__setattr__(self, "sensitive_paths", normalized)
+        readonly = tuple(path.expanduser().resolve() for path in self.readonly_paths)
+        object.__setattr__(self, "readonly_paths", readonly)
 
     @property
     def allowed_roots(self) -> tuple[Path, ...]:
-        return (self.workspace.root,)
+        return (self.workspace.root, *self.readonly_paths)
 
     def resolve_existing_path(self, raw_path: str, base_dir: Path | None = None) -> Path:
         path = self._raw_to_path(raw_path, base_dir)
@@ -46,7 +49,7 @@ class WorkspacePathPolicy:
 
     def ensure_allowed(self, path: Path) -> Path:
         resolved = path.expanduser().resolve()
-        if not self.workspace.contains(resolved):
+        if not any(resolved == root or root in resolved.parents for root in self.allowed_roots):
             raise PathPolicyError(f"路径位于 Workspace 外：{resolved}")
         self.ensure_not_sensitive(resolved)
         return resolved
@@ -58,6 +61,13 @@ class WorkspacePathPolicy:
                 raise PathPolicyError(f"拒绝访问敏感路径：{resolved}")
         return resolved
 
+    def ensure_writable(self, path: Path) -> Path:
+        resolved = self.ensure_allowed(path)
+        for readonly in self.readonly_paths:
+            if resolved == readonly or readonly in resolved.parents:
+                raise PathPolicyError(f"拒绝写入共享只读路径：{resolved}")
+        return resolved
+
     def is_allowed(self, path: Path) -> bool:
         try:
             self.ensure_allowed(path)
@@ -66,7 +76,15 @@ class WorkspacePathPolicy:
         return True
 
     def relative_target(self, path: Path) -> str:
-        return self.workspace.relative_path(self.ensure_allowed(path))
+        resolved = self.ensure_allowed(path)
+        if self.workspace.contains(resolved):
+            return self.workspace.relative_path(resolved)
+        for readonly in self.readonly_paths:
+            if resolved == readonly or readonly in resolved.parents:
+                relative = resolved.relative_to(readonly)
+                suffix = "." if not relative.parts else relative.as_posix()
+                return f"共享只读依赖/{readonly.name}/{suffix}"
+        raise PathPolicyError(f"路径位于 Workspace 外：{resolved}")
 
     def _raw_to_path(self, raw_path: str, base_dir: Path | None = None) -> Path:
         if not isinstance(raw_path, str):

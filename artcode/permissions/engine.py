@@ -13,6 +13,15 @@ from .models import (
 )
 from .rules import RuleLoader
 
+
+PERSISTENT_RULE_SOURCES = frozenset(
+    {RuleSource.USER, RuleSource.PROJECT, RuleSource.LOCAL}
+)
+
+
+def is_persistent_rule_decision(decision: PermissionDecision) -> bool:
+    return decision.source in PERSISTENT_RULE_SOURCES
+
 class PermissionEngine:
     def __init__(
         self,

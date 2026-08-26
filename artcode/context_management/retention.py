@@ -13,6 +13,7 @@ from .models import RECENT_HISTORY_TOKENS, RECENT_MINIMUM_MESSAGES
 class RetentionPlan:
     compactable_entries: tuple[ConversationEntry, ...]
     preserved_user_entries: tuple[ConversationEntry, ...]
+    preserved_system_entries: tuple[ConversationEntry, ...]
     recent_entries: tuple[ConversationEntry, ...]
     summarized_user_ids: tuple[str, ...]
 
@@ -33,7 +34,7 @@ class RetentionPlanner:
     def plan(self, snapshot: ConversationSnapshot) -> RetentionPlan:
         entries = snapshot.entries
         if len(entries) <= 1:
-            return RetentionPlan((), (), entries[1:], ())
+            return RetentionPlan((), (), (), entries[1:], ())
 
         units = _history_units(entries)
         tokens = 0
@@ -57,14 +58,21 @@ class RetentionPlanner:
             recent_start = min(recent_start, protected_start)
 
         if recent_start <= 1:
-            return RetentionPlan((), (), entries[1:], ())
+            return RetentionPlan((), (), (), entries[1:], ())
 
         historical = entries[1:recent_start]
         preserved_users = tuple(
             entry for entry in historical if entry.payload.get("role") == "user"
         )
+        preserved_system = tuple(
+            entry
+            for entry in historical
+            if entry.payload.get("role") == "system" and entry.mode == "subagent"
+        )
         compactable = tuple(
-            entry for entry in historical if entry.payload.get("role") != "user"
+            entry
+            for entry in historical
+            if entry.payload.get("role") != "user" and entry not in preserved_system
         )
         recent = entries[recent_start:]
         summarized_ids: list[str] = []
@@ -82,10 +90,11 @@ class RetentionPlanner:
                 seen.add(entry.id)
 
         if not compactable:
-            return RetentionPlan((), (), entries[1:], ())
+            return RetentionPlan((), (), (), entries[1:], ())
         return RetentionPlan(
             compactable,
             preserved_users,
+            preserved_system,
             recent,
             tuple(summarized_ids),
         )

@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from collections.abc import Mapping
+import hashlib
+import json
+import re
 from typing import Any, Protocol
 
 from artcode.providers.events import TokenUsage
@@ -23,12 +26,14 @@ class AgentEventType(StrEnum):
     ITERATION_STARTED = "iteration_started"
     TEXT_DELTA = "text_delta"
     MODEL_TURN_COMPLETED = "model_turn_completed"
+    MODEL_REQUEST = "model_request"
     TOOL_CALLS_RECEIVED = "tool_calls_received"
     TOOL_BATCH_STARTED = "tool_batch_started"
     TOOL_RESULT = "tool_result"
     TOKEN_USAGE = "token_usage"
     FINAL_SUMMARY_STARTED = "final_summary_started"
     CONTEXT_STATUS = "context_status"
+    PERMISSION_AUDIT = "permission_audit"
     STOPPED = "stopped"
 
 
@@ -84,6 +89,38 @@ def model_turn_completed_event(text: str, tool_call_count: int) -> AgentEvent:
     return AgentEvent(
         AgentEventType.MODEL_TURN_COMPLETED,
         {"text": text, "tool_call_count": tool_call_count},
+    )
+
+
+def model_request_event(tools: tuple[dict[str, Any], ...] | None) -> AgentEvent:
+    """Describe the exact tool-definition payload without storing its contents."""
+
+    definitions = [] if tools is None else list(tools)
+    canonical = json.dumps(
+        definitions,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    encoded = canonical.encode("utf-8")
+    return AgentEvent(
+        AgentEventType.MODEL_REQUEST,
+        {
+            "tool_count": len(definitions),
+            "tool_definition_bytes": len(encoded),
+            "tool_definition_tokens": len(
+                re.findall(r"[\w]+|[^\w\s]", canonical, flags=re.UNICODE)
+            ),
+            "tokenizer": "utf8_regex_v1",
+            "tool_payload_sha256": hashlib.sha256(encoded).hexdigest(),
+        },
+    )
+
+
+def permission_audit_event(event: str, **payload: Any) -> AgentEvent:
+    return AgentEvent(
+        AgentEventType.PERMISSION_AUDIT,
+        {"event": event, **payload},
     )
 
 

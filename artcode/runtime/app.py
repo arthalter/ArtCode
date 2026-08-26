@@ -39,6 +39,9 @@ from artcode.persistence import MemoryService, SessionService
 from artcode.runtime.state import RuntimeState, RuntimeStatusSnapshot, StartupStatusSnapshot
 from artcode.skills.execution import SkillExecutionCoordinator
 from artcode.skills.service import SkillService
+from artcode.background import BackgroundTaskManager
+from artcode.background.presentation import render_handoff, render_usage
+from artcode.worktrees import WorktreeManager
 
 
 class TuiApp(Protocol):
@@ -135,17 +138,27 @@ class ArtCodeRuntime:
     startup_status: StartupStatusSnapshot
     mcp_report: McpStartupReport
     skill_service: SkillService | None
+    task_manager: BackgroundTaskManager | None
+    startup_worktree_diagnostics: tuple[str, ...]
+    worktree_manager: WorktreeManager | None
 
     async def run(self) -> int:
         self.tui.show_startup(self.startup_status)
         self.tui.show_mcp_startup(self.mcp_report)
+        if self.startup_worktree_diagnostics:
+            details = "\n".join(
+                f"- {message}" for message in self.startup_worktree_diagnostics
+            )
+            self.tui.show_help(f"遗留 Worktree 检查：\n{details}")
         self._show_skill_diagnostics()
         while True:
             try:
                 user_input = await self.tui.read_input(self.config.model)
             except UserRequestedExit:
-                self.tui.show_exit()
-                return 0
+                if await self._confirm_exit_with_active_tasks():
+                    self.tui.show_exit()
+                    return 0
+                continue
 
             parsed = parse_input(user_input)
             if parsed.route is InputRoute.EMPTY:
@@ -158,8 +171,9 @@ class ArtCodeRuntime:
                     continue
                 flow = await self.command_dispatcher.dispatch(parsed.invocation, self)
                 if flow is CommandFlow.EXIT:
-                    self.tui.show_exit()
-                    return 0
+                    if await self._confirm_exit_with_active_tasks():
+                        self.tui.show_exit()
+                        return 0
                 continue
 
             await self._run_agent(parsed.message, NORMAL_AGENT_MODE)
@@ -173,6 +187,121 @@ class ArtCodeRuntime:
     def clear_skills(self) -> None:
         if self.skill_service is not None:
             self.skill_service.clear()
+
+    def show_tasks(self) -> None:
+        if self.task_manager is None:
+            self.tui.show_help("子 Agent 任务管理器尚未启用。")
+            return
+        items = self.task_manager.list()
+        if not items:
+            self.tui.show_help("当前没有子 Agent 任务。")
+            return
+        now = __import__("time").monotonic()
+        lines = ["子 Agent 任务："]
+        for item in items:
+            since = item.started_at or item.queued_at
+            until = item.finished_at or now
+            elapsed = max(0.0, until - since)
+            retained = (
+                "待定"
+                if item.worktree_retained is None
+                else "是" if item.worktree_retained else "否"
+            )
+            lines.append(
+                f"{item.task_id} type={item.kind} role={item.role_name or '-'} "
+                f"status={item.status.value} mode={'后台' if item.background else '前台'} "
+                f"running={elapsed:.1f}s worktree={'yes' if item.worktree_required else 'no'} "
+                f"retained={retained}"
+            )
+        self.tui.show_help("\n".join(lines))
+
+    def show_task(self, task_id: str) -> None:
+        if self.task_manager is None:
+            self.tui.show_help("子 Agent 任务管理器尚未启用。")
+            return
+        detail = self.task_manager.get(task_id)
+        if detail is None:
+            self.tui.show_help("找不到指定任务。")
+            return
+        result = detail.result
+        lines = [
+            f"任务：{detail.task_id}",
+            f"状态：{detail.status.value}",
+            f"类型：{detail.kind}；角色：{detail.role_name or '-'}",
+            f"错误：{detail.error_message or '-'}",
+        ]
+        if result is not None:
+            lines.extend((
+                f"停止原因：{result.stop_reason.value}",
+                f"轮次：{result.rounds}",
+                f"用量：{render_usage(result.usage)}",
+                f"Fork 前缀保真：{('不适用' if result.cache_prefix_preserved is None else str(result.cache_prefix_preserved).lower())}",
+                f"结果：\n{result.final_text or '（无）'}",
+                "权限事件：\n" + ("\n".join(str(item) for item in result.permission_events) or "（无）"),
+                f"Git 交接：{render_handoff(result.handoff)}",
+            ))
+        self.tui.show_help("\n".join(lines))
+
+    def cancel_task(self, task_id: str) -> None:
+        if self.task_manager is None:
+            self.tui.show_help("子 Agent 任务管理器尚未启用。")
+            return
+        if self.task_manager.cancel(task_id):
+            self.tui.show_help(f"已请求取消任务：{task_id}。已完成的文件操作不会回滚。")
+        else:
+            self.tui.show_help("任务不存在或已经结束。")
+
+    async def drop_worktree(self, task_id: str) -> None:
+        if self.worktree_manager is None:
+            self.tui.show_help("Worktree 管理器尚未启用。")
+            return
+        try:
+            lease = self.worktree_manager.find(task_id)
+        except ValueError as exc:
+            self.tui.show_help(str(exc))
+            return
+        if lease is None:
+            self.tui.show_help("找不到可丢弃的系统 Worktree（可能已被清理或不属于本仓库）。")
+            return
+        status = self.worktree_manager.status(lease)
+        confirmed = await self.tui.confirm_worktree_discard(
+            task_id, lease.path, lease.branch, status
+        )
+        if not confirmed:
+            self.tui.show_help("已取消丢弃，未删除任何内容。")
+            return
+        try:
+            self.worktree_manager.discard(task_id)
+        except Exception as exc:
+            self.tui.show_error(f"丢弃 Worktree 失败：{exc}")
+            return
+        self.tui.show_help(
+            f"已丢弃 Worktree：{lease.path}（分支 {lease.branch} 与归属元数据已删除）。"
+        )
+
+    async def _confirm_exit_with_active_tasks(self) -> bool:
+        if self.task_manager is None:
+            return True
+        active = self.task_manager.active()
+        if not active:
+            return True
+        chooser = getattr(self.tui, "choose_active_task_exit", None)
+        if not callable(chooser):
+            # Non-interactive ports cannot silently abandon children.
+            return False
+        choice = await chooser(active)
+        if choice == "return":
+            return False
+        if choice == "wait":
+            self.tui.show_help("正在等待全部子 Agent 任务完成……")
+            await self.task_manager.wait_all()
+            return True
+        if choice == "cancel":
+            self.tui.show_help("正在取消活动任务并执行 Worktree 成果保护……")
+            await self.task_manager.cancel_all()
+            return True
+        self.tui.show_help("未识别退出选择，已返回 ArtCode。")
+        return False
 
     def _show_skill_diagnostics(self) -> None:
         if self.skill_service is None:
@@ -291,7 +420,7 @@ class ArtCodeRuntime:
         except asyncio.CancelledError:
             self.tui.show_cancelled()
         finally:
-            self._remove_generation_cancel_handler()
+            await self._remove_generation_cancel_handler()
             self.set_display_mode(DisplayMode.DEFAULT)
 
     async def _dispatch_skill_command(self, invocation) -> bool:
@@ -316,7 +445,7 @@ class ArtCodeRuntime:
         except asyncio.CancelledError:
             self.tui.show_cancelled()
         finally:
-            self._remove_generation_cancel_handler()
+            await self._remove_generation_cancel_handler()
             self.set_display_mode(DisplayMode.DEFAULT)
         return True
 
@@ -432,11 +561,28 @@ class ArtCodeRuntime:
             loop = asyncio.get_running_loop()
             loop.add_signal_handler(signal.SIGINT, task.cancel)
         except (NotImplementedError, RuntimeError):
-            return
+            pass
+        begin_controls = getattr(self.tui, "begin_generation_controls", None)
+        if callable(begin_controls):
+            begin_controls(task.cancel, self._promote_foreground_task)
 
-    def _remove_generation_cancel_handler(self) -> None:
+    async def _remove_generation_cancel_handler(self) -> None:
         try:
             loop = asyncio.get_running_loop()
             loop.remove_signal_handler(signal.SIGINT)
         except (NotImplementedError, RuntimeError):
+            pass
+        end_controls = getattr(self.tui, "end_generation_controls", None)
+        if callable(end_controls):
+            result = end_controls()
+            if asyncio.iscoroutine(result):
+                await result
+
+    def _promote_foreground_task(self) -> None:
+        if self.task_manager is None:
             return
+        task_id = self.task_manager.promote_current_foreground()
+        if task_id is not None:
+            self.tui.show_help(
+                f"已将 {task_id} 切换到后台；任务、消息、用量和 Worktree 保持不变。"
+            )

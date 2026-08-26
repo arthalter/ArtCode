@@ -7,6 +7,8 @@ from .events import (
     StopReason,
     TokenUsage,
     context_status_event,
+    model_request_event,
+    permission_audit_event,
 )
 from .loop import AgentLoop
 from .request import AgentRunRequest, PreparedModelRequest, RequestPreparer
@@ -38,6 +40,8 @@ __all__ = [
     "StreamCollector",
     "TokenUsage",
     "context_status_event",
+    "model_request_event",
+    "permission_audit_event",
     "ToolAccessPolicy",
     "ToolExecutionBatch",
     "ToolExecutionPlan",

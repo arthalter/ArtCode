@@ -4,7 +4,13 @@ import pytest
 
 from pathlib import Path
 
-from artcode.config import ArtCodeConfig, ContextConfig, load_config, parse_config
+from artcode.config import (
+    ArtCodeConfig,
+    ContextConfig,
+    DEFAULT_BACKGROUND_TOOLS,
+    load_config,
+    parse_config,
+)
 from artcode.errors import ConfigError
 from artcode.runtime.state import StartupStatusSnapshot
 
@@ -169,3 +175,48 @@ def test_default_config_path_is_artcode_home(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     with pytest.raises(ConfigError, match=r"\.artcode/config.yml"):
         load_config()
+
+
+def test_agents_defaults_are_fixed_safe_protocol_values() -> None:
+    agents = parse_config(valid_raw()).agents
+
+    assert agents.models == {}
+    assert agents.background_tools == DEFAULT_BACKGROUND_TOOLS
+    assert agents.max_concurrent_tasks == 4
+    assert agents.foreground_timeout_seconds == 120.0
+
+
+def test_agents_accept_logical_model_tiers_and_safe_tool_subset() -> None:
+    raw = valid_raw()
+    raw["agents"] = {
+        "models": {"haiku": "fast", "sonnet": "balanced", "opus": "deep"},
+        "background_tools": ["read_file", "search_text"],
+    }
+
+    agents = parse_config(raw).agents
+
+    assert dict(agents.models) == {
+        "haiku": "fast",
+        "sonnet": "balanced",
+        "opus": "deep",
+    }
+    assert agents.background_tools == ("read_file", "search_text")
+
+
+@pytest.mark.parametrize(
+    "agents",
+    (
+        {"unknown": {}},
+        {"models": {"inherit": "x"}},
+        {"models": {"haiku": ""}},
+        {"background_tools": ["read_file", "read_file"]},
+        {"background_tools": ["agent"]},
+        {"background_tools": "read_file"},
+    ),
+)
+def test_agents_reject_unknown_or_widening_configuration(agents) -> None:
+    raw = valid_raw()
+    raw["agents"] = agents
+
+    with pytest.raises(ConfigError):
+        parse_config(raw)

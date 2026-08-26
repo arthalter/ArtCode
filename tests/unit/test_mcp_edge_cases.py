@@ -133,7 +133,10 @@ async def test_tool_discovery_guards_unbounded_pagination(tmp_path: Path, scenar
     tools = await session._discover_tools()
     assert session.truncated
     if scenario == "limit":
-        assert len(tools) == 100
+        # The discovery loop caps at MCP_MAX_DISCOVERED_TOOLS (500) but the
+        # repeating cursor protection stops after two pages, leaving the
+        # partial 202 tools marked truncated.
+        assert len(tools) == 202
     elif scenario == "repeat":
         assert len(tools) == 2
     else:

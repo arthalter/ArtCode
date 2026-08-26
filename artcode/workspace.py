@@ -18,6 +18,7 @@ class ArtCodePaths:
         root.mkdir(parents=True, exist_ok=True)
         paths = cls(root)
         paths.skills_dir.mkdir(parents=True, exist_ok=True)
+        paths.agents_dir.mkdir(parents=True, exist_ok=True)
         return paths
 
     @property
@@ -31,6 +32,15 @@ class ArtCodePaths:
     @property
     def skills_dir(self) -> Path:
         return self.home / "skills"
+
+    @property
+    def agents_dir(self) -> Path:
+        """User-maintained sub-agent role definitions."""
+        return self.home / "agents"
+
+    @property
+    def plugins_dir(self) -> Path:
+        return self.home / "plugins"
 
     @property
     def user_instruction_file(self) -> Path:
@@ -70,6 +80,22 @@ class Workspace:
     @property
     def project_skills_dir(self) -> Path:
         return self.root / ".artcode" / "skills"
+
+    @property
+    def project_agents_dir(self) -> Path:
+        return self.root / ".artcode" / "agents"
+
+    @property
+    def worktrees_root(self) -> Path:
+        return self.root / ".artcode" / "worktrees"
+
+    @property
+    def worktree_metadata_dir(self) -> Path:
+        return self.worktrees_root / ".metadata"
+
+    @property
+    def worktree_rules_file(self) -> Path:
+        return self.root / ".artcode" / "worktree.yml"
 
     @property
     def local_permissions_file(self) -> Path:
