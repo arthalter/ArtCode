@@ -1,0 +1,27 @@
+version: 1
+tasks:
+  - id: lookup_customer_risk
+    query: customer fraud risk
+    target_remote_name: lookup_customer_risk
+    arguments: {value: customer-42}
+    expected: customer-42
+  - id: summarize_release_notes
+    query: summarize product release notes
+    target_remote_name: summarize_release_notes
+    arguments: {value: v4.2}
+    expected: v4.2
+  - id: calculate_shipping_quote
+    query: calculate shipping quote postal code
+    target_remote_name: calculate_shipping_quote
+    arguments: {value: "200000"}
+    expected: "200000"
+  - id: inspect_build_artifact
+    query: inspect build artifact checksum
+    target_remote_name: inspect_build_artifact
+    arguments: {value: artifact-17}
+    expected: artifact-17
+  - id: resolve_incident_owner
+    query: resolve incident owner
+    target_remote_name: resolve_incident_owner
+    arguments: {value: incident-9}
+    expected: incident-9

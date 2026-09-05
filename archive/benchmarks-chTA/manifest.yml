@@ -1,0 +1,72 @@
+version: 1
+name: artcode-chta-system-efficiency
+model:
+  provider: deepseek
+  name: deepseek-chat
+budget:
+  max_iterations: 30
+  max_output_tokens: 8192
+  timeout_seconds: 1800
+revisions:
+  swebench_repository: https://github.com/microsoft/SWE-bench-Live.git
+  swebench_revision: ad79b850f15e33992e96f03f6e97f05ddf9aa0be
+  dataset: SWE-bench-Live/SWE-bench-Live
+  dataset_revision: a637bd46829f3132e12938c8a0ca93173a977b8e
+  split: verified
+  baseline_commit: a987d15aa71f87596564111632125070b449b5b6
+  candidate_commit: 92a28a7d271dfeb1087f68db13d79eb7fac75f21
+experiments:
+  - id: mcp_lazy_loading
+    kind: mcp
+    baseline:
+      id: eager
+      mechanism: eager
+    candidate:
+      id: lazy
+      mechanism: lazy
+    repetitions: 3
+    tasks:
+      - lookup_customer_risk
+      - summarize_release_notes
+      - calculate_shipping_quote
+      - inspect_build_artifact
+      - resolve_incident_owner
+    parameters:
+      tool_count: 120
+      tokenizer: utf8_regex_v1
+      target_task_count: 5
+  - id: permission_reuse
+    kind: permission
+    baseline:
+      id: once
+      mechanism: allow_once
+    candidate:
+      id: always
+      mechanism: exact_rule_reuse
+    repetitions: 1
+    tasks:
+      - fixed_side_effect_replay
+    parameters:
+      target_count: 5
+      repeats_per_target: 6
+      negative_controls:
+        - dangerous_command
+        - similar_path
+        - shared_command_prefix
+  - id: swebench_live
+    kind: swebench
+    baseline:
+      id: before_retention_fix
+      mechanism: a987d15aa71f87596564111632125070b449b5b6
+    candidate:
+      id: after_retention_fix
+      mechanism: 92a28a7d271dfeb1087f68db13d79eb7fac75f21
+    repetitions: 1
+    tasks:
+      - fixed_gold_valid_python_pilot
+    parameters:
+      language: python
+      sample_size: 6
+      gold_repetitions: 3
+      seed: 20260813
+      candidate_limit: 30

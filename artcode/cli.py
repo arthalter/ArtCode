@@ -1,41 +1,56 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 from pathlib import Path
 
-from .config import load_config
-from .conversation import ConversationContext
-from .errors import ConfigError
-from .providers import OpenAICompatibleProvider
-from .runtime import ArtCodeRuntime
-from .tools import AllowedPathPolicy, ToolExecutionContext, create_default_tool_registry
-from .tui import PromptToolkitTui, TuiRenderer
+from artcode._application import LocalApplication
+from artcode.adapters import TerminalAdapter, run_terminal
+from artcode.core.application import ApplicationOptions
+from artcode.core.session import SessionSelection
 
 
-async def run_app(config_path: Path | None = None) -> int:
-    renderer = TuiRenderer()
-    try:
-        config = load_config(config_path)
-    except ConfigError as exc:
-        renderer.show_startup_error(exc)
-        return 2
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="artcode")
+    parser.add_argument("--workspace", type=Path, default=Path.cwd())
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--artcode-home", type=Path)
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--new", action="store_true", dest="new_session")
+    selection.add_argument("--resume", metavar="SESSION_ID")
+    return parser
 
-    provider = OpenAICompatibleProvider(config)
-    path_policy = AllowedPathPolicy(config.tools.allowed_dirs)
-    runtime = ArtCodeRuntime(
-        config=config,
-        provider=provider,
-        conversation=ConversationContext(),
-        tui=PromptToolkitTui(renderer=renderer),
-        tool_registry=create_default_tool_registry(),
-        tool_context=ToolExecutionContext(path_policy, default_cwd=config.tools.allowed_dirs[0]),
+
+def parse_options(args: argparse.Namespace) -> ApplicationOptions:
+    home = (args.artcode_home or (Path.home() / ".artcode")).expanduser().resolve(strict=False)
+    config = (args.config or (home / "config.yml")).expanduser().resolve(strict=False)
+    workspace = args.workspace.expanduser().resolve(strict=False)
+    selection = (
+        SessionSelection.new()
+        if args.new_session
+        else SessionSelection.exact(args.resume)
+        if args.resume is not None
+        else SessionSelection.latest()
     )
-    return await runtime.run()
+    return ApplicationOptions(workspace, config, home, selection)
+
+
+async def run_app(options: ApplicationOptions) -> int:
+    terminal = TerminalAdapter()
+    try:
+        application = await LocalApplication.create(options, interaction=terminal)
+    except Exception as exc:
+        terminal.console.print(f"[red]{exc}[/red]")
+        return 2
+    return await run_terminal(application, terminal)
 
 
 def main() -> int:
+    options = parse_options(build_parser().parse_args())
     try:
-        return asyncio.run(run_app())
+        return asyncio.run(run_app(options))
     except KeyboardInterrupt:
-        TuiRenderer().show_exit()
         return 130
+
+
+__all__ = ["build_parser", "main", "parse_options", "run_app"]
