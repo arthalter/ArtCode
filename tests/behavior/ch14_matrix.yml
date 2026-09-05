@@ -1,0 +1,1554 @@
+schema_version: 1
+
+task_graph:
+  T1: []
+  T2: [T1]
+  T3: [T2]
+  T4: [T1]
+  T5: [T3]
+  T6: [T4, T5]
+  T7: [T1]
+  T8: [T2, T4, T5, T7]
+  T9: [T4, T5, T7, T8]
+  T10: [T5, T8, T9]
+  T11: [T3, T4, T5, T8, T9]
+  T12: [T6, T10, T11]
+  T13: [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12]
+  T14: [T13]
+  T15: [T14]
+
+# Each requirement row records the owning module, the task that must finish it,
+# its observable acceptance evidence, verification kind, and what happens to
+# any old private-seam tests.  "planned" evidence may name a not-yet-created
+# file only when its implementation task is later than the verifier stage.
+requirements:
+  - id: N14
+    owner: Application
+    implementation_task: T13
+    status: verified
+    acceptance:
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: verified}
+      - {path: tests/manual/ch14_cutover_gate.md, kind: manual, status: planned}
+    verification_types: [architecture, manual]
+    legacy_tests: []
+    legacy_disposition: {action: none, task: T13}
+  - id: F1
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/application/test_startup.py, kind: automated, status: verified}
+    verification_types: [application]
+    legacy_tests: [tests/integration/test_main_entry_flow.py]
+    legacy_disposition: {action: replace, task: T14}
+
+  - id: F2
+    owner: Application
+    implementation_task: T14
+    status: verified
+    acceptance:
+      - {path: tests/application/test_startup.py, kind: automated, status: verified}
+      - {path: tests/manual/ch14_cutover_gate.md, kind: manual, status: planned}
+    verification_types: [application, manual]
+    legacy_tests: [tests/integration/test_main_entry_flow.py]
+    legacy_disposition: {action: replace, task: T14}
+
+  - id: F3
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/application/test_run_flow.py, kind: automated, status: verified}
+      - {path: tests/application/test_shutdown.py, kind: automated, status: verified}
+    verification_types: [application]
+    legacy_tests: [tests/integration/test_runtime_flow.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: F5
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/application/test_startup.py, kind: automated, status: verified}
+    verification_types: [application]
+    legacy_tests: [tests/integration/test_config_startup_flow.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: F6
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/application/test_startup.py, kind: automated, status: verified}
+      - {path: tests/application/test_state_views.py, kind: automated, status: verified}
+    verification_types: [application]
+    legacy_tests: [tests/unit/test_config.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: F7
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/application/test_shutdown.py, kind: automated, status: verified}
+    verification_types: [application]
+    legacy_tests: [tests/soak/test_entrypoint_lifecycle.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: F65
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/application/test_commands.py, kind: automated, status: verified}
+    verification_types: [application]
+    legacy_tests: [tests/unit/test_commands.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: F66
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/application/test_commands.py, kind: automated, status: verified}
+      - {path: tests/application/test_run_flow.py, kind: automated, status: verified}
+    verification_types: [application]
+    legacy_tests: [tests/integration/test_runtime_commands_live_e2e.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: F67
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/application/test_commands.py, kind: automated, status: verified}
+      - {path: tests/manual/ch14_acceptance.md, kind: manual, status: planned}
+    verification_types: [application, manual]
+    legacy_tests: [tests/unit/test_commands.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: F69
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/application/test_run_flow.py, kind: automated, status: verified}
+      - {path: tests/manual/ch14_acceptance.md, kind: manual, status: planned}
+    verification_types: [application, manual]
+    legacy_tests: [tests/unit/test_tui_app.py, tests/unit/test_keybindings.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: F70
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/application/test_state_views.py, kind: automated, status: verified}
+    verification_types: [application]
+    legacy_tests: [tests/unit/test_runtime_state.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: AC15
+    owner: Application
+    implementation_task: T15
+    status: verified
+    acceptance:
+      - {path: tests/application/test_commands.py, kind: automated, status: verified}
+      - {path: tests/application/test_state_views.py, kind: automated, status: verified}
+      - {path: tests/manual/ch14_acceptance.md, kind: manual, status: planned}
+    verification_types: [application, manual]
+    legacy_tests: [tests/integration/test_runtime_commands_live_e2e.py]
+    legacy_disposition: {action: replace, task: T12}
+  - id: F80
+    owner: Subagent
+    implementation_task: T11
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_subagent_interface.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_agent_tools.py]
+    legacy_disposition: {action: replace, task: T11}
+
+  - id: F81
+    owner: Subagent
+    implementation_task: T11
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_subagent_interface.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_subagent_fork_freeze.py]
+    legacy_disposition: {action: replace, task: T11}
+
+  - id: F82
+    owner: Subagent
+    implementation_task: T11
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_subagent_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_subagent_failures.py, kind: automated, status: verified}
+    verification_types: [contract, fault]
+    legacy_tests: [tests/unit/test_subagent_roles.py]
+    legacy_disposition: {action: replace, task: T11}
+
+  - id: F83
+    owner: Subagent
+    implementation_task: T11
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_subagent_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_subagent_flow.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/unit/test_subagent_state_isolation.py]
+    legacy_disposition: {action: replace, task: T11}
+
+  - id: F84
+    owner: Subagent
+    implementation_task: T11
+    status: verified
+    acceptance:
+      - {path: tests/property/test_core_subagent_capabilities.py, kind: automated, status: verified}
+    verification_types: [property]
+    legacy_tests: [tests/property/test_subagent_capabilities.py]
+    legacy_disposition: {action: replace, task: T11}
+
+  - id: F85
+    owner: Subagent
+    implementation_task: T11
+    status: verified
+    acceptance:
+      - {path: tests/property/test_core_subagent_capabilities.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_subagent_interface.py, kind: automated, status: verified}
+    verification_types: [property, contract]
+    legacy_tests: [tests/unit/test_subagent_policy_permissions.py]
+    legacy_disposition: {action: replace, task: T11}
+
+  - id: F86
+    owner: Subagent
+    implementation_task: T11
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_subagent_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_subagent_flow.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_subagent_failures.py, kind: automated, status: verified}
+    verification_types: [contract, integration, fault]
+    legacy_tests: [tests/unit/test_background_manager.py, tests/unit/test_foreground_timeout.py]
+    legacy_disposition: {action: replace, task: T11}
+
+  - id: F87
+    owner: Subagent
+    implementation_task: T11
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_subagent_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_subagent_flow.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/unit/test_task_notifications.py]
+    legacy_disposition: {action: replace, task: T11}
+
+  - id: F88
+    owner: Subagent
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_subagent_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_worktree_protection.py, kind: automated, status: verified}
+      - {path: tests/application/test_startup.py, kind: automated, status: planned}
+    verification_types: [contract, fault, application]
+    legacy_tests: [tests/fault/test_subagent_restart_persistence.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: AC18
+    owner: Subagent
+    implementation_task: T11
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_subagent_interface.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_subagent_capabilities.py, kind: automated, status: verified}
+    verification_types: [contract, property]
+    legacy_tests: [tests/integration/test_subagent_main_flow.py]
+    legacy_disposition: {action: replace, task: T11}
+
+  - id: AC19
+    owner: Subagent
+    implementation_task: T11
+    status: verified
+    acceptance:
+      - {path: tests/integration/test_core_subagent_flow.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_subagent_failures.py, kind: automated, status: verified}
+    verification_types: [integration, fault]
+    legacy_tests: [tests/fault/test_task_notification_timing.py]
+    legacy_disposition: {action: replace, task: T11}
+  - id: F68
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_skill_interface.py, kind: automated, status: verified}
+      - {path: tests/application/test_commands.py, kind: automated, status: planned}
+    verification_types: [contract, application]
+    legacy_tests: [tests/unit/test_commands.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: F71
+    owner: Skill
+    implementation_task: T10
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_skill_interface.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_skills.py]
+    legacy_disposition: {action: replace, task: T10}
+
+  - id: F72
+    owner: Skill
+    implementation_task: T10
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_skill_refresh.py, kind: automated, status: verified}
+    verification_types: [fault]
+    legacy_tests: [tests/unit/test_skill_checklist_boundaries.py]
+    legacy_disposition: {action: replace, task: T10}
+
+  - id: F73
+    owner: Skill
+    implementation_task: T10
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_skill_interface.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_skill_execution.py]
+    legacy_disposition: {action: replace, task: T10}
+
+  - id: F74
+    owner: Skill
+    implementation_task: T10
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_skill_interface.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_skills.py]
+    legacy_disposition: {action: replace, task: T10}
+
+  - id: F75
+    owner: Skill
+    implementation_task: T10
+    status: verified
+    acceptance:
+      - {path: tests/property/test_core_skill_capabilities.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_skill_flow.py, kind: automated, status: verified}
+    verification_types: [property, integration]
+    legacy_tests: [tests/unit/test_skill_checklist_boundaries.py]
+    legacy_disposition: {action: replace, task: T10}
+
+  - id: F76
+    owner: Skill
+    implementation_task: T10
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_skill_refresh.py, kind: automated, status: verified}
+    verification_types: [fault]
+    legacy_tests: [tests/unit/test_skills.py]
+    legacy_disposition: {action: replace, task: T10}
+
+  - id: F77
+    owner: Skill
+    implementation_task: T10
+    status: verified
+    acceptance:
+      - {path: tests/integration/test_core_skill_flow.py, kind: automated, status: verified}
+    verification_types: [integration]
+    legacy_tests: [tests/unit/test_skill_execution.py]
+    legacy_disposition: {action: replace, task: T10}
+
+  - id: F78
+    owner: Skill
+    implementation_task: T10
+    status: verified
+    acceptance:
+      - {path: tests/integration/test_core_skill_flow.py, kind: automated, status: verified}
+    verification_types: [integration]
+    legacy_tests: [tests/unit/test_skill_execution.py]
+    legacy_disposition: {action: replace, task: T10}
+
+  - id: F79
+    owner: Skill
+    implementation_task: T10
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_skill_interface.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_skills.py]
+    legacy_disposition: {action: replace, task: T10}
+
+  - id: AC16
+    owner: Skill
+    implementation_task: T10
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_skill_interface.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_skill_capabilities.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_skill_refresh.py, kind: automated, status: verified}
+    verification_types: [contract, property, fault]
+    legacy_tests: [tests/integration/test_skill_flow.py]
+    legacy_disposition: {action: replace, task: T10}
+
+  - id: AC17
+    owner: Skill
+    implementation_task: T10
+    status: verified
+    acceptance:
+      - {path: tests/integration/test_core_skill_flow.py, kind: automated, status: verified}
+    verification_types: [integration]
+    legacy_tests: [tests/unit/test_skill_execution.py]
+    legacy_disposition: {action: replace, task: T10}
+  - id: F16
+    owner: Agent
+    implementation_task: T9
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_agent_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_agent_run.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/unit/test_agent_loop.py]
+    legacy_disposition: {action: replace, task: T9}
+
+  - id: F17
+    owner: Agent
+    implementation_task: T9
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_agent_interface.py, kind: automated, status: verified}
+    verification_types: [contract, soak]
+    legacy_tests: [tests/soak/test_unlimited_agent_loop.py]
+    legacy_disposition: {action: replace, task: T9}
+
+  - id: F18
+    owner: Agent
+    implementation_task: T9
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_agent_interface.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_agent_loop.py]
+    legacy_disposition: {action: replace, task: T9}
+
+  - id: F19
+    owner: Agent
+    implementation_task: T9
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_agent_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_agent_failures.py, kind: automated, status: verified}
+    verification_types: [contract, fault]
+    legacy_tests: [tests/unit/test_agent_events.py]
+    legacy_disposition: {action: replace, task: T9}
+  - id: F11
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_session_prompt_flow.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/unit/test_prompt_assembler.py, tests/unit/test_prompt_sections.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: F12
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_session_prompt_flow.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/unit/test_system_reminder.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: F13
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/property/test_core_user_retention.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_context_governance.py, kind: automated, status: verified}
+    verification_types: [property, fault]
+    legacy_tests: [tests/unit/test_context_summarizer.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: F54
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/property/test_core_user_retention.py, kind: automated, status: verified}
+    verification_types: [property]
+    legacy_tests: [tests/unit/test_context_user_retention.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: F55
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_context_governance.py, kind: automated, status: verified}
+    verification_types: [contract, fault]
+    legacy_tests: [tests/property/test_conversation_protocol_properties.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: F56
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_context_governance.py, kind: automated, status: verified}
+    verification_types: [fault]
+    legacy_tests: [tests/soak/test_repeated_context_compaction.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: F57
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_context_governance.py, kind: automated, status: verified}
+    verification_types: [contract, fault]
+    legacy_tests: [tests/unit/test_instruction_loader.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: F62
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_memory.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: verified}
+    verification_types: [fault, contract]
+    legacy_tests: [tests/unit/test_memory_notes.py, tests/unit/test_memory_service.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: F63
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_memory.py, kind: automated, status: verified}
+    verification_types: [fault]
+    legacy_tests: [tests/unit/test_memory_updater.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: F64
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_memory.py, kind: automated, status: verified}
+    verification_types: [fault]
+    legacy_tests: [tests/fault/test_memory_service_faults.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: AC12
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/property/test_core_user_retention.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_context_governance.py, kind: automated, status: verified}
+    verification_types: [property, fault]
+    legacy_tests: [tests/soak/test_repeated_context_compaction.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: AC14
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_memory.py, kind: automated, status: verified}
+    verification_types: [fault]
+    legacy_tests: [tests/integration/test_memory_flow.py]
+    legacy_disposition: {action: replace, task: T8}
+  - id: F4
+    owner: Session
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+      - {path: tests/application/test_startup.py, kind: automated, status: planned}
+    verification_types: [contract, application]
+    legacy_tests: [tests/unit/test_cli_persistence.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: F8
+    owner: Session
+    implementation_task: T7
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_session_recovery.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/unit/test_session_service.py]
+    legacy_disposition: {action: replace, task: T7}
+
+  - id: F9
+    owner: Session
+    implementation_task: T7
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_transcript.py, kind: automated, status: verified}
+    verification_types: [contract, property]
+    legacy_tests: [tests/unit/test_session_journal.py]
+    legacy_disposition: {action: replace, task: T7}
+
+  - id: F10
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: planned}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_prompt_assembler.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: F14
+    owner: Session
+    implementation_task: T7
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_session_recovery.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/unit/test_ch10_5_conversation_protocol.py]
+    legacy_disposition: {action: replace, task: T7}
+
+  - id: F15
+    owner: Session
+    implementation_task: T9
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_agent_interface.py, kind: automated, status: planned}
+    verification_types: [contract]
+    legacy_tests: [tests/fault/test_context_commit_faults.py]
+    legacy_disposition: {action: replace, task: T9}
+
+  - id: F58
+    owner: Session
+    implementation_task: T7
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_session_storage.py, kind: automated, status: verified}
+    verification_types: [contract, fault]
+    legacy_tests: [tests/unit/test_session_journal.py]
+    legacy_disposition: {action: replace, task: T7}
+
+  - id: F59
+    owner: Session
+    implementation_task: T7
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_session_storage.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_session_recovery.py, kind: automated, status: verified}
+    verification_types: [fault, integration]
+    legacy_tests: [tests/unit/test_session_recovery.py, tests/property/test_session_recovery_properties.py]
+    legacy_disposition: {action: replace, task: T7}
+
+  - id: F60
+    owner: Session
+    implementation_task: T7
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_session_recovery.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/unit/test_session_service.py]
+    legacy_disposition: {action: replace, task: T7}
+
+  - id: F61
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: planned}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_session_service.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: AC1
+    owner: Application
+    implementation_task: T14
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+      - {path: tests/application/test_startup.py, kind: automated, status: planned}
+    verification_types: [contract, application]
+    legacy_tests: [tests/integration/test_main_entry_flow.py]
+    legacy_disposition: {action: replace, task: T14}
+
+  - id: AC2
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: planned}
+    verification_types: [contract]
+    legacy_tests: [tests/integration/test_persistence_flow.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: AC13
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_session_storage.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_session_recovery.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: planned}
+    verification_types: [fault, integration, contract]
+    legacy_tests: [tests/integration/test_persistence_flow.py]
+    legacy_disposition: {action: replace, task: T8}
+  - id: F44
+    owner: Tool
+    implementation_task: T6
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_tool_mcp_interface.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_mcp_isolation.py, kind: automated, status: verified}
+    verification_types: [contract, property]
+    legacy_tests: [tests/unit/test_mcp_config.py]
+    legacy_disposition: {action: replace, task: T6}
+
+  - id: F45
+    owner: Tool
+    implementation_task: T6
+    status: verified
+    acceptance:
+      - {path: tests/integration/test_core_mcp_stdio.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_mcp_http.py, kind: automated, status: verified}
+    verification_types: [integration]
+    legacy_tests: [tests/unit/test_mcp_transport.py, tests/integration/test_mcp_stdio_live.py, tests/integration/test_mcp_http_live.py]
+    legacy_disposition: {action: replace, task: T6}
+
+  - id: F46
+    owner: Tool
+    implementation_task: T6
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_tool_mcp_interface.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_mcp_manager.py, tests/unit/test_mcp_adapter.py]
+    legacy_disposition: {action: replace, task: T6}
+
+  - id: F47
+    owner: Tool
+    implementation_task: T6
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_tool_mcp_interface.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_mcp_lazy_catalog.py]
+    legacy_disposition: {action: replace, task: T6}
+
+  - id: F48
+    owner: Tool
+    implementation_task: T6
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_tool_mcp_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_mcp_stdio.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/integration/test_mcp_agent_flow.py]
+    legacy_disposition: {action: replace, task: T9}
+
+  - id: F49
+    owner: Tool
+    implementation_task: T6
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_mcp_failures.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_mcp_stdio.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_mcp_http.py, kind: automated, status: verified}
+    verification_types: [fault, integration]
+    legacy_tests: [tests/unit/test_mcp_manager.py, tests/unit/test_mcp_service_boundaries.py]
+    legacy_disposition: {action: replace, task: T6}
+
+  - id: F50
+    owner: Tool
+    implementation_task: T6
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_tool_mcp_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_mcp_stdio.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/unit/test_mcp_results.py]
+    legacy_disposition: {action: replace, task: T6}
+
+  - id: AC9
+    owner: Tool
+    implementation_task: T6
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_tool_mcp_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_mcp_stdio.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_mcp_http.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/integration/test_mcp_stdio_live.py, tests/integration/test_mcp_http_live.py]
+    legacy_disposition: {action: replace, task: T6}
+
+  - id: AC10
+    owner: Tool
+    implementation_task: T6
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_mcp_failures.py, kind: automated, status: verified}
+    verification_types: [fault]
+    legacy_tests: [tests/unit/test_mcp_edge_cases.py, tests/property/test_mcp_isolation_properties.py]
+    legacy_disposition: {action: replace, task: T6}
+  - id: F25
+    owner: Tool
+    implementation_task: T5
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_tool_policy.py, kind: automated, status: verified}
+    verification_types: [contract, property]
+    legacy_tests: [tests/unit/test_tool_policy.py, tests/unit/test_permission_engine.py]
+    legacy_disposition: {action: replace, task: T5}
+
+  - id: F26
+    owner: Session
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+      - {path: tests/application/test_commands.py, kind: automated, status: planned}
+    verification_types: [contract, application]
+    legacy_tests: [tests/unit/test_commands.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: F27
+    owner: Session
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/application/test_commands.py, kind: automated, status: planned}
+    verification_types: [application]
+    legacy_tests: [tests/unit/test_commands.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: F28
+    owner: Agent
+    implementation_task: T9
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_tool_batch.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_agent_interface.py, kind: automated, status: planned}
+    verification_types: [fault, contract]
+    legacy_tests: [tests/integration/test_tool_batch_flow.py]
+    legacy_disposition: {action: replace, task: T9}
+
+  - id: F29
+    owner: Tool
+    implementation_task: T5
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_tool_batch.py, kind: automated, status: verified}
+    verification_types: [fault, integration]
+    legacy_tests: [tests/integration/test_tool_batch_flow.py]
+    legacy_disposition: {action: replace, task: T5}
+
+  - id: F30
+    owner: Tool
+    implementation_task: T5
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_tool_batch.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_tool_workspace_flow.py, kind: automated, status: verified}
+    verification_types: [fault, integration]
+    legacy_tests: [tests/unit/test_tool_execution.py]
+    legacy_disposition: {action: replace, task: T5}
+
+  - id: F31
+    owner: Tool
+    implementation_task: T5
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_tool_batch.py, kind: automated, status: verified}
+    verification_types: [fault]
+    legacy_tests: [tests/integration/test_tool_batch_flow.py]
+    legacy_disposition: {action: replace, task: T5}
+
+  - id: F39
+    owner: Tool
+    implementation_task: T5
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_tool_policy.py, kind: automated, status: verified}
+    verification_types: [contract, property]
+    legacy_tests: [tests/unit/test_permission_engine.py, tests/unit/test_permission_service.py]
+    legacy_disposition: {action: replace, task: T5}
+
+  - id: F40
+    owner: Tool
+    implementation_task: T5
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_permission_service.py, tests/unit/test_permission_writer.py]
+    legacy_disposition: {action: replace, task: T5}
+
+  - id: F41
+    owner: Tool
+    implementation_task: T5
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_tool_policy.py, kind: automated, status: verified}
+    verification_types: [contract, property]
+    legacy_tests: [tests/unit/test_permission_engine.py]
+    legacy_disposition: {action: replace, task: T5}
+
+  - id: F43
+    owner: Tool
+    implementation_task: T5
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_tool_policy.py, kind: automated, status: verified}
+    verification_types: [contract, property]
+    legacy_tests: [tests/unit/test_runtime_state.py, tests/unit/test_tool_policy.py]
+    legacy_disposition: {action: replace, task: T5}
+
+  - id: AC4
+    owner: Agent
+    implementation_task: T9
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_tool_batch.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_agent_interface.py, kind: automated, status: planned}
+    verification_types: [contract, fault]
+    legacy_tests: [tests/integration/test_tool_batch_flow.py]
+    legacy_disposition: {action: replace, task: T9}
+
+  - id: F20
+    owner: Model
+    implementation_task: T4
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_model_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_model_flow.py, kind: automated, status: verified}
+      - {path: tests/live/test_core_deepseek.py, kind: automated, status: active}
+    verification_types: [contract, integration, live]
+    legacy_tests: [tests/unit/test_provider_events.py, tests/integration/test_provider_flow.py]
+    legacy_disposition: {action: replace, task: T4}
+
+  - id: F21
+    owner: Model
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_model_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: planned}
+    verification_types: [contract]
+    legacy_tests: [tests/integration/test_thinking_tool_roundtrip.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: F22
+    owner: Agent
+    implementation_task: T9
+    status: verified
+    acceptance:
+      - {path: tests/integration/test_core_model_flow.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_agent_interface.py, kind: automated, status: planned}
+    verification_types: [integration, contract]
+    legacy_tests: [tests/unit/test_agent_stream.py]
+    legacy_disposition: {action: replace, task: T9}
+
+  - id: F23
+    owner: Model
+    implementation_task: T4
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_model_failures.py, kind: automated, status: verified}
+    verification_types: [fault, contract]
+    legacy_tests: [tests/unit/test_deepseek_provider.py]
+    legacy_disposition: {action: replace, task: T14}
+
+  - id: F24
+    owner: Session
+    implementation_task: T9
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_model_failures.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_agent_interface.py, kind: automated, status: planned}
+    verification_types: [fault, contract]
+    legacy_tests: [tests/fault/test_request_preparation_faults.py]
+    legacy_disposition: {action: replace, task: T9}
+
+  - id: F51
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_model_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: planned}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_context_estimator.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: N6
+    owner: Model
+    implementation_task: T11
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_model_failures.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_tool_batch.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_mcp_failures.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_session_storage.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_skill_refresh.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_subagent_failures.py, kind: automated, status: planned}
+    verification_types: [fault]
+    legacy_tests: [tests/fault/test_subagent_failures.py]
+    legacy_disposition: {action: replace, task: T11}
+
+  - id: N8
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+      - {path: tests/application/test_state_views.py, kind: automated, status: planned}
+    verification_types: [contract, application]
+    legacy_tests: [tests/unit/test_runtime_state.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: AC3
+    owner: Agent
+    implementation_task: T9
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_model_failures.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_agent_interface.py, kind: automated, status: planned}
+    verification_types: [fault, contract]
+    legacy_tests: [tests/unit/test_agent_loop.py]
+    legacy_disposition: {action: replace, task: T9}
+
+  - id: F32
+    owner: Tool
+    implementation_task: T5
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_interface.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_file_tools.py]
+    legacy_disposition: {action: replace, task: T5}
+
+  - id: F33
+    owner: Workspace
+    implementation_task: T2
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_workspace_file_flow.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/unit/test_file_tools.py]
+    legacy_disposition: {action: replace, task: T5}
+
+  - id: F34
+    owner: Workspace
+    implementation_task: T2
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_workspace_files.py, kind: automated, status: verified}
+    verification_types: [contract, fault]
+    legacy_tests: [tests/unit/test_workspace_file_access.py, tests/fault/test_atomic_file_writes.py]
+    legacy_disposition: {action: replace, task: T2}
+
+  - id: F35
+    owner: Workspace
+    implementation_task: T2
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_interface.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_file_tools.py, tests/unit/test_context_artifacts.py]
+    legacy_disposition: {action: replace, task: T5}
+
+  - id: F36
+    owner: Workspace
+    implementation_task: T2
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_interface.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_workspace_paths.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_workspace_file_flow.py, kind: automated, status: verified}
+    verification_types: [contract, property, integration]
+    legacy_tests: [tests/property/test_workspace_paths.py]
+    legacy_disposition: {action: replace, task: T2}
+
+  - id: F37
+    owner: Workspace
+    implementation_task: T2
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_workspace_files.py, kind: automated, status: verified}
+    verification_types: [contract, fault]
+    legacy_tests: [tests/unit/test_workspace_file_access.py, tests/integration/test_workspace_file_flow.py]
+    legacy_disposition: {action: replace, task: T2}
+
+  - id: F52
+    owner: Workspace
+    implementation_task: T2
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_workspace_files.py, kind: automated, status: verified}
+    verification_types: [contract, fault]
+    legacy_tests: [tests/unit/test_context_artifacts.py]
+    legacy_disposition: {action: replace, task: T2}
+
+  - id: F53
+    owner: Workspace
+    implementation_task: T2
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_workspace_file_flow.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/unit/test_context_artifacts.py]
+    legacy_disposition: {action: replace, task: T2}
+
+  - id: N5
+    owner: Workspace
+    implementation_task: T3
+    status: verified
+    acceptance:
+      - {path: tests/fault/test_core_workspace_files.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_process_cleanup.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_worktree_protection.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_session_storage.py, kind: automated, status: verified}
+    verification_types: [fault]
+    legacy_tests: [tests/fault/test_atomic_file_writes.py]
+    legacy_disposition: {action: replace, task: T2}
+
+  - id: N9
+    owner: Workspace
+    implementation_task: T3
+    status: verified
+    acceptance:
+      - {path: tests/property/test_core_workspace_paths.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_workspace_files.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_seatbelt.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_worktree_protection.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+    verification_types: [property, fault]
+    legacy_tests: [tests/unit/test_workspace_file_access.py]
+    legacy_disposition: {action: replace, task: T2}
+
+  - id: N10
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_model_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_tool_mcp_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_context_governance.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_memory.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_skill_flow.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_context_artifacts.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: N11
+    owner: Workspace
+    implementation_task: T3
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_workspace_files.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_process_cleanup.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_workspace_worktree_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_model_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_mcp_stdio.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_mcp_http.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+    verification_types: [contract, fault]
+    legacy_tests: [tests/unit/test_context_artifacts.py]
+    legacy_disposition: {action: replace, task: T3}
+
+  - id: N12
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_tool_mcp_interface.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_user_retention.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_skill_interface.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_context_artifacts.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: AC5
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/integration/test_core_workspace_file_flow.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_tool_workspace_flow.py, kind: automated, status: verified}
+      - {path: tests/application/test_run_flow.py, kind: automated, status: planned}
+    verification_types: [integration, application]
+    legacy_tests: [tests/integration/test_workspace_file_flow.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: AC6
+    owner: Workspace
+    implementation_task: T2
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_interface.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_workspace_paths.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_workspace_files.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_tool_workspace_flow.py, kind: automated, status: verified}
+    verification_types: [contract, property, fault]
+    legacy_tests: [tests/unit/test_workspace_file_access.py, tests/property/test_workspace_paths.py]
+    legacy_disposition: {action: replace, task: T2}
+
+  - id: AC11
+    owner: Session
+    implementation_task: T8
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_workspace_file_flow.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_model_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/unit/test_context_artifacts.py]
+    legacy_disposition: {action: replace, task: T8}
+
+  - id: F38
+    owner: Workspace
+    implementation_task: T3
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_process_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_process_cleanup.py, kind: automated, status: verified}
+    verification_types: [contract, fault, integration]
+    legacy_tests: [tests/unit/test_process_supervisor.py, tests/fault/test_process_tree_faults.py]
+    legacy_disposition: {action: replace, task: T3}
+
+  - id: F42
+    owner: Workspace
+    implementation_task: T5
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_process_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_seatbelt.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/unit/test_seatbelt.py, tests/integration/test_seatbelt_live.py]
+    legacy_disposition: {action: replace, task: T3}
+
+  - id: F89
+    owner: Subagent
+    implementation_task: T11
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_worktree_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_worktree_flow.py, kind: automated, status: verified}
+    verification_types: [contract, integration]
+    legacy_tests: [tests/unit/test_worktree_manager.py]
+    legacy_disposition: {action: replace, task: T11}
+
+  - id: F90
+    owner: Workspace
+    implementation_task: T11
+    status: verified
+    acceptance:
+      - {path: tests/integration/test_core_worktree_flow.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_worktree_protection.py, kind: automated, status: verified}
+    verification_types: [integration, fault]
+    legacy_tests: [tests/integration/test_subagent_seatbelt_isolation.py]
+    legacy_disposition: {action: replace, task: T11}
+
+  - id: F91
+    owner: Workspace
+    implementation_task: T3
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_worktree_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_worktree_protection.py, kind: automated, status: verified}
+    verification_types: [contract, fault]
+    legacy_tests: [tests/unit/test_worktree_lifecycle_contract.py, tests/fault/test_worktree_cleanup_failures.py]
+    legacy_disposition: {action: replace, task: T3}
+
+  - id: F92
+    owner: Workspace
+    implementation_task: T3
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_worktree_interface.py, kind: automated, status: verified}
+    verification_types: [contract]
+    legacy_tests: [tests/unit/test_worktree_discard.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: AC7
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_process_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_process_cleanup.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+      - {path: tests/application/test_run_flow.py, kind: automated, status: planned}
+    verification_types: [contract, fault, application]
+    legacy_tests: [tests/fault/test_process_tree_faults.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: AC8
+    owner: Workspace
+    implementation_task: T5
+    status: verified
+    acceptance:
+      - {path: tests/integration/test_core_seatbelt.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+    verification_types: [integration]
+    legacy_tests: [tests/integration/test_seatbelt_live.py]
+    legacy_disposition: {action: replace, task: T5}
+
+  - id: AC20
+    owner: Subagent
+    implementation_task: T11
+    status: verified
+    acceptance:
+      - {path: tests/integration/test_core_worktree_flow.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_parallel_worktrees.py, kind: automated, status: planned}
+    verification_types: [integration]
+    legacy_tests: [tests/live/test_subagent_worktree_e2e.py]
+    legacy_disposition: {action: replace, task: T11}
+
+  - id: AC21
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_worktree_interface.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_worktree_protection.py, kind: automated, status: verified}
+    verification_types: [contract, fault, application]
+    legacy_tests: [tests/unit/test_worktree_discard.py, tests/fault/test_worktree_cleanup_failures.py]
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: F93
+    owner: Application
+    implementation_task: T13
+    status: verified
+    acceptance:
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/manual/ch14_cutover_gate.md, kind: manual, status: planned}
+    verification_types: [architecture, manual]
+    legacy_tests: []
+    legacy_disposition: {action: none, task: T13}
+
+  - id: F94
+    owner: Application
+    implementation_task: T13
+    status: verified
+    acceptance:
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/manual/ch14_cutover_gate.md, kind: manual, status: planned}
+    verification_types: [architecture, manual]
+    legacy_tests: []
+    legacy_disposition: {action: none, task: T13}
+
+  - id: F95
+    owner: Application
+    implementation_task: T14
+    status: verified
+    acceptance:
+      - {path: tests/tools/verify_core_imports.py, kind: automated, status: planned}
+    verification_types: [architecture, integration]
+    legacy_tests: []
+    legacy_disposition: {action: replace, task: T14}
+
+  - id: F96
+    owner: Application
+    implementation_task: T14
+    status: verified
+    acceptance:
+      - {path: tests/tools/verify_core_imports.py, kind: automated, status: planned}
+    verification_types: [architecture]
+    legacy_tests: []
+    legacy_disposition: {action: delete, task: T14}
+
+  - id: F97
+    owner: Application
+    implementation_task: T14
+    status: verified
+    acceptance:
+      - {path: tests/behavior/ch14_matrix.yml, kind: matrix, status: active}
+      - {path: tests/manual/ch14_results.md, kind: manual, status: planned}
+    verification_types: [behavior, manual]
+    legacy_tests: []
+    legacy_disposition: {action: replace, task: T14}
+
+  - id: F98
+    owner: Application
+    implementation_task: T15
+    status: verified
+    acceptance:
+      - {path: docs/adr/0003-core-contract-freeze.md, kind: manual, status: planned}
+    verification_types: [documentation, manual]
+    legacy_tests: []
+    legacy_disposition: {action: none, task: T15}
+
+  - id: N1
+    owner: Application
+    implementation_task: T15
+    status: verified
+    acceptance:
+      - {path: CONTEXT.md, kind: manual, status: active}
+      - {path: tests/manual/ch14_results.md, kind: manual, status: planned}
+    verification_types: [documentation, manual]
+    legacy_tests: []
+    legacy_disposition: {action: replace, task: T15}
+
+  - id: N2
+    owner: Application
+    implementation_task: T13
+    status: verified
+    acceptance:
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_skill_interface.py, kind: automated, status: verified}
+    verification_types: [architecture]
+    legacy_tests: []
+    legacy_disposition: {action: replace, task: T13}
+
+  - id: N3
+    owner: Application
+    implementation_task: T13
+    status: verified
+    acceptance:
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+    verification_types: [architecture, contract]
+    legacy_tests: []
+    legacy_disposition: {action: replace, task: T13}
+
+  - id: N4
+    owner: Application
+    implementation_task: T13
+    status: verified
+    acceptance:
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/contracts/test_tool_mcp_interface.py, kind: automated, status: verified}
+    verification_types: [architecture]
+    legacy_tests: []
+    legacy_disposition: {action: replace, task: T13}
+
+  - id: N7
+    owner: Workspace
+    implementation_task: T2
+    status: verified
+    acceptance:
+      - {path: tests/contracts/test_workspace_interface.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_workspace_paths.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_workspace_process_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_workspace_worktree_interface.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_model_flow.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_tool_policy.py, kind: automated, status: verified}
+      - {path: tests/fault/test_core_tool_batch.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_transcript.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_session_recovery.py, kind: automated, status: verified}
+      - {path: tests/property/test_core_skill_capabilities.py, kind: automated, status: verified}
+    verification_types: [contract, property]
+    legacy_tests: [tests/property/test_workspace_paths.py]
+    legacy_disposition: {action: replace, task: T2}
+
+  - id: N13
+    owner: Application
+    implementation_task: T12
+    status: verified
+    acceptance:
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_skill_interface.py, kind: automated, status: verified}
+      - {path: tests/application/test_run_flow.py, kind: automated, status: planned}
+    verification_types: [architecture, application]
+    legacy_tests: []
+    legacy_disposition: {action: replace, task: T12}
+
+  - id: N15
+    owner: Application
+    implementation_task: T13
+    status: verified
+    acceptance:
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+    verification_types: [architecture, review]
+    legacy_tests: []
+    legacy_disposition: {action: replace, task: T13}
+
+  - id: N16
+    owner: Application
+    implementation_task: T14
+    status: verified
+    acceptance:
+      - {path: tests/tools/verify_core_imports.py, kind: automated, status: planned}
+    verification_types: [architecture, integration]
+    legacy_tests: []
+    legacy_disposition: {action: delete, task: T14}
+
+  - id: AC22
+    owner: Application
+    implementation_task: T13
+    status: verified
+    acceptance:
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/manual/ch14_cutover_gate.md, kind: manual, status: planned}
+    verification_types: [architecture, manual]
+    legacy_tests: []
+    legacy_disposition: {action: replace, task: T13}
+
+  - id: AC23
+    owner: Application
+    implementation_task: T14
+    status: verified
+    acceptance:
+      - {path: tests/tools/verify_core_imports.py, kind: automated, status: planned}
+    verification_types: [architecture, integration]
+    legacy_tests: []
+    legacy_disposition: {action: delete, task: T14}
+
+  - id: AC24
+    owner: Application
+    implementation_task: T15
+    status: verified
+    acceptance:
+      - {path: tests/manual/ch14_results.md, kind: manual, status: planned}
+    verification_types: [matrix, manual, live]
+    legacy_tests: []
+    legacy_disposition: {action: replace, task: T15}
+
+  - id: AC25
+    owner: Application
+    implementation_task: T15
+    status: verified
+    acceptance:
+      - {path: docs/adr/0003-core-contract-freeze.md, kind: manual, status: planned}
+      - {path: tests/manual/ch14_results.md, kind: manual, status: planned}
+    verification_types: [documentation, manual]
+    legacy_tests: []
+    legacy_disposition: {action: none, task: T15}

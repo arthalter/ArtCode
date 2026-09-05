@@ -1,315 +1,320 @@
-# ch13：子 Agent 与 Worktree 隔离 Tasks
+# ch14：ArtCode 语义统一与破坏性整体重写 Tasks
 
 ## 执行原则
 
-1. 严格按依赖关系推进；每个任务先补目标测试，再实现，再运行受影响测试。
-2. 所有子 Agent 从创建时就拥有独立运行状态；任何前台转后台行为只能改变等待方式，不能重建任务。
-3. 任何可能写入仓库的子 Agent 都必须先取得独立 Worktree；Worktree 初始化失败时不得降级到主工作区运行。
-4. 所有文件和命令工具都通过显式工作目录运行，不使用进程级目录切换，也不以清空全局缓存代替路径隔离。
-5. 自动清理必须以保护成果为先；无法证明目录归属、空闲状态和 Git 安全状态时一律保留。
-6. 保持现有普通对话、Plan/Do、Skill、MCP、权限、会话恢复、记忆和上下文治理流程兼容。
-7. 本章不新增独立 Hook 子系统；运行时如果提供 Hook 引擎，子 Agent 只复用同一个共享实例。
+1. 严格按依赖关系推进；每个任务先写目标 Interface 的失败测试，再实现，再运行本任务验证。
+2. 八个深模块各自只暴露一个公开 Interface；内部允许私有 seam，但调用方和跨模块测试不得穿透它们。
+3. 新核心在 `artcode/core/` 独立建设，在 T14 前不得被旧生产入口导入，也不得反向导入旧 Runtime、Conversation、Prompt、Permission、Background 等业务实现。
+4. 外部依赖只在真实变化 seam 上使用 Adapter；生产 Adapter 与测试 Adapter 共用同一 Interface，不为单一实现制造转发层。
+5. 新 Interface 测试取得等价行为覆盖后，必须在所属模块任务内删除穿透旧私有实现的测试；不把这类删除统一拖到切换阶段，也不长期叠加两套契约。
+6. Plan Run 的 Tool 目录、执行入口和审批路径都必须拒绝 `change`、`external` 与 `control`，任何规则或人工批准都不能解除。
+7. Provider 的一次 Model 调用只发起一次底层请求；不得保留首事件前透明自动重试。
+8. T13 的切换前就绪条件全部通过后才能进入 T14；T14 必须一次性切换并删除旧核心、兼容路径和临时开发入口，入口等价与删除结果在 T14 验证。
+9. 旧 Session、记忆、权限和派生运行数据不迁移；包含未提交修改或未安全交接提交的 Worktree 始终按成果保护规则保留。
+10. 每个任务运行目标测试和受影响的非 live 回归；真实 Provider、MCP、Git、进程与 Seatbelt 验证分别归入其模块任务，T15 只复跑固定验收并汇总证据。
+11. T2～T12 在实现自身 Spec 范围时同步更新 `tests/behavior/ch14_matrix.yml`，并在取得等价覆盖后执行该范围登记的旧测试处置；T13 只审计结果，不集中补做。
 
 ## 参考资料索引
 
-- **需求基线：** 根目录 `spec.md`。
-- **理论材料 A：** 浏览器中的《理论学习：SubAgent 子任务分发》，重点参考“统一 Agent 工具”“定义式与 Fork 式”“运行时状态隔离”“RunToCompletion”“后台任务与通知”“工具过滤”。
-- **理论材料 B：** 浏览器中的《理论学习：Git Worktree 并行隔离》，重点参考“分支与工作目录的区别”“安全命名”“快速恢复”“环境初始化”“显式 cwd”“退出保护”“过期清理”。
-- **现有主链路：** `artcode/bootstrap.py`、`artcode/runtime/app.py`、`artcode/agent/loop.py`、`artcode/agent/request.py`。
-- **现有工具与权限链路：** `artcode/tools/`、`artcode/permissions/`、`artcode/sandbox/`。
-- **现有路径与持久内容链路：** `artcode/workspace.py`、`artcode/persistence/`、`artcode/prompting/`、`artcode/context_management/`。
+- **需求基线：** 根目录 `spec.md`，以及 GitHub Issue #14。
+- **实现设计：** 根目录 `plan.md`，重点参考“目标结构”“状态所有权”“八个深模块”“开发隔离与一次性切换”“删除清单”和“切换门槛”。
+- **领域语言：** 根目录 `CONTEXT.md`。
+- **架构决策：** `docs/adr/0001-comprehensive-local-learning-assistant.md`、`docs/adr/0002-one-time-breaking-rewrite.md`。
+- **现役行为证据：** `spec汇总/ch02/` 至 `spec汇总/ch12/`、ch13 根文档的 Git 历史、`README.md`、现有自动测试及 `tests/manual/`。
+- **旧生产入口：** `artcode/cli.py`、`artcode/__main__.py`、`artcode/bootstrap.py`、`artcode/runtime/app.py`。
 
-## T1：建立子 Agent、后台任务与 Worktree 的基础契约
+## T1：建立行为矩阵骨架与核心架构护栏
 
-**影响文件：** `artcode/subagents/models.py`、`artcode/subagents/__init__.py`、`artcode/background/models.py`、`artcode/background/__init__.py`、`artcode/worktrees/models.py`、`artcode/worktrees/__init__.py`、`artcode/config.py`、`artcode/workspace.py`、`config.example.yml`、`tests/unit/test_subagent_models.py`、`tests/unit/test_background_models.py`、`tests/unit/test_worktree_models.py`、`tests/unit/test_config.py`、`tests/unit/test_workspace.py`
+**影响文件：** `artcode/core/__init__.py`、`tests/behavior/ch14_matrix.yml`、`tests/tools/verify_ch14_matrix.py`、`tests/architecture/test_core_dependencies.py`、`pyproject.toml`
 
 **依赖任务：** 无
 
-**参考资料定位：** Spec F1、F5、F9、F17、F30～F34、F47，N5～N6；理论材料 A“角色定义”“后台状态”；理论材料 B“目录与分支命名”。
+**参考资料定位：** Spec F93～F98、N1～N4、N7、N13、N15～N16、AC22～AC25；Plan“目标结构”“状态所有权”“测试策略”。
 
-**完成结果：** 定义不可变的创建请求、角色元信息、任务状态、用量、停止原因、Worktree 租约与交接摘要；配置和路径对象能表达模型档位、后台执行及项目 Worktree 规则，但不在模型层执行文件或 Git 操作。
+**完成结果：** 可机读行为矩阵的字段、校验器和增量填写规则固定；本任务只录入 F93～F98、架构相关非功能要求及 AC22～AC25，其他需求由 T2～T12 随对应 Interface 和真实测试一起落表，核心依赖方向可自动检查。
 
 **实施要点：**
 
-1. 明确定义式与 Fork 式的判别字段及组合约束，使统一 Agent 工具后续始终复用同一请求结构。
-2. 将角色、后台任务和 Worktree 状态设计成可序列化快照，避免把可变运行对象直接暴露给 TUI 或模型工具。
-3. 扩展用户配置和项目路径，加入角色目录、系统托管 Worktree 目录、项目初始化规则与模型档位映射。
-4. 保持现有配置缺省行为兼容；未知字段、非法状态转换和不完整交接信息在进入运行时前被拒绝。
+1. 固化八个模块的状态所有者和允许依赖，不在本任务提前定义八套完整 Interface；各模块的公开 Interface 由对应 T2～T12 测试先行冻结。
+2. 定义每行必须包含的需求编号、状态所有者、实施任务、验收路径、验证类型和旧测试处置字段；先录入架构与切换规则作为样例。
+3. 校验重复编号、无效任务、无效测试定位、循环任务依赖和缺少处置任务的旧私有 seam 测试；允许尚未开始的模块行标记为待所属任务填写。
+4. 建立可增量生效的导入规则：核心模块不依赖 CLI/TUI、旧业务包、具体 Provider、具体持久格式或测试替身。
 
-**验证：** 运行 `pytest tests/unit/test_subagent_models.py tests/unit/test_background_models.py tests/unit/test_worktree_models.py tests/unit/test_config.py tests/unit/test_workspace.py -q`；覆盖合法构造、非法组合、状态转换、快照不可变性和旧配置兼容。
+**验证：** 运行 `pytest tests/architecture/test_core_dependencies.py -q` 和 `python tests/tools/verify_ch14_matrix.py --stage T1`；确认矩阵 Schema、架构需求样例和增量完整性规则有效，未开始的模块不会被误报为已经验收。
 
-## T2：实现多来源角色发现、解析、覆盖与刷新
+## T2：实现 Workspace 的路径、文件与结果存储 Interface
 
-**影响文件：** `artcode/subagents/roles.py`、`artcode/subagents/models.py`、`artcode/subagents/builtin/.gitkeep`、`artcode/workspace.py`、`MANIFEST.in`、`pyproject.toml`、`tests/fixtures/subagents.py`、`tests/unit/test_subagent_roles.py`
+**影响文件：** `artcode/core/workspace.py`、`artcode/_workspace/__init__.py`、`artcode/_workspace/paths.py`、`artcode/_workspace/files.py`、`artcode/_workspace/results.py`、`tests/contracts/test_workspace_interface.py`、`tests/property/test_core_workspace_paths.py`、`tests/fault/test_core_workspace_files.py`、`tests/integration/test_core_workspace_file_flow.py`、`tests/behavior/ch14_matrix.yml`，以及矩阵分配给本任务替换的旧 Workspace 私有 seam 测试
 
 **依赖任务：** T1
 
-**参考资料定位：** Spec F2～F9、AC2～AC4；理论材料 A“定义式子 Agent”“Markdown + YAML frontmatter”“多来源加载”。可复用现有 `artcode/skills/discovery.py` 和 `artcode/skills/service.py` 的安全发现思路，但角色目录与 Skill 激活状态保持独立。
+**参考资料定位：** Spec F32～F37、F43、F52～F53、N5、N7、N9～N12、AC5～AC6、AC11；Plan“Workspace”“大 Tool Result”。
 
-**完成结果：** 项目、用户、内置和插件来源能够产出唯一有效角色目录；同名角色整体覆盖，非法高优先级定义形成阻断诊断而不静默回退；每次创建前刷新并返回启动快照。
+**完成结果：** Workspace scope 以显式根目录完成范围读取、文件发现、普通文本搜索、原子创建、明确覆盖、唯一编辑及大型结果存储和分段回读；Tool 准备阶段得到的可审核目标在真正执行前由 Workspace 再次验证。
 
 **实施要点：**
 
-1. 严格解析 YAML frontmatter 和 Markdown 正文，校验角色名、用途、工具白名单、工具黑名单、模型档位、最大轮次、权限模式与隔离声明。
-2. 按项目、用户、内置、插件顺序决定同名角色，禁止跨来源字段合并；插件只贡献角色目录，不在本章实现插件安装与生命周期。
-3. 区分启动阻断诊断和单角色诊断，使一个坏角色不影响其他不同名有效角色。
-4. 校验普通工具名、白黑名单冲突、写能力与 Worktree 声明、模型映射可用性，并保证运行中任务继续使用旧快照。
+1. 路径规范化、敏感路径、父级跳转、绝对路径、符号链接和目标替换检查全部隐藏在 Workspace Interface 后。
+2. 新文件可创建 Workspace 内缺失的父目录；已有文件没有明确覆盖意图时拒绝，唯一编辑匹配数不为一时不写入。
+3. 大内容只返回有界预览和稳定引用，完整结果保存在当前 scope 的内部临时区；分段回读必须显式给出范围。
+4. 缓存键同时包含 scope 身份和规范化绝对路径，不使用 `Path.cwd()` 或进程级目录作为隐式输入。
 
-**验证：** 运行 `pytest tests/unit/test_subagent_roles.py -q`；覆盖四级来源、同名覆盖、非法高优先级阻断、热更新、删除、未知工具、模型缺失、写角色未隔离和正文生命周期。
+**验证：** 运行 `pytest tests/contracts/test_workspace_interface.py tests/property/test_core_workspace_paths.py tests/fault/test_core_workspace_files.py tests/integration/test_core_workspace_file_flow.py -q`；覆盖越界、符号链接竞态、原子写入故障、重复匹配、大文件和两个 scope 同名路径隔离。
 
-## T3：建立每个 Agent 的显式执行作用域与路径隔离
+## T3：实现 Workspace 的进程、Seatbelt 与 Worktree 生命周期
 
-**影响文件：** `artcode/runtime/execution_scope.py`、`artcode/tools/base.py`、`artcode/tools/execution.py`、`artcode/tools/policy.py`、`artcode/tools/file_tools.py`、`artcode/tools/command_tool.py`、`artcode/mcp/adapter.py`、`artcode/mcp/catalog.py`、`artcode/prompting/reminder.py`、`tests/unit/test_execution_scope.py`、`tests/unit/test_file_tools.py`、`tests/unit/test_command_tool.py`、`tests/integration/test_workspace_file_flow.py`、`tests/integration/test_process_flow.py`
+**影响文件：** `artcode/core/workspace.py`、`artcode/_workspace/processes.py`、`artcode/_workspace/seatbelt.py`、`artcode/_workspace/seatbelt.sb`、`artcode/_workspace/git.py`、`artcode/_workspace/worktrees.py`、`artcode/_workspace/worktree_metadata.py`、`tests/contracts/test_workspace_process_interface.py`、`tests/contracts/test_workspace_worktree_interface.py`、`tests/fault/test_core_process_cleanup.py`、`tests/fault/test_core_worktree_protection.py`、`tests/integration/test_core_seatbelt.py`、`tests/integration/test_core_worktree_flow.py`、`tests/behavior/ch14_matrix.yml`，以及矩阵分配给本任务替换的旧进程、Seatbelt 与 Worktree 私有 seam 测试
+
+**依赖任务：** T2
+
+**参考资料定位：** Spec F38、F42、F89～F92、N5～N7、N9、N11、AC7～AC8、AC20～AC21；Plan“Workspace”“Subagent Task”“不得删除”。
+
+**完成结果：** Workspace Interface 能执行和取消完整进程树、在 macOS 上强制应用无网络 Seatbelt，并基于冻结提交创建、检查、交接和安全清理 Worktree lease；不确定或含成果状态一律保留。
+
+**实施要点：**
+
+1. 命令使用显式 scope 和参数，不改变进程 cwd；完成、超时、取消和关闭都回收整个进程组及输出资源。
+2. Seatbelt 不可用时失败关闭，脱离隔离只能通过显式运行上下文进入，不能由低层 Adapter 自行降级。
+3. Worktree 基准在任务入队时冻结，不复制主 Workspace 未提交内容；主 Workspace、两个 Worktree 和托管元数据互相隔离。
+4. 自动清理只删除可证明无文件变化、无新增提交且无活跃 lease 的系统临时 Worktree；危险丢弃必须绑定用户确认的精确目标。
+
+**验证：** 运行 `pytest tests/contracts/test_workspace_process_interface.py tests/contracts/test_workspace_worktree_interface.py tests/fault/test_core_process_cleanup.py tests/fault/test_core_worktree_protection.py tests/integration/test_core_seatbelt.py tests/integration/test_core_worktree_flow.py -q`；使用真实进程、真实 Git 与可用 Seatbelt 验证资源回收和成果保护。
+
+## T4：实现单请求 Model Interface 与 Provider Adapter
+
+**影响文件：** `artcode/core/model.py`、`artcode/_model/__init__.py`、`artcode/_model/deepseek.py`、`artcode/_model/sse.py`、`artcode/_model/tool_calls.py`、`artcode/_model/redaction.py`、`tests/contracts/test_model_interface.py`、`tests/property/test_core_sse.py`、`tests/fault/test_core_model_failures.py`、`tests/integration/test_core_model_flow.py`、`tests/live/test_core_deepseek.py`、`tests/behavior/ch14_matrix.yml`，以及矩阵分配给本任务替换的旧 Provider 私有 seam 测试
 
 **依赖任务：** T1
 
-**参考资料定位：** Spec F10～F12、F16、F39～F41、AC5、AC10、AC14；理论材料 B“显式 cwd 与绝对路径缓存”。现有 `ToolEnvironment`、`ToolRunContext`、`WorkspacePathPolicy` 是改造入口。
+**参考资料定位：** Spec F20～F24、F51、N6～N7、N10～N11、AC3、AC11；Plan“Model”“Provider 自动重试次数为零”。
 
-**完成结果：** 主 Agent 和每个子 Agent 都从自身执行作用域取得绝对工作目录、路径策略、权限快照和会话标识；文件、命令及 MCP 工具不再依赖进程当前目录推断操作位置。
+**完成结果：** Model 接收不可变请求并产出类型化文本、Tool Request、结束原因、真实 usage 与不透明 Protocol Metadata；Provider 协议、SSE、Thinking、连接管理、错误映射和脱敏全部由实现隐藏。
 
 **实施要点：**
 
-1. 将工作目录作为每次工具执行的显式上下文，移除路径相关代码对 `Path.cwd()` 的隐式回退。
-2. 为主工作区和 Worktree 分别构造路径策略，确保相对路径只在当前作用域解析，绝对路径仍受当前根边界限制。
-3. 让命令工具的用户可选 cwd 只能在当前作用域内进一步收窄，不能切到主工作区、其他 Worktree 或外部目录；主 Agent 的普通工具也不能进入系统托管 Worktree 根。
-4. 保持 Provider、MCP 管理器、工具实现和底层文件系统服务可共享；路径策略与 Seatbelt 会话按执行作用域创建，每次调用只消费当前 Agent 的作用域快照。
+1. 一次 Model Interface 调用只能发起一次底层请求；连接、空响应、解码、超时和流中断均直接形成可区分失败。
+2. Thinking 只参与 Provider 请求，不进入普通文本、终端输出、Summary 或记忆输入。
+3. Tool 增量与 Protocol Metadata 在 Adapter 内组装为稳定领域事件，调用方不接触 Provider 原始字段。
+4. Model 只报告 Provider 实际 usage，不估算、不跨请求累计；所有错误与状态快照经过秘密脱敏。
 
-**验证：** 运行 `pytest tests/unit/test_execution_scope.py tests/unit/test_file_tools.py tests/unit/test_command_tool.py tests/integration/test_workspace_file_flow.py tests/integration/test_process_flow.py -q`；并发作用域操作同名文件时只能改变各自目录，进程 cwd 始终不变。
+**验证：** 运行 `pytest tests/contracts/test_model_interface.py tests/property/test_core_sse.py tests/fault/test_core_model_failures.py tests/integration/test_core_model_flow.py -q`；通过计数 Adapter 证明每次调用仅一次请求，并在配置可用时运行 `pytest tests/live/test_core_deepseek.py -q`。
 
-## T4：实现 Worktree 安全命名、归属元数据与只读检查
+## T5：实现 Tool 目录、权限策略与批次执行 Interface
 
-**影响文件：** `artcode/worktrees/naming.py`、`artcode/worktrees/metadata.py`、`artcode/worktrees/inspection.py`、`artcode/worktrees/models.py`、`tests/unit/test_worktree_naming.py`、`tests/unit/test_worktree_metadata.py`、`tests/unit/test_worktree_inspection.py`、`tests/property/test_worktree_paths.py`
+**影响文件：** `artcode/core/tool.py`、`artcode/_tool/__init__.py`、`artcode/_tool/catalog.py`、`artcode/_tool/builtin.py`、`artcode/_tool/policy.py`、`artcode/_tool/permissions.py`、`artcode/_tool/batch.py`、`artcode/_tool/results.py`、`artcode/_tool/dangerous_commands.yml`、`tests/contracts/test_tool_interface.py`、`tests/property/test_core_tool_policy.py`、`tests/fault/test_core_tool_batch.py`、`tests/integration/test_core_tool_workspace_flow.py`、`tests/behavior/ch14_matrix.yml`，以及矩阵分配给本任务替换的旧 Tool、权限与 Shell 策略私有 seam 测试
+
+**依赖任务：** T3
+
+**参考资料定位：** Spec F25～F43、N2、N6～N10、N13、AC4～AC8；Plan“Tool”“Plan 固定规则”。
+
+**完成结果：** Tool Interface 统一模型可见描述、Tool Effect、Run Mode、能力收窄、权限决定、人工审批、批次计划与结构化结果；内置 Tool 的本地效果全部委托 Workspace。
+
+**实施要点：**
+
+1. Tool 拥有目录、Effect 分类、权限模式、Shell 策略和精确持久规则，Agent、TUI 与 Subagent 不维护重复清单。
+2. 权限顺序固定为硬约束、显式规则、Run Mode 或 Shell 策略、人工审批；低层允许不能覆盖高层拒绝。
+3. Plan 的目录只暴露内置 `observe` Tool，执行入口再次拒绝伪造的写入、Shell、MCP 和 Subagent 调用，审批不能解锁。
+4. 相邻无依赖 `observe` Tool 并发，其他效果按原请求顺序执行；局部失败不取消无关已启动观察，结果始终按请求顺序返回。
+
+**验证：** 运行 `pytest tests/contracts/test_tool_interface.py tests/property/test_core_tool_policy.py tests/fault/test_core_tool_batch.py tests/integration/test_core_tool_workspace_flow.py -q`；覆盖四类权限决定、策略冲突、审批后目标变化、Plan 三重防线、并发和局部失败。
+
+## T6：把 MCP 作为 Tool 内部 Adapter 接入
+
+**影响文件：** `artcode/core/tool.py`、`artcode/_tool/mcp.py`、`artcode/_tool/mcp_config.py`、`artcode/_tool/mcp_transport.py`、`artcode/_tool/mcp_results.py`、`tests/contracts/test_tool_mcp_interface.py`、`tests/property/test_core_mcp_isolation.py`、`tests/fault/test_core_mcp_failures.py`、`tests/integration/test_core_mcp_stdio.py`、`tests/integration/test_core_mcp_http.py`、`tests/behavior/ch14_matrix.yml`，以及矩阵分配给本任务替换的旧 MCP 私有 seam 测试
+
+**依赖任务：** T4、T5
+
+**参考资料定位：** Spec F44～F50、N4、N6、N10～N12、AC9～AC10；Plan“Tool”“MCP Adapter”。
+
+**完成结果：** 用户级与项目级 MCP 配置、stdio 与 Streamable HTTP、分页发现、全量/按需激活、会话复用、项目确认、逐调用权限及有序关闭全部隐藏在 Tool Interface 内；单 Server 故障保持局部。
+
+**实施要点：**
+
+1. 项目配置按确定规则整体覆盖同名用户配置，并在产生外部效果前确认。
+2. 内置与 MCP Tool 使用同一描述、Effect、策略、批次和结果语义；Plan 中 MCP 既不暴露也不能伪造执行。
+3. 已激活目录在当前 Session 后续 Run 可用，完整目录与按需目录不形成两套执行路径。
+4. 文本和结构化结果可进入受控上下文，二进制内容只返回有界元数据；连接、协议、超时、取消与关闭错误不影响其他 Tool。
+
+**验证：** 运行 `pytest tests/contracts/test_tool_mcp_interface.py tests/property/test_core_mcp_isolation.py tests/fault/test_core_mcp_failures.py tests/integration/test_core_mcp_stdio.py tests/integration/test_core_mcp_http.py -q`；集成测试使用真实本地 stdio 与 Streamable HTTP 测试 Server。
+
+## T7：实现 Session 的 Transcript、持久化与恢复
+
+**影响文件：** `artcode/core/session.py`、`artcode/_session/__init__.py`、`artcode/_session/transcript.py`、`artcode/_session/storage.py`、`artcode/_session/locking.py`、`artcode/_session/recovery.py`、`artcode/_session/paths.py`、`tests/contracts/test_session_interface.py`、`tests/property/test_core_transcript.py`、`tests/fault/test_core_session_storage.py`、`tests/integration/test_core_session_recovery.py`、`tests/behavior/ch14_matrix.yml`，以及矩阵分配给本任务替换的旧 Session 持久化与恢复私有 seam 测试
 
 **依赖任务：** T1
 
-**参考资料定位：** Spec F32～F36、N1～N2、N5、AC11～AC13；理论材料 B“名称校验”“快速恢复”“三层安全过滤”。
+**参考资料定位：** Spec F4、F8～F10、F14～F15、F58～F61、N2、N5～N7、N10～N11、AC1～AC2、AC13；Plan“Session”“配置与持久化策略”。
 
-**完成结果：** 系统名称和用户提供的嵌套名称都只能解析到托管根内；已有目录可通过有限只读文件检查验证 Git 仓库、分支、基准提交和任务归属，不需要先调用 Git。
-
-**实施要点：**
-
-1. 对名称整体和每个路径段分别校验，拒绝空段、`.`、`..`、绝对路径、反斜杠、控制字符、超长输入和解析后越界。
-2. 将目录名、分支名和任务标识分开生成与验证，避免把模型文本直接拼接为 Git 参数。
-3. 以原子方式写入最小归属元数据；恢复时同时验证 `.git` 指针、公共 Git 目录、分支和任务标识。
-4. 对符号链接、损坏元数据、被替换目录和归属不匹配一律拒绝接管。
-
-**验证：** 运行 `pytest tests/unit/test_worktree_naming.py tests/unit/test_worktree_metadata.py tests/unit/test_worktree_inspection.py tests/property/test_worktree_paths.py -q`；属性测试生成的任意非法名称均不能逃离托管目录或覆盖已有目录。
-
-## T5：实现 Worktree 创建、快速恢复与环境初始化
-
-**影响文件：** `artcode/worktrees/git.py`、`artcode/worktrees/initializer.py`、`artcode/worktrees/manager.py`、`artcode/worktrees/models.py`、`artcode/workspace.py`、`.gitignore`、`tests/fixtures/git_repositories.py`、`tests/unit/test_worktree_git.py`、`tests/unit/test_worktree_initializer.py`、`tests/integration/test_worktree_lifecycle.py`
-
-**依赖任务：** T3、T4
-
-**参考资料定位：** Spec F30～F40、AC10～AC14；理论材料 B“创建与进入”“快速恢复”“复制配置、Hooks、软链依赖、补齐忽略文件”。
-
-**完成结果：** 管理器能基于入队时捕获的提交创建独立分支和 Worktree，初始化项目运行环境并返回执行租约；合法已有目录走只读恢复，不重复执行 Git 创建。
+**完成结果：** Session 成为 Transcript、Session lock 与恢复状态的唯一所有者；新格式以完整领域记录同步追加，能够新建、恢复最近可写 Session 或选择指定 Session，并隔离局部损坏。
 
 **实施要点：**
 
-1. 所有 Git 子进程使用参数数组和显式 cwd，不经 shell 拼接；非 Git 仓库、无提交、分支冲突或 Git 失败时不降级运行，并确保托管 Worktree 根被版本控制忽略。
-2. 创建成功后按项目规则复制本地配置和忽略文件、设置 Worktree 专属 Hooks，并为声明可共享的大型依赖建立受控软链接。
-3. 软链接目标必须解析到允许的主工作区依赖目录，并通过子 Agent 路径策略禁止写入共享目标。
-4. 初始化中途失败时只回滚本次能够证明新建且安全的资源，任何已有或含成果目录保持原状并报告诊断。
+1. Transcript 只保存已提交事实；User、Assistant 与完整 Tool exchange 具有明确提交语义，Protocol Metadata 作为不透明 envelope 原样保存。
+2. Tool exchange 单条记录包含请求和全部结果，取消时补齐结构化取消结果，恢复不会产生孤立 Tool Result。
+3. 写入使用可检测完整性的同步追加；坏独立记录可隔离，坏尾部可截断，不完整协议回退到最近安全前缀。
+4. 新版本使用独立持久命名空间且不加载旧格式；并发进程不能写入同一 Session，只读查询和失败恢复不改变原文件。
 
-**验证：** 运行 `pytest tests/unit/test_worktree_git.py tests/unit/test_worktree_initializer.py tests/integration/test_worktree_lifecycle.py -q`；覆盖新建、重复恢复、嵌套名称、基准冻结、托管目录忽略、初始化各规则、软链越界和分阶段故障回滚。
+**验证：** 运行 `pytest tests/contracts/test_session_interface.py tests/property/test_core_transcript.py tests/fault/test_core_session_storage.py tests/integration/test_core_session_recovery.py -q`；覆盖原子追加故障、坏记录、坏尾部、协议不完整、进程锁、旧格式拒绝和只读恢复。
 
-## T6：实现 Worktree 退出保护、成果判断与过期清理
+## T8：实现 Session 的 Prompt、上下文治理与长期记忆
 
-**影响文件：** `artcode/worktrees/status.py`、`artcode/worktrees/cleanup.py`、`artcode/worktrees/manager.py`、`tests/unit/test_worktree_status.py`、`tests/unit/test_worktree_cleanup.py`、`tests/fault/test_worktree_cleanup_failures.py`、`tests/integration/test_worktree_protection.py`
+**影响文件：** `artcode/core/session.py`、`artcode/_session/prompt.py`、`artcode/_session/notices.py`、`artcode/_session/summaries.py`、`artcode/_session/instructions.py`、`artcode/_session/results.py`、`artcode/_session/memory.py`、`tests/contracts/test_session_prompt_interface.py`、`tests/property/test_core_user_retention.py`、`tests/fault/test_core_context_governance.py`、`tests/fault/test_core_memory.py`、`tests/integration/test_core_session_prompt_flow.py`、`tests/behavior/ch14_matrix.yml`，以及矩阵分配给本任务替换的旧 Prompt、上下文治理与记忆私有 seam 测试
 
-**依赖任务：** T5
+**依赖任务：** T2、T4、T5、T7
 
-**参考资料定位：** Spec F42～F49、N1～N2、AC15～AC16；理论材料 B“退出与删除”“未提交/未推送保护”“过期临时目录清理”。
+**参考资料定位：** Spec F10～F15、F51～F64、N2、N5～N7、N10～N12、AC2、AC11～AC14；Plan“Session”“普通 Run”。
 
-**完成结果：** 任务退出时能区分无成果、未提交修改、新增本地提交、已安全交接提交和未知状态；自动路径只删除无成果的系统临时 Worktree，危险状态默认保留。
-
-**实施要点：**
-
-1. 同时检查已跟踪修改、未跟踪文件、相对基准新增提交、上游关系和提交可达性，形成结构化交接状态。
-2. 正常完成、异常、达到轮次限制和取消都走同一保护流程；取消不回滚文件操作。
-3. 手动 Worktree 永不参与自动清理；显式丢弃必须由主界面用户确认，子 Agent 和模型工具没有强制删除能力。
-4. 过期清理依次验证托管根边界、系统归属与非活跃状态、Git 安全状态；任一检查失败即保留并记录原因。
-
-**验证：** 运行 `pytest tests/unit/test_worktree_status.py tests/unit/test_worktree_cleanup.py tests/fault/test_worktree_cleanup_failures.py tests/integration/test_worktree_protection.py -q`；构造脏文件、未跟踪文件、本地提交、已推送提交、活跃租约、手动目录和损坏元数据，确认只有安全目标被删除。
-
-## T7：实现子 Agent 的工具能力交集与非交互权限端口
-
-**影响文件：** `artcode/subagents/policy.py`、`artcode/subagents/permissions.py`、`artcode/agent/modes.py`、`artcode/tools/base.py`、`artcode/tools/policy.py`、`artcode/tools/execution.py`、`artcode/permissions/service.py`、`tests/unit/test_subagent_policy.py`、`tests/unit/test_subagent_permissions.py`、`tests/property/test_subagent_capabilities.py`、`tests/integration/test_subagent_permission_flow.py`
-
-**依赖任务：** T2、T3
-
-**参考资料定位：** Spec F4、F12、F25～F31、N1、AC3、AC9；理论材料 A“多层工具过滤”“权限隔离”“后台白名单”。
-
-**完成结果：** 有效工具集由父能力上限、全局禁止、创建类型、角色白黑名单和后台限制求交得到；子 Agent 的临时审批自动拒绝并留存事件，不会阻塞等待用户。
+**完成结果：** Session 能打开不可变 Run lease，并把 Transcript、指令、Notice、Summary、记忆、Skill contribution 与 ToolSnapshot 投影为 Prompt；所有 User 原文始终独立、逐字、有序保留，派生内容失败不破坏权威历史。
 
 **实施要点：**
 
-1. 在模型可见工具集合和实际执行入口分别校验，防止伪造工具调用绕过提示层过滤。
-2. 由工具描述符显式声明是否可供子 Agent 使用；将 Agent 创建、再次 Fork、用户询问、系统任务控制、默认 MCP 和危险清理列为不可恢复能力，后台白名单只会收紧，不会扩大角色或父权限。
-3. 为每个子 Agent 创建新的权限追踪器；只继承全局/项目规则和父权限模式上限，不复制父 Agent 的一次性批准。
-4. 所有仍需临时批准的操作返回稳定拒绝结果，并记录工具、原因、时间和任务标识。
+1. Notice 只在请求真正 dispatch 时消费一次；状态查询、Prompt 预览和失败准备不得提前消费。
+2. 上下文预算优先使用真实 usage，缺失时采用可解释估算；自动、强制、紧急和手动压缩均有界且不会形成重试循环。
+3. Summary 只替代较早的非 User 历史，不破坏 Tool 协议，不解释 Protocol Metadata；生成失败继续使用旧历史。
+4. 长期记忆区分用户偏好与项目事实，只有自然完成的不可变 Run 快照进入串行异步更新，失败与取消不影响后续 Run。
 
-**验证：** 运行 `pytest tests/unit/test_subagent_policy.py tests/unit/test_subagent_permissions.py tests/property/test_subagent_capabilities.py tests/integration/test_subagent_permission_flow.py -q`；属性测试证明任意角色组合都不能产生父 Agent 或全局策略之外的新能力。
+**验证：** 运行 `pytest tests/contracts/test_session_prompt_interface.py tests/property/test_core_user_retention.py tests/fault/test_core_context_governance.py tests/fault/test_core_memory.py tests/integration/test_core_session_prompt_flow.py -q`；覆盖重复压缩、usage 缺失、大结果引用、Notice 时机、指令循环、记忆故障和逐字 User 保留。
 
-## T8：实现定义式与 Fork 式子 Agent 运行时工厂
+## T9：实现唯一 Agent Run 状态机
 
-**影响文件：** `artcode/subagents/factory.py`、`artcode/subagents/runtime.py`、`artcode/conversation/context.py`、`artcode/agent/request.py`、`artcode/context_management/manager.py`、`artcode/context_management/artifacts.py`、`artcode/persistence/paths.py`、`artcode/persistence/instructions.py`、`artcode/prompting/durable.py`、`artcode/prompting/assembler.py`、`tests/unit/test_subagent_factory.py`、`tests/unit/test_subagent_prompting.py`、`tests/integration/test_subagent_state_isolation.py`
+**影响文件：** `artcode/core/agent.py`、`artcode/_agent/__init__.py`、`artcode/_agent/runner.py`、`artcode/_agent/events.py`、`artcode/_agent/usage.py`、`tests/contracts/test_agent_interface.py`、`tests/property/test_core_agent_protocol.py`、`tests/fault/test_core_agent_failures.py`、`tests/integration/test_core_agent_run.py`、`tests/behavior/ch14_matrix.yml`，以及矩阵分配给本任务替换的旧 Agent 私有 seam 测试
 
-**依赖任务：** T2、T3、T5、T7
+**依赖任务：** T4、T5、T7、T8
 
-**参考资料定位：** Spec F2～F4、F8～F12、F30～F41、N3、N5、N8、AC2～AC5、AC10～AC14；理论材料 A“空白定义式”“Fork 快照与提示缓存”“共享基础设施”；理论材料 B“绝对路径缓存键”。
+**参考资料定位：** Spec F16～F31、N2、N5～N8、N10～N13、AC3～AC4；Plan“Agent”“普通 Run”。
 
-**完成结果：** 定义式从固定基础提示、项目指令、角色正文和任务组成的空白对话启动；Fork 式冻结父对话与工具快照，并在继承前缀之后追加角色、Worktree 和任务信息；两者得到独立状态容器。
-
-**实施要点：**
-
-1. 为消息、权限事件、上下文管理、Artifact Store、计划记忆、文件读取缓存、轮次和 Token 计数分别创建子实例。
-2. 共享 Provider、工具实现、MCP 管理器、底层文件系统服务及可选 Hook 引擎；每个 Worktree 使用独立 Seatbelt 会话，并且不共享会话持久化写入和长期记忆更新任务。
-3. 路径相关指令、提示、记忆索引和文件缓存以规范化绝对路径为键，从子 Agent 所属 Workspace 读取；不得因切换 Worktree 全局清缓存。
-4. Fork 保持父请求前缀的消息顺序和工具定义顺序，仅在尾部追加子任务信息；缓存命中只采信 Provider 返回的用量字段。
-5. 需要 Worktree 时在首次模型请求前完成租约绑定和路径说明注入；绑定失败则子 Agent 不启动。
-
-**验证：** 运行 `pytest tests/unit/test_subagent_factory.py tests/unit/test_subagent_prompting.py tests/integration/test_subagent_state_isolation.py -q`；比较对象身份、消息内容、工具顺序、绝对缓存键和 Worktree 根，确认共享与隔离边界符合设计。
-
-## T9：实现 RunToCompletion 执行器与统一停止结果
-
-**影响文件：** `artcode/subagents/runner.py`、`artcode/subagents/models.py`、`artcode/agent/loop.py`、`artcode/agent/events.py`、`artcode/providers/events.py`、`tests/unit/test_subagent_runner.py`、`tests/fault/test_subagent_runner_failures.py`、`tests/integration/test_subagent_run_to_completion.py`
-
-**依赖任务：** T8
-
-**参考资料定位：** Spec F13～F16、F21～F23、F47，AC5～AC7；理论材料 A“RunToCompletion”“模型不再调用工具即完成”“用量统计”。
-
-**完成结果：** 子 Agent 从启动持续运行到自然完成、达到轮次限制、取消或不可恢复错误，并统一产出最终文本、停止原因、累计用量、权限事件和 Worktree 交接摘要。
+**完成结果：** Agent 只依赖 Model、Tool 与 Run lease 推进一次 Run，持续产生类型化 RunEvent，并以可区分 Stop Reason 和累计 usage 结束；普通 Run 无产品级固定轮次，受控执行可显式限制。
 
 **实施要点：**
 
-1. 普通工具错误继续作为工具结果进入下一轮；只有明确的终止条件结束执行。
-2. 聚合每轮 Provider 用量而不是覆盖最后一轮，分别保留输入、输出、缓存命中、缓存未命中和总量。
-3. 终止后始终执行 Worktree 退出判断；即使总结失败，也保留已经产生的文件与可查看状态。
-4. 取消使用协作式取消并等待正在执行的工具完成取消清理，不启动第二个替代 Runner。
+1. 文本增量只作为临时事件展示；自然完成和长度结束按 Session 规则提交，取消、请求失败和流中断不提交半截 Assistant 文本。
+2. 每个 Model 响应中的 Tool 请求作为完整批次执行并提交闭合协议，再进入下一轮 Model 请求。
+3. 自然完成、达到限制、用户取消、请求失败、长度结束和不可继续分别映射为稳定 Stop Reason。
+4. Agent 的 Run usage 只聚合 Model 报告的真实字段；Session 的确定性估算只服务上下文预算并保留来源，不得混入 Run usage。取消在可提交协议点停止并交还资源。
 
-**验证：** 运行 `pytest tests/unit/test_subagent_runner.py tests/fault/test_subagent_runner_failures.py tests/integration/test_subagent_run_to_completion.py -q`；覆盖自然完成、多轮工具恢复、轮次上限、Provider 失败、工具取消、总结缺失和各类 Worktree 保护结果。
+**验证：** 运行 `pytest tests/contracts/test_agent_interface.py tests/property/test_core_agent_protocol.py tests/fault/test_core_agent_failures.py tests/integration/test_core_agent_run.py -q`；覆盖长工具链、显式上限、多 Tool、局部失败、长度结束、流错误、取消和协议闭合。
 
-## T10：实现统一后台任务管理器与三种转后台路径
+## T10：实现 Skill 深模块
 
-**影响文件：** `artcode/background/manager.py`、`artcode/background/models.py`、`artcode/background/clock.py`、`artcode/subagents/runner.py`、`tests/unit/test_background_manager.py`、`tests/fault/test_background_manager_failures.py`、`tests/integration/test_background_transition.py`
+**影响文件：** `artcode/core/skill.py`、`artcode/_skill/__init__.py`、`artcode/_skill/discovery.py`、`artcode/_skill/parsing.py`、`artcode/_skill/catalog.py`、`artcode/_skill/execution.py`、`artcode/_skill/builtin/.gitkeep`、`tests/contracts/test_skill_interface.py`、`tests/property/test_core_skill_capabilities.py`、`tests/fault/test_core_skill_refresh.py`、`tests/integration/test_core_skill_flow.py`、`tests/behavior/ch14_matrix.yml`、`pyproject.toml`，以及矩阵分配给本任务替换的旧 Skill 私有 seam 测试
 
-**依赖任务：** T6、T9
+**依赖任务：** T5、T8、T9
 
-**参考资料定位：** Spec F15～F19、F23～F24、N4～N7、AC7～AC8；理论材料 A“显式后台”“超时自动后台”“手动切换”“Fork 强制后台”。
+**参考资料定位：** Spec F68、F71～F79、N2、N6～N7、N10、N12～N13、AC15～AC17；Plan“Skill”。
 
-**完成结果：** 所有子 Agent 从创建时就由同一任务管理器持有；定义式可前台等待、显式后台或在等待期间自动/手动转后台，Fork 创建后立即返回后台任务标识。
-
-**实施要点：**
-
-1. 任务管理器维护排队、运行、完成、异常、达到限制和取消状态，并提供不可变列表与详情快照。
-2. 前台等待使用屏蔽取消的同一异步任务；等待超时或手动切换只停止等待，运行对象、消息、Worktree 和用量保持不变。
-3. 并发槽位和排队顺序可控；任务基准、父对话、角色、权限和工具快照在入队时冻结。
-4. 取消只影响目标任务，不传播到父 Agent 或其他任务；完成回调失败不改变任务本身的最终状态。
-
-**验证：** 运行 `pytest tests/unit/test_background_manager.py tests/fault/test_background_manager_failures.py tests/integration/test_background_transition.py -q`；使用可控时钟验证四条启动路径、队列、公平性、同一任务身份、并发取消和完成回调隔离。
-
-## T11：实现 Agent 工具、任务查询工具与结果通知收件箱
-
-**影响文件：** `artcode/subagents/tool.py`、`artcode/background/tools.py`、`artcode/background/notifications.py`、`artcode/tools/registry.py`、`artcode/tools/__init__.py`、`artcode/agent/request.py`、`artcode/conversation/context.py`、`tests/unit/test_agent_tool.py`、`tests/unit/test_background_tools.py`、`tests/unit/test_task_notifications.py`、`tests/integration/test_subagent_notification_flow.py`
-
-**依赖任务：** T10
-
-**参考资料定位：** Spec F1～F4、F17～F22、F25～F29、F47～F49、AC1、AC3、AC8～AC9、AC17；理论材料 A“统一 Agent 工具”“任务通知”。
-
-**完成结果：** 主 Agent 始终看到结构稳定的 Agent 工具，并能通过系统任务工具列出、查看和取消后台任务；完成结果在安全请求边界以精简通知进入父对话，完整详情留在任务管理器。
+**完成结果：** Skill Interface 独立拥有发现、覆盖、激活、热更新和最后有效版本，为 Run 生成冻结的 SOP、Tool 收窄和模型选择 contribution；Shared 与 Isolated 执行保持不同语义。
 
 **实施要点：**
 
-1. Agent 工具明确校验定义式和 Fork 式的字段组合；定义式要求角色，Fork 角色可选且强制后台。
-2. Agent 工具根据能力分析在启动前决定是否需要 Worktree，不允许先在主工作区写入后再迁移。
-3. 任务查询工具返回有界、脱敏快照；取消工具不能提供强制删除 Worktree 或绕过权限保护的入口。
-4. 通知收件箱按完成顺序投递，在父模型当前请求结束后的下一安全边界消费，避免修改正在流式生成的请求。
-5. 超长结果只通知状态、摘要和详情定位；不把完整子对话、思考文本和工具轨迹复制到父上下文。
+1. 项目、用户、内置和扩展来源按确定优先级整体覆盖；无效高优先级定义阻断同名回退但不影响其他 Skill。
+2. 启动目录只加载选择信息，激活时加载完整 SOP；自然语言和明确命令共用同一激活状态所有者。
+3. 多个 Skill 的 Tool 范围取交集，不能绕过 Run Mode、权限、路径、危险命令、隔离或 MCP 确认；模型不可用时明确失败。
+4. Shared Skill 使用主 Run；Isolated Skill 使用临时 Transcript 并只返回最终总结，不创建 Task、后台状态或 Worktree。
 
-**验证：** 运行 `pytest tests/unit/test_agent_tool.py tests/unit/test_background_tools.py tests/unit/test_task_notifications.py tests/integration/test_subagent_notification_flow.py -q`；覆盖工具结构稳定性、参数矩阵、嵌套阻断、通知顺序、并发完成、长结果截断和父请求不可变性。
+**验证：** 运行 `pytest tests/contracts/test_skill_interface.py tests/property/test_core_skill_capabilities.py tests/fault/test_core_skill_refresh.py tests/integration/test_core_skill_flow.py -q`；覆盖来源覆盖、坏候选、两阶段加载、清除、热更新、白名单交集及 Shared/Isolated 差异。
 
-## T12：接入 TUI 的后台切换、任务展示、取消与退出保护
+## T11：实现 Subagent、Task 与通知深模块
 
-**影响文件：** `artcode/tui/keybindings.py`、`artcode/tui/app.py`、`artcode/tui/render.py`、`artcode/runtime/app.py`、`artcode/runtime/state.py`、`artcode/commands/builtin.py`、`artcode/commands/base.py`、`tests/unit/test_commands.py`、`tests/unit/test_tui_background_controls.py`、`tests/integration/test_runtime_background_flow.py`
+**影响文件：** `artcode/core/subagent.py`、`artcode/_subagent/__init__.py`、`artcode/_subagent/roles.py`、`artcode/_subagent/tasks.py`、`artcode/_subagent/scheduler.py`、`artcode/_subagent/notifications.py`、`artcode/_subagent/execution.py`、`artcode/_subagent/builtin/.gitkeep`、`tests/contracts/test_subagent_interface.py`、`tests/property/test_core_subagent_capabilities.py`、`tests/fault/test_core_subagent_failures.py`、`tests/integration/test_core_subagent_flow.py`、`tests/integration/test_core_parallel_worktrees.py`、`tests/behavior/ch14_matrix.yml`、`pyproject.toml`，以及矩阵分配给本任务替换的旧 Subagent 与 Task 私有 seam 测试
 
-**依赖任务：** T10、T11
+**依赖任务：** T3、T4、T5、T8、T9
 
-**参考资料定位：** Spec F15～F24、N6、AC7～AC8；理论材料 A“前台/后台交互”“任务状态与通知”。
+**参考资料定位：** Spec F80～F92、N2、N5～N13、AC18～AC21；Plan“Subagent”“Subagent Task”。
 
-**完成结果：** 用户能在前台子 Agent 运行时手动切到后台，能通过本地命令查看任务列表、详情和取消任务；正常退出前会明确暴露仍在运行的任务并走受控收尾。
+**完成结果：** Subagent Interface 统一定义式与 Fork 式创建、Role 解析、子 Run、Task 排队与并发、前后台切换、查看、取消、通知和成果交接；子 Run 复用唯一 Agent、Model、Tool Interface。
 
 **实施要点：**
 
-1. 在模型生成期间启用专用后台切换键，不与现有发送、多行输入和取消快捷键冲突；切换后立即显示任务标识和当前状态。
-2. 为任务列表、任务详情和取消提供清晰的本地命令输出，区分排队、运行、停止原因、用量和 Worktree 保留状态。
-3. 异步完成提示不破坏当前流式输出；同一任务的重复通知和已读状态可区分。
-4. 应用退出不静默遗弃运行任务：先展示活跃任务，再按用户选择返回、等待或取消；取消后的 Worktree 仍走成果保护。
+1. 定义式从干净 Transcript 和 Role 启动；Fork 式冻结父 Prompt 与 ToolSnapshot 并始终后台执行。
+2. 子执行拥有独立 Run 状态、权限事件、上下文与 usage；能力只被父上限、Role 和后台策略收窄，不能递归委派、询问用户或继承临时批准。
+3. 写任务在首次 Model 请求前取得基于入队提交的 Worktree lease；失败时不降级到主 Workspace。
+4. Task 只存在当前进程；完成通知按完成顺序在父 Run 安全 Prompt 边界投递一次，只含结论、状态、usage 与 handoff。
 
-**验证：** 运行 `pytest tests/unit/test_commands.py tests/unit/test_tui_background_controls.py tests/integration/test_runtime_background_flow.py -q`；覆盖快捷键冲突、前台切换、自动转后台、通知渲染、重复取消、退出保护和终端异常。
+**验证：** 运行 `pytest tests/contracts/test_subagent_interface.py tests/property/test_core_subagent_capabilities.py tests/fault/test_core_subagent_failures.py tests/integration/test_core_subagent_flow.py tests/integration/test_core_parallel_worktrees.py -q`；覆盖定义/Fork、状态隔离、并发、前后台、取消、重启、通知时机和双 Worktree。
 
-## T13：补齐并发、故障与安全不变量测试
+## T12：实现独立的新 Application 与 CLI/TUI Adapter
 
-**影响文件：** `tests/fixtures/subagents.py`、`tests/fixtures/git_repositories.py`、`tests/property/test_subagent_capabilities.py`、`tests/property/test_worktree_paths.py`、`tests/fault/test_subagent_concurrency.py`、`tests/fault/test_subagent_failures.py`、`tests/fault/test_worktree_cleanup_failures.py`、`tests/integration/test_subagent_parallel_worktrees.py`
+**影响文件：** `artcode/core/application.py`、`artcode/_application/__init__.py`、`artcode/_application/config.py`、`artcode/_application/lifecycle.py`、`artcode/_application/commands.py`、`artcode/_application/events.py`、`artcode/adapters/__init__.py`、`artcode/adapters/terminal.py`、`tests/application/conftest.py`、`tests/application/test_startup.py`、`tests/application/test_commands.py`、`tests/application/test_run_flow.py`、`tests/application/test_state_views.py`、`tests/application/test_shutdown.py`、`tests/behavior/ch14_matrix.yml`，以及矩阵分配给本任务替换的旧 Application、命令与 TUI 私有 seam 测试
+
+**依赖任务：** T6、T10、T11
+
+**参考资料定位：** Spec F1～F7、F25～F27、F65～F70、F93～F94、N1～N16、AC1、AC4、AC15、AC22；Plan“Application”“本地命令与 TUI”“Application 接入”。
+
+**完成结果：** 新 Application 可从测试入口独立组装八个模块、接受用户输入、分流本地命令或 Run、输出有序终端事件、聚合只读状态并有序关闭；旧生产入口仍保持未切换。
+
+**实施要点：**
+
+1. 配置在产生外部效果前完成用户级/项目级严格校验和确定合成，一次报告同层可发现问题并全程脱敏。
+2. Application 只协调生命周期和当前前台操作，不复制 Transcript、权限、Skill、Task、Workspace 或 usage 状态。
+3. 未知/非法命令不调用 Model、不写 Transcript；状态命令只读，清屏只影响显示并清除 Skill 激活。
+4. 独立的 terminal Adapter 依赖 Application Interface，负责多行、流式事件、取消、审批、usage 与 Task 控制；Application 核心不反向导入终端实现。启动中途失败和所有关闭路径按所有权逆序回收资源。
+
+**验证：** 运行 `pytest tests/application -q`；覆盖新建/恢复/选择 Session、普通多轮、Plan/Act、命令分流、状态只读、前后台 Task、启动失败和关闭资源回收。
+
+## T13：验证切换前就绪条件并冻结删除清单
+
+**影响文件：** `tests/behavior/ch14_matrix.yml`、`tests/tools/verify_ch14_matrix.py`、`tests/tools/verify_core_imports.py`、`tests/architecture/test_core_dependencies.py`、`tests/manual/ch14_cutover_gate.md`
 
 **依赖任务：** T1～T12
 
-**参考资料定位：** Spec N1～N11、AC3～AC16；理论材料 A、B 全文的隔离与失败场景。
+**参考资料定位：** Spec F1～F98、N1～N16、AC1～AC24；Plan“测试策略”“删除清单”“切换门槛”。
 
-**完成结果：** 对路径、权限、缓存、并发和清理建立自动化安全网，能够证明失败只影响目标任务，任何不确定状态都不会扩大能力或删除成果。
+**完成结果：** 新核心已独立通过全部切换前验证，行为矩阵中的测试证据均可定位，状态所有权和依赖方向符合设计，T14 的精确删除清单被冻结；旧生产入口尚未改动，入口等价、旧核心删除和最终导入无残留不作为本任务的前置条件。
 
 **实施要点：**
 
-1. 并行运行多个读任务、写任务、Fork 和定义式任务，验证消息、权限、用量、工作目录和文件内容互不串扰。
-2. 在角色刷新、Git 创建、环境初始化、Provider 流、工具执行、通知、取消和清理阶段注入故障。
-3. 以属性测试覆盖名称解析和能力求交，验证结果永不越出托管根、永不超过父能力上限。
-4. 对 `os.chdir`/`Path.cwd()` 依赖建立回归探针，并验证主 Agent、子 Agent 与各自 Seatbelt 都不能跨越所属作用域，确保并发文件行为只由执行作用域决定。
+1. 汇总 T2～T12 已产生的 Interface、Application、属性、故障、压力和真实集成结果，不在本任务临时补建新的测试体系。
+2. 复核 Plan 无外部效果、单请求无重试、Transcript 协议完整、旧数据不加载、普通路径无额外步骤、双 Worktree 隔离和关闭零遗留资源。
+3. 通过导入审计证明新核心不依赖旧业务包，状态所有权与 `plan.md` 表格一致，并确认已获等价覆盖的旧私有 seam 测试已在所属任务删除。
+4. 冻结 T14 要删除的旧模块、兼容路径、孤立测试与旧运行数据清单，同时把需保护的 Worktree 精确排除在自动删除范围外。
 
-**验证：** 运行 `pytest tests/property tests/fault tests/integration/test_subagent_parallel_worktrees.py -q`；重复并发运行无随机失败，所有保护性不变量均有可观测断言。
+**验证：** 运行全部非 live 测试、`python tests/tools/verify_ch14_matrix.py` 和 `python tests/tools/verify_core_imports.py`；确认切换前就绪条件通过并生成精确删除清单后进入 T14，最终入口与删除条件留在 T14 验证。
 
 ## T14：接入主流程
 
-**影响文件：** `artcode/bootstrap.py`、`artcode/runtime/app.py`、`artcode/runtime/state.py`、`artcode/agent/loop.py`、`artcode/agent/request.py`、`artcode/tools/__init__.py`、`artcode/commands/builtin.py`、`artcode/workspace.py`、`README.md`、`config.example.yml`、`tests/integration/test_subagent_main_flow.py`、`tests/integration/test_agent_request_flow.py`、`tests/integration/test_main_entry_flow.py`、`tests/integration/test_skill_flow.py`、`tests/integration/test_mcp_agent_flow.py`、`tests/integration/test_persistence_flow.py`
+**影响文件：** `artcode/cli.py`、`artcode/__main__.py`、`artcode/__init__.py`、`artcode/core/application.py`、`artcode/adapters/terminal.py`、`README.md`、`config.example.yml`、`pyproject.toml`；按 T13 清单删除旧 `artcode/agent/`、`artcode/background/`、`artcode/commands/`、`artcode/context_management/`、`artcode/conversation/`、`artcode/mcp/`、`artcode/permissions/`、`artcode/persistence/`、`artcode/prompting/`、`artcode/providers/`、`artcode/runtime/`、`artcode/sandbox/`、`artcode/security/`、`artcode/skills/`、`artcode/subagents/`、`artcode/tools/`、`artcode/tui/`、`artcode/worktrees/`、`artcode/bootstrap.py`、`artcode/config.py`、`artcode/errors.py`、`artcode/prompts.py`、`artcode/workspace.py` 及切换后失去调用方的孤立测试
 
-**依赖任务：** T1～T13
+**依赖任务：** T13
 
-**参考资料定位：** Spec 全部功能需求与 N3～N10；现有生产组合根 `artcode/bootstrap.py` 和主循环 `artcode/runtime/app.py`。
+**参考资料定位：** Spec F2～F7、F65～F70、F93～F97、N2～N4、N11、N16、AC1、AC15、AC22～AC24；Plan“开发隔离与一次性切换”“删除清单”“切换门槛”。
 
-**完成结果：** Bootstrap 只组装一套 Provider、工具实现、MCP、Seatbelt 和可选 Hook 基础设施，同时为主 Agent 与子 Agent 创建不同运行状态；Agent 工具、任务管理器、角色目录、Worktree 管理器和 TUI 控制进入真实主链路。
+**完成结果：** `python -m artcode` 与安装后的 `artcode` 命令同时进入唯一新 Application；仓库只保留一条生产路径，旧核心、重复状态、兼容读取、章节式产品文本、Provider 自动重试和失去调用方的浅转发模块全部删除。
 
 **实施要点：**
 
-1. 明确资源所有权和关闭顺序，后台任务先受控停止，子 Agent Artifact Store 与 Worktree 租约随后退出，共享服务最后关闭。
-2. 注册 Agent 与任务工具，并在工具注册完成后校验角色工具名，保证模型看到的统一 Agent 工具结构稳定。
-3. 将任务通知排入主 Agent 请求边界，验证主会话持久化只保存精简通知而不保存完整子会话。
-4. 回归未调用 Agent 工具时的现有功能，确认普通文件工具仍以主 Workspace 为作用域，Skill 独立对话不会被误当成子 Agent 后台任务。
+1. 在一个切换阶段同时替换源码与安装入口，不引入 Feature Flag、双写、旧格式回退或长期兼容层。
+2. 按 T13 冻结的清单删除旧业务实现、兼容路径和切换后失去调用方的孤立测试；旧私有 seam 测试应已在对应模块任务删除，T14 只审计残留。
+3. 删除 `MAX_STREAM_ATTEMPTS`、重试循环及“首事件前成功重试”断言，保留单次传输失败直接报告且不污染 Transcript 的契约测试。
+4. 清理旧运行数据时不得触碰普通用户文件；Worktree 只在可证明无成果时自动清理，否则保留并展示位置。
 
-**验证：** 运行 `pytest tests/integration/test_subagent_main_flow.py tests/integration/test_agent_request_flow.py tests/integration/test_main_entry_flow.py tests/integration/test_skill_flow.py tests/integration/test_mcp_agent_flow.py tests/integration/test_persistence_flow.py -q`；随后运行全部非 live 测试。
+**验证：** 运行全部非 live 测试、`python tests/tools/verify_ch14_matrix.py`、`python tests/tools/verify_core_imports.py`、`python -m compileall -q artcode tests` 和项目构建；分别从源码入口与临时 wheel 安装入口执行等价启动、Run、Session 与退出路径。
 
 ## T15：端到端验证
 
-**影响文件：** `tests/live/test_subagent_definition_e2e.py`、`tests/live/test_subagent_fork_cache_e2e.py`、`tests/live/test_subagent_worktree_e2e.py`、`tests/manual/ch13_acceptance.md`、`tests/manual/ch13_results.md`、`checklist.md`
+**影响文件：** `tests/manual/ch14_acceptance.md`、`tests/manual/ch14_results.md`、`checklist.md`、`README.md`、`CONTEXT.md`、`docs/adr/0003-core-contract-freeze.md`
 
 **依赖任务：** T14
 
-**参考资料定位：** Spec AC1～AC17；Checklist 全部验收项；理论材料 A、B 的完整用户路径。
+**参考资料定位：** Spec AC1～AC25、N1～N16；Checklist 全部验收项；Plan“最终验收与冻结”“切换门槛”。
 
-**完成结果：** 在临时真实 Git 仓库中完成定义式只读任务、定义式前台转后台任务、Fork 缓存任务和两个并行写 Worktree 任务；主工作区不被直接修改，任务结果、用量和 Git 交接信息可查看。
+**完成结果：** 复跑 T2～T14 已建立的固定验收集合并汇总证据，完成 Application 人工关键路径和文档一致性核对；不在最终验收阶段临时设计新的功能或测试体系，领域语言与外部契约随后正式冻结。
 
 **实施要点：**
 
-1. 使用可控 Provider 完整覆盖定义式空白上下文、Fork 父快照、角色限制、异步通知、取消和退出保护。
-2. 使用真实 Git 进程验证同一基准上的并行分支、同名文件修改、快速恢复、初始化规则、脏目录保留和安全目录清理。
-3. 配置可用时执行真实 DeepSeek 调用，核对 RunToCompletion、多轮 Token 聚合和 Provider 报告的缓存命中；不能用推算值冒充缓存证据。
-4. 执行全量测试、编译、构建和临时安装，逐项记录真实结果、跳过原因及遗留 Worktree 路径。
+1. 复跑已经在 T3、T4、T6 与 T11 建立的 Seatbelt/Git、DeepSeek、MCP 和双 Worktree 真实集成，不新增另一套重复 live 测试。
+2. 从 Application 入口执行固定人工清单，覆盖普通对话、Plan/Act、文件与命令、Session 恢复、压缩、记忆、Skill、Subagent、Task、状态查询和关闭。
+3. 逐项汇总全量测试、构建、临时安装、源码/安装入口等价和 T14 删除审计结果；环境阻塞与产品失败分别记载。
+4. 确认代码、README、CONTEXT、Spec、Tasks、Checklist 和公开 Interface 一致后记录核心冻结 ADR。
 
-**验证：** 运行 `pytest -q`，再运行 `python -m compileall -q artcode tests` 和项目构建；真实 API 可用时运行 `pytest tests/live/test_subagent_definition_e2e.py tests/live/test_subagent_fork_cache_e2e.py tests/live/test_subagent_worktree_e2e.py -q`，最后按 `checklist.md` 完成整章验收。
+**验证：** 运行 `pytest -q`，复跑 `tests/live/test_core_deepseek.py`、`tests/integration/test_core_mcp_stdio.py`、`tests/integration/test_core_mcp_http.py`、`tests/integration/test_core_seatbelt.py`、`tests/integration/test_core_parallel_worktrees.py`，再执行 `python -m compileall -q artcode tests`、项目构建和临时安装验证；按 `tests/manual/ch14_acceptance.md` 完成人工验收，确保 `checklist.md` 每一项都有可观测证据。
 
 ## 执行顺序
 
 ```text
-T1 → T2 ───────────────→ T7 ───────────→ T8 → T9 → T10 → T11 → T12 → T13 → T14 → T15
- ├→ T3 ───────→ T5 ────────────────────↗       ↑
- └→ T4 ───────→ T5 → T6 ──────────────────────┘
+T1 → T2 → T3 → T5 → T6
+T1 → T4 ─────────────→ T6
+T1 → T7
+T2 + T4 + T5 + T7 → T8 → T9 → T10
+T3 + T4 + T5 + T8 + T9 → T11
+T6 + T10 + T11 → T12 → T13 → T14 → T15
 ```

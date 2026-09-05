@@ -1,155 +1,96 @@
 # ArtCode
 
-ArtCode 是一个本地 Python CLI Coding Agent 学习项目。当前实现提供流式 OpenAI-compatible 对话、Agent Loop、Plan/Do、本地工具、权限审批、macOS Seatbelt、MCP、上下文压缩、会话恢复和长期记忆。
+ArtCode 是一个单机、单用户、纯本地的 Python CLI Coding Agent 学习项目。ch14 版本使用统一领域语言与八个深模块，支持流式模型交互、Plan/Act、文件与 Shell Tool、权限审批、macOS Seatbelt、MCP、Session 恢复、上下文治理、长期记忆、Skill、Subagent Task 和隔离 Worktree。
 
 ## 安装与启动
-
-建议使用 Python 3.11 或更高版本的虚拟环境：
 
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install -e '.[test]'
 mkdir -p ~/.artcode
 cp config.example.yml ~/.artcode/config.yml
-```
-
-编辑 `~/.artcode/config.yml`，填入模型服务配置，然后在已有项目目录启动：
-
-```bash
 .venv/bin/artcode --workspace /path/to/project
 ```
 
-`python -m artcode` 与 `artcode` 使用同一入口。默认恢复当前 Workspace 最近的可写会话；也可以明确选择：
+`python -m artcode` 与 `artcode` 进入同一 Application 组装路径。默认恢复当前 Workspace 最近可写的 Session，也可以选择：
 
 ```bash
 .venv/bin/artcode --workspace /path/to/project --new
-.venv/bin/artcode --workspace /path/to/project --resume 20260810-120000-a1b2
+.venv/bin/artcode --workspace /path/to/project --resume session-1788520000000000-a1b2c3d4
 ```
 
-`--config /path/to/config.yml` 可以覆盖默认配置位置。`--new` 与 `--resume` 互斥。
+可用 `--config` 指定用户配置，以 `--artcode-home` 指定本地 ArtCode 数据目录。
 
 ## 配置
 
-最小配置如下：
+最小配置：
 
 ```yaml
 protocol: openai
 model: your-model-id
 base_url: https://your-openai-compatible-endpoint/v1
 api_key: your-real-api-key
-
 thinking:
   enabled: false
-
-context:
-  window_tokens: 200000
 ```
 
-配置采用严格字段校验，未知字段会阻止启动。模型、服务地址和 API Key 均为必填项。不同模型的推理参数兼容性由 Provider 处理；上下文窗口默认 1,000,000 Token，可显式配置为 200,000–1,000,000，压缩阈值随窗口等比例变化。
-
-用户级 MCP Server 写在 `~/.artcode/config.yml`，项目级 Server 写在 `<workspace>/.artcode/config.yml`。支持 `stdio` 与 `streamable_http`；单个 Server 的配置、连接或调用失败不会阻断内置工具和其他 Server。
+用户配置与 `<workspace>/.artcode/config.yml` 项目配置会在产生外部效果前分别严格校验并确定性合成。项目级 MCP Server 整体覆盖同名用户定义，并在启动前请求确认。MCP 支持 `stdio` 与 `streamable_http`，加载策略为 `eager` 或 `lazy`。
 
 ## 使用方式
 
-普通输入进入无默认迭代上限的 Agent Loop。内置工具包括：
+普通输入启动 `chat` Run。常用命令：
 
-- `read_file`、`find_files`、`search_text`
-- `write_file`、`edit_file`
-- `run_command`
-
-常用本地命令：
-
-- `/plan <任务>`：只提供只读工具，生成计划。
-- `/do`：执行最近计划。
-- `/status`：显示脱敏运行快照，不调用模型或改变会话状态。
-- `/permission`、`/sandbox`：查看或切换权限与 Shell 策略。
-- `/compact`：手动压缩较早的非用户历史。
-- `/sessions`、`/memory`：查看会话和长期记忆状态。
-- `/tasks`、`/task <task-id>`、`/task-cancel <task-id>`：查看、读取或取消子 Agent 任务。
+- `/plan <目标>`：仅使用内置 observe Tool 生成计划。
+- `/act [新增约束]`：执行最近一次成功计划。
+- `/compact`：手动压缩较早的非 User 历史。
+- `/permissions [default|edit|full]`：查看或改变权限模式。
+- `/sandbox [auto|ask|off]`：控制 Shell 强制隔离；`off` 仍需逐次审批。
+- `/skills`、`/skill <名称> [输入]`：查看或激活 Skill。
+- `/tasks`、`/task <id>`、`/task-cancel <id>`：控制当前进程内 Task。
+- `/worktrees`、`/worktree-discard <id>`：查看成果交接或直接确认危险丢弃。
+- `/status`、`/session`、`/memory`：读取脱敏状态，不调用 Model、不消费 Notice。
 - `/clear`、`/help`、`/exit`。
 
-## 子 Agent 与隔离 Worktree
+内置 Tool 为 `read_file`、`find_files`、`search_text`、`write_file`、`edit_file` 和 `run_command`。路径、敏感目录、符号链接与审批后目标变化由 Workspace 再次校验。Shell 默认使用 macOS Seatbelt 并禁止网络；隔离不可用时失败关闭。
 
-主 Agent 可使用 `agent` 工具把能够独立完成的工作交给子 Agent。工具有两种创建方式：
+## Session、Prompt 与记忆
 
-- `definition`：必须指定角色，从干净对话开始；可以前台等待，超过 120 秒会继续在后台运行。
-- `fork`：冻结创建瞬间的主对话快照，可选择叠加角色；始终立即作为后台任务返回。
+Transcript 是追加式权威历史，只保存已提交事实。Prompt 是每次 Run 的不可变投影；指令、Notice、Summary、记忆、Skill 和 Transcript 使用明确来源标签。Notice 只在请求真正 dispatch 时消费。
 
-角色文件放在项目的 `<workspace>/.artcode/agents/*.md` 或用户目录 `~/.artcode/agents/*.md`。项目角色优先于用户角色；同名高优先级文件无效时会阻止回退到低优先级版本。最小角色示例：
+新格式位于 `<workspace>/.artcode/ch14/sessions/`。记录使用带校验和的 JSONL：独立坏记录可隔离，不完整尾部可修复，不完整 Tool exchange 回退到最近安全前缀。ch14 不读取或迁移旧格式。
 
-```md
----
-name: reviewer
-description: 只读代码审查
-tools:
-  allow: [read_file, find_files, search_text]
-  deny: []
-model: inherit
-max_rounds: 30
-permission_mode: default
-isolation: none
----
+Summary 只替代较早的 Assistant/Tool 派生视图，所有 User 原文始终逐条、逐字、按顺序保留。只有自然完成 Run 的不可变快照会异步、串行更新用户偏好和项目事实；Markdown 来源可人工编辑，索引可重建。
 
-检查指定改动，指出可验证的问题和建议；不要修改文件。
-```
+## Skill、Subagent 与 Worktree
 
-角色 frontmatter 固定包含 `name`、`description`、`tools`、`model`、`max_rounds`、`permission_mode`、`isolation` 七个字段；未知字段会使该角色失效。允许 `write_file`、`edit_file` 或 `run_command` 的角色必须写明 `isolation: worktree`。这类任务从入队时的 Git 提交创建位于 `<workspace>/.artcode/worktrees/` 的独立目录，不会复制主工作区未提交修改；有未提交修改或尚未安全推送的本地提交会保留，ArtCode 不会自动合并、推送或丢弃成果。
+Skill 来源优先级为项目、用户、内置、扩展。同名高优先级定义无效时不会静默回退。启动目录只加载选择信息，激活时才加载 SOP。多个 Skill 的 Tool 范围取交集。Shared Skill 使用主 Session；Isolated Skill 使用临时 Transcript，只返回最终总结，不创建 Task 或 Worktree。
 
-前台任务执行时按 `Ctrl+B` 可将其转入后台并立即返回输入区。退出时若仍有活动任务，可选择等待、全部取消或返回。后台任务完成后，主对话只会在下一次安全请求边界收到精简的 `<task-notification>`；完整结果、累计用量和 Worktree 交接信息保留在任务详情中。
+Subagent 通过统一 `agent` Tool 创建：
 
-文件工具只允许访问当前 Workspace。新文件可自动创建 Workspace 内缺失的多级父目录；越界路径、敏感路径和在审批后改变目标的路径会被拒绝。精确编辑要求原文唯一匹配，写已有文件默认拒绝覆盖。
+- `definition`：必须指定 Role，从干净 Transcript 开始，可前台等待或后台运行。
+- `fork`：冻结父 Prompt 与 ToolSnapshot，可叠加 Role，始终后台运行。
 
-Shell 默认通过 macOS Seatbelt 运行，并禁止公网、回环和本地监听网络访问。`/sandbox off` 需要再次确认。域名白名单、动态网络授权和代理不在当前实现范围内；网络策略保持集中式全拒绝。
+Role 位于 `.artcode/agents/*.md` 或用户 `agents/*.md`，其能力只能继续收窄父能力。可能写盘的 Task 在首次 Model 请求前取得基于入队提交的独立 Worktree；主 Workspace 的未提交内容不会复制。无变化 Worktree 可自动清理，含未提交修改或本地新增提交的成果会保留。ArtCode 不自动 merge、rebase、push 或创建 PR。
 
-## 本地数据
+## 八个核心模块
 
 ```text
-~/.artcode/
-├── config.yml
-├── instructions.md
-├── permissions.yml
-└── memory/
-
-<workspace>/
-├── ARTCODE.md
-├── permissions.local.yml
-└── .artcode/
-    ├── config.yml
-    ├── instructions.md
-    ├── permissions.yml
-    ├── sessions/*.jsonl
-    ├── memory/
-    ├── context/
-    ├── agents/*.md
-    └── worktrees/
+Terminal Adapter → Application
+                    ├─ Session → Model（Summary / Memory）
+                    ├─ Agent → Model + Tool
+                    ├─ Skill → frozen contribution
+                    └─ Subagent → Agent + Workspace lease
+Tool → Workspace + MCP Adapter + Subagent control Adapter
 ```
 
-会话消息同步追加为 JSONL。单条完整坏记录会跳过，不完整尾部会截断，破坏工具协议的记录只恢复安全前缀。长期记忆使用可编辑 Markdown 文件和可重建索引，由自然完成轮次的不可变副本在后台串行更新；失败不会改变当前回复或会话。
-
-这些数据不会同步到云端，也不加密，可能包含对话和代码片段。删除活动 Workspace 的会话或记忆前应先退出 ArtCode。
-
-## 当前架构
-
-生产依赖只在 `Bootstrap` 中组装，并由统一异步生命周期管理资源：
-
-```text
-__main__ → cli → Bootstrap → ArtCodeRuntime → AgentLoop
-                         ├─ RequestPreparer → ContextManager
-                         ├─ OpenAI-compatible Provider
-                         ├─ ToolExecutionService → PermissionService
-                         │                        → WorkspaceFileAccess / ProcessSupervisor
-                         ├─ SessionService / DurablePromptSource / MemoryService
-                         ├─ AgentTool → SubagentFactory → BackgroundTaskManager
-                         │                           └─ isolated Worktree
-                         └─ McpManager / PromptToolkitTui / CommandDispatcher
-```
-
-`RuntimeState` 是权限、Shell、显示模式和最近 Token 用量的进程内权威来源；请求级工具上下文使用其不可变权限快照。Runtime 只协调交互，不隐式创建第二套生产组件。
+公开 Interface 位于 `artcode/core/`，具体实现位于对应的 `artcode/_*/` 私有包。Application 是唯一组装和生命周期协调者；Transcript、Run、Provider、Tool、Workspace、Skill 与 Task 状态分别只有一个权威所有者。
 
 ## 验证
 
 ```bash
-.venv/bin/python -m pytest -q
+.venv/bin/python tests/tools/verify_ch14_matrix.py --stage T14
+.venv/bin/python tests/tools/verify_core_imports.py --stage T14
+.venv/bin/pytest -q
+.venv/bin/python -m compileall -q artcode tests
+.venv/bin/python -m build --wheel
 ```
-
-当前测试聚焦核心主干：配置、Provider/SSE、会话恢复、权限、文件安全、进程、上下文压缩、Agent Loop、命令和少量端到端链路。

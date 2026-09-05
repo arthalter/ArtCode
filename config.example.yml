@@ -11,7 +11,7 @@ api_key: your-api-key
 thinking:
   enabled: false
 
-# 按所选模型的上下文窗口填写；ArtCode 支持 200000–1000000。
+# 按所选模型的上下文窗口填写。
 context:
   window_tokens: 200000
 
