@@ -7,10 +7,11 @@ import socket
 import sys
 
 import httpx
+import pytest
 
 from artcode._tool import LocalTools
 from artcode._workspace import LocalWorkspace
-from artcode.core.tool import ApprovalChoice, PermissionMode, RunMode, ToolCall
+from artcode.core.tool import ApprovalChoice, McpLoading, PermissionMode, RunMode, ToolCall
 
 
 class Allow:
@@ -24,7 +25,10 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-async def test_real_streamable_http_initializes_discovers_calls_and_closes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("loading", (McpLoading.EAGER, McpLoading.LAZY))
+async def test_real_streamable_http_initializes_discovers_calls_and_closes(
+    tmp_path: Path, loading: McpLoading,
+) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
     workspace = LocalWorkspace(root)
@@ -50,8 +54,18 @@ async def test_real_streamable_http_initializes_discovers_calls_and_closes(tmp_p
             workspace,
             {"http": {"transport": "streamable_http", "url": f"http://127.0.0.1:{port}/mcp"}},
             {},
+            loading=loading,
         )
         run = tools.open_run(workspace, RunMode.CHAT)
+        if loading is McpLoading.LAZY:
+            assert not any(item.name.startswith("mcp__") for item in run.descriptors)
+            search = await tools.execute_batch(run, (
+                ToolCall("search", "mcp_search_tools", '{"query":"echo","limit":1}'),
+            ))
+            assert search[0].ok and json.loads(search[0].content)["tools"][0]["active"]
+            run = tools.refresh_run(run)
+        else:
+            assert "mcp_search_tools" not in {item.name for item in run.descriptors}
         echo = next(item.name for item in run.descriptors if item.name.endswith("__echo"))
         result = await tools.execute_batch(
             run,

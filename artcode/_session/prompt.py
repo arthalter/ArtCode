@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from artcode.core.model import ModelMessage, ModelRequest, ToolDefinition
+from artcode.core.model import ModelMessage, ModelRequest
 from artcode.core.session import (
     AssistantFact,
     RunContribution,
@@ -11,7 +11,6 @@ from artcode.core.session import (
     TranscriptFact,
     UserFact,
 )
-from artcode.core.tool import ToolRun
 
 from .instructions import InstructionDocument
 
@@ -24,17 +23,12 @@ BASE_INSTRUCTION = (
 )
 
 
-def build_prompt(
-    facts: tuple[TranscriptFact, ...],
-    tools: ToolRun,
-    *,
+def instruction_messages(
     instructions: tuple[InstructionDocument, ...],
     contributions: tuple[RunContribution, ...],
-    summary: str | None,
-    summary_through: int,
     user_memory: str,
     project_memory: str,
-) -> ModelRequest:
+) -> tuple[ModelMessage, ...]:
     messages: list[ModelMessage] = [ModelMessage("system", BASE_INSTRUCTION)]
     for document in instructions:
         messages.append(
@@ -49,6 +43,12 @@ def build_prompt(
         messages.append(ModelMessage("system", _section("memory", "user", user_memory)))
     if project_memory:
         messages.append(ModelMessage("system", _section("memory", "project", project_memory)))
+    messages.extend(contribution_messages(contributions))
+    return tuple(messages)
+
+
+def contribution_messages(contributions: tuple[RunContribution, ...]) -> tuple[ModelMessage, ...]:
+    messages: list[ModelMessage] = []
     for contribution in contributions:
         messages.append(
             ModelMessage(
@@ -58,15 +58,22 @@ def build_prompt(
                 + "\n</skill>",
             )
         )
-    if summary:
-        messages.append(
-            ModelMessage(
-                "system",
-                f'<summary through="{summary_through}">\n'
-                + json.dumps(summary, ensure_ascii=False)
-                + "\n</summary>",
-            )
-        )
+    return tuple(messages)
+
+
+def summary_message(summary: str, summary_through: int) -> ModelMessage:
+    return ModelMessage(
+        "system",
+        f'<summary through="{summary_through}">\n'
+        + json.dumps(summary, ensure_ascii=False)
+        + "\n</summary>",
+    )
+
+
+def project_facts(
+    facts: tuple[TranscriptFact, ...], summary_through: int
+) -> tuple[ModelMessage, ...]:
+    messages: list[ModelMessage] = []
     for index, fact in enumerate(facts):
         if index < summary_through and not isinstance(fact, UserFact):
             continue
@@ -87,23 +94,14 @@ def build_prompt(
                 ModelMessage("tool", result.content, tool_request_id=result.call_id)
                 for result in fact.results
             )
-    definitions = tuple(
-        ToolDefinition(item.name, item.description, item.parameters_json)
-        for item in tools.descriptors
-    )
-    model = next(
-        (item.model for item in reversed(contributions) if item.model is not None),
-        None,
-    )
-    return ModelRequest(tuple(messages), tools=definitions, model=model)
+    return tuple(messages)
 
 
 def with_notices(
-    request: ModelRequest, notices: tuple[tuple[str, str], ...]
+    request: ModelRequest, notices: tuple[tuple[str, str], ...], *, insertion: int = 1
 ) -> ModelRequest:
     if not notices:
         return request
-    insertion = 1
     messages = list(request.prompt)
     notice_messages = [
         ModelMessage(

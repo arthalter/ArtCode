@@ -133,7 +133,9 @@ class McpAdapter:
     @property
     def active_descriptors(self) -> tuple[ToolDescriptor, ...]:
         return tuple(
-            self.tools[name].descriptor for name in sorted(self.active_names) if name in self.tools
+            self.tools[name].descriptor
+            for name in sorted(self.active_names)
+            if name in self.tools and self.tools[name].session.state is McpServerState.READY
         )
 
     @property
@@ -224,19 +226,33 @@ class McpAdapter:
         )
         return self.report
 
-    def search(self, query: str, *, limit: int) -> tuple[McpToolHit, ...]:
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        allowed_tools: frozenset[str] | None = None,
+    ) -> tuple[McpToolHit, ...]:
         if not isinstance(query, str) or not query.strip() or limit < 1:
             raise ValueError("MCP 搜索词和 limit 必须有效。")
         words = query.casefold().split()
         hits: list[McpToolHit] = []
         for name, tool in sorted(self.tools.items()):
+            if allowed_tools is not None and name not in allowed_tools:
+                continue
             haystack = f"{name} {tool.descriptor.description} {tool.server_name}".casefold()
             if all(word in haystack for word in words):
-                hits.append(McpToolHit(name, tool.descriptor.description, tool.server_name, name in self.active_names))
+                hits.append(McpToolHit(
+                    name,
+                    tool.descriptor.description,
+                    tool.server_name,
+                    name in self.active_names and tool.session.state is McpServerState.READY,
+                ))
         return tuple(hits[:limit])
 
     def activate(self, name: str) -> bool:
-        if name not in self.tools:
+        tool = self.tools.get(name)
+        if self._closed or tool is None or tool.session.state is not McpServerState.READY:
             return False
         self.active_names.add(name)
         self.report = McpReport(

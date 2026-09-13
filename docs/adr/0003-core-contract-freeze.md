@@ -3,3 +3,5 @@
 2026-09-04，ArtCode 完成 ch14 一次性破坏性重写并切换到唯一新 Application。`CONTEXT.md` 中 Session、Transcript、Prompt、Notice、Summary、Protocol Metadata、Run、Run Mode、Task、Subagent、Skill、Tool Effect 与 Workspace 的含义，以及 `artcode/core/` 八个 Interface、CLI 命令、配置字段、新 Session 格式和模型可见 Tool Schema，构成冻结契约；后续实现优化默认发生在私有模块内部，修改这些契约必须由项目所有者明确批准并同步更新 Spec、行为矩阵、Checklist 与验收证据。
 
 冻结依据为 `tests/behavior/ch14_matrix.yml` 的 139 项映射、T14 导入/删除审计、全部 Interface/Application 测试、真实 MCP/进程/Seatbelt/Git 验证、wheel 内容与临时安装验证。真实 Provider 验证已执行，但外部 `rightapi.ai / grok-4.6` 服务返回 HTTP 500 `Grok requires Postgres (DATABASE_URL)`，按 AC24 记录为外部服务阻塞，不以本地 Fake 结果替代。
+
+2026-09-05，项目所有者批准为同一 Run 请求续接与模型可调用的 MCP 按需激活修订相关公开契约，具体边界见 [ADR 0004](0004-run-continuation-and-mcp-activation.md)。本段不改变上述历史验收结果；修订后的验证状态以当前 Checklist、行为矩阵和 `tests/manual/ch14_results.md` 为准。

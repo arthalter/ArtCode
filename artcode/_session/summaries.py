@@ -44,13 +44,19 @@ async def generate_summary(
     )
     parts: list[str] = []
     completed = False
-    async for event in model.stream(request):
-        if isinstance(event, TextDelta):
-            parts.append(event.text)
-        elif isinstance(event, ToolRequests):
-            raise ValueError("Summary 响应不得请求 Tool。")
-        elif isinstance(event, Completed):
-            completed = True
+    stream = model.stream(request)
+    try:
+        async for event in stream:
+            if isinstance(event, TextDelta):
+                parts.append(event.text)
+            elif isinstance(event, ToolRequests):
+                raise ValueError("Summary 响应不得请求 Tool。")
+            elif isinstance(event, Completed):
+                completed = True
+    finally:
+        close = getattr(stream, "aclose", None)
+        if callable(close):
+            await close()
     summary = "".join(parts).strip()
     if not completed or not summary:
         raise ValueError("Summary 响应没有完整文本。")

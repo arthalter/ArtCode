@@ -107,7 +107,7 @@ async def test_automatic_compaction_is_single_attempt_and_repeated_manual_call_i
         recent_fact_count=1,
     )
     session.commit_user("old user")
-    session.commit_assistant("old assistant", AssistantCompletion.NATURAL)
+    session.commit_assistant("old assistant " * 100, AssistantCompletion.NATURAL)
     model = SummaryModel()
 
     lease = await session.prepare_run(

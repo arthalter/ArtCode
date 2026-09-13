@@ -41,6 +41,10 @@ def atomic_write(root: Path, target: PreparedTarget, content: str, *, overwrite:
             raise FileExistsError(f"文件已存在，且未声明覆盖：{target.path}")
         if exists and _entry_is_symlink(parent_fd, target.resolved.name):
             raise TargetChanged(f"写入前目标变成符号链接：{target.path}")
+        existing_mode = (
+            stat.S_IMODE(os.stat(target.resolved.name, dir_fd=parent_fd, follow_symlinks=False).st_mode)
+            if exists else None
+        )
 
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         temp_fd = os.open(temp_name, flags, 0o600, dir_fd=parent_fd)
@@ -50,6 +54,8 @@ def atomic_write(root: Path, target: PreparedTarget, content: str, *, overwrite:
                 temp_fd = -1
                 handle.write(content)
                 handle.flush()
+                if existing_mode is not None:
+                    os.fchmod(handle.fileno(), existing_mode)
                 os.fsync(handle.fileno())
         finally:
             if temp_fd >= 0:
@@ -83,16 +89,38 @@ def slice_text(
     if end_line is not None and (isinstance(end_line, bool) or end_line < 1):
         raise ValueError("end_line 必须大于等于 1。")
     start = start_line or 1
+    if end_line is not None and end_line < start:
+        raise ValueError("end_line 不能小于 start_line。")
     lines = content.splitlines(keepends=True)
     total = len(lines)
+    if not lines:
+        return TextSlice("", start, 0, 0, False, None)
     end = end_line if end_line is not None else total
     if end < start:
         raise ValueError("end_line 不能小于 start_line。")
-    selected = "".join(lines[start - 1 : end]) if lines else ""
+    selected_lines = lines[start - 1 : end]
+    selected = "".join(selected_lines)
     truncated = len(selected) > char_limit
-    text = selected[:char_limit]
-    actual_end = min(end, total) if total else 0
-    next_line = start if truncated else (actual_end + 1 if actual_end < total else None)
+    actual_end = min(end, total)
+    if truncated:
+        char_count = line_count = 0
+        for line in selected_lines:
+            if char_count + len(line) > char_limit:
+                break
+            char_count += len(line)
+            line_count += 1
+        if line_count:
+            # Resume at the next complete line without discarding a partial tail.
+            text = selected[:char_count]
+            actual_end = start + line_count - 1
+            next_line = actual_end + 1
+        else:
+            # A single oversized line remains a bounded preview, not a skipped line.
+            text = selected[:char_limit]
+            actual_end = next_line = start
+    else:
+        text = selected
+        next_line = actual_end + 1 if actual_end < total else None
     return TextSlice(text, start, actual_end, total, truncated, next_line)
 
 

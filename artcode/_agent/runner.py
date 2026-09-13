@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Awaitable
 from dataclasses import replace
 
 from artcode.core.agent import (
+    CompactionEvent,
     RunControl,
     RunError,
     RunEvent,
@@ -18,6 +19,7 @@ from artcode.core.agent import (
 )
 from artcode.core.model import (
     Completed,
+    ContextWindowFailure,
     Model,
     ModelEvent,
     ModelFailure,
@@ -27,7 +29,7 @@ from artcode.core.model import (
     ToolRequests,
     Usage,
 )
-from artcode.core.session import DispatchedRun, RunCompletion, Session
+from artcode.core.session import CompactionTrigger, DispatchedRun, RunCompletion, Session
 from artcode.core.tool import Approver, Tool, ToolCall
 
 from .events import ControlledCancellation
@@ -64,6 +66,12 @@ class AgentRunner:
         control = control or RunControl()
         lease = dispatched.lease
         request = dispatched.request
+        run_tools = lease.tools
+        refresh_tools = False
+        next_trigger = CompactionTrigger.AUTOMATIC
+        context_error: ContextWindowFailure | None = None
+        emergency_used = False
+        request_usage: Usage | None = None
         usage = UsageAccumulator()
         rounds = 0
         tool_batches = 0
@@ -75,6 +83,34 @@ class AgentRunner:
             while True:
                 if control.cancelled:
                     raise ControlledCancellation
+                next_tools = self.tools.refresh_run(run_tools) if refresh_tools else run_tools
+                preparation = await _controlled_await(
+                    self.session.prepare_next_request(
+                        lease, request, next_tools, model=self.model,
+                        usage=request_usage, trigger=next_trigger,
+                    ),
+                    control,
+                )
+                if preparation.compaction is not None:
+                    yield CompactionEvent(preparation.compaction)
+                if control.cancelled:
+                    raise ControlledCancellation
+                recovery_failed = next_trigger is CompactionTrigger.EMERGENCY and (
+                    preparation.compaction is None or preparation.compaction.status != "success"
+                )
+                if not preparation.can_continue or recovery_failed:
+                    detail = str(context_error) if context_error is not None else preparation.detail
+                    self.session.finish_run(lease, RunCompletion.FAILED, usage=usage.snapshot())
+                    yield RunError("context_window", detail)
+                    yield RunFinished(RunOutcome(
+                        StopReason.MODEL_FAILURE if context_error is not None else StopReason.CANNOT_CONTINUE,
+                        rounds, usage.snapshot(), "", tool_batches, detail,
+                    ))
+                    return
+                request, run_tools = preparation.request, next_tools
+                refresh_tools = False
+                next_trigger = CompactionTrigger.AUTOMATIC
+                request_usage = None
                 rounds += 1
                 text_parts: list[str] = []
                 requested: ToolRequests | None = None
@@ -85,6 +121,7 @@ class AgentRunner:
                             text_parts.append(event.text)
                             yield TextEvent(event.text)
                         elif isinstance(event, Usage):
+                            request_usage = event
                             cumulative = usage.add(event)
                             yield UsageEvent(cumulative)
                         elif isinstance(event, ToolRequests):
@@ -94,6 +131,16 @@ class AgentRunner:
                         elif isinstance(event, Completed):
                             completed = event
                 except ModelFailure as exc:
+                    if (
+                        isinstance(exc, ContextWindowFailure)
+                        and not text_parts and requested is None
+                        and not emergency_used
+                        and (max_rounds is None or rounds < max_rounds)
+                    ):
+                        context_error = exc
+                        emergency_used = True
+                        next_trigger = CompactionTrigger.EMERGENCY
+                        continue
                     self.session.finish_run(
                         lease,
                         RunCompletion.FAILED,
@@ -124,11 +171,12 @@ class AgentRunner:
                     try:
                         results = await _controlled_await(
                             self.tools.execute_batch(
-                                replace(lease.tools, execution_data=request),
+                                replace(run_tools, execution_data=request),
                                 calls,
                                 approver=self.approver,
                             ),
                             control,
+                            preserve_completed=True,
                         )
                     except ControlledCancellation:
                         self.session.commit_tool_exchange(
@@ -145,11 +193,18 @@ class AgentRunner:
                         metadata=requested.metadata,
                         assistant_text=response_text,
                     )
-                    tool_batches += 1
-                    yield ToolBatchEvent(requested.requests, results)
-                    request = _continue_request(request, requested, results, response_text)
+                    # Clear pending state before yielding or preparing another
+                    # request, so cancellation cannot commit this exchange twice.
                     pending_requests = pending_metadata = None
                     pending_text = ""
+                    tool_batches += 1
+                    yield ToolBatchEvent(requested.requests, results)
+                    if control.cancelled:
+                        raise ControlledCancellation
+                    request = _continue_request(request, requested, results, response_text)
+                    refresh_tools = True
+                    emergency_used = False
+                    context_error = None
                     if max_rounds is not None and rounds >= max_rounds:
                         self.session.finish_run(
                             lease,
@@ -277,7 +332,9 @@ async def _controlled_stream(
             await close()
 
 
-async def _controlled_await(awaitable: Awaitable, control: RunControl):
+async def _controlled_await(
+    awaitable: Awaitable, control: RunControl, *, preserve_completed: bool = False,
+):
     if control.cancelled:
         if hasattr(awaitable, "close"):
             awaitable.close()
@@ -293,7 +350,9 @@ async def _controlled_await(awaitable: Awaitable, control: RunControl):
         cancellation.cancel()
         await asyncio.gather(operation, cancellation, return_exceptions=True)
         raise
-    if cancellation in done:
+    # Completed tool batches may already have produced durable effects. Keep
+    # their results while ordinary model/preparation waits still honor cancel.
+    if cancellation in done and not (preserve_completed and operation in done):
         operation.cancel()
         await asyncio.gather(operation, return_exceptions=True)
         raise ControlledCancellation

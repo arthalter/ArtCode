@@ -29,6 +29,7 @@ async def execute_task(
     permission_mode: PermissionMode,
     max_rounds: int,
     model_name: str | None,
+    context_window_tokens: int = 1_000_000,
 ) -> None:
     lease: WorktreeLease | None = None
     child_workspace = workspace
@@ -44,6 +45,7 @@ async def execute_task(
                 child_workspace.root,
                 SessionSelection.new(),
                 storage_root=Path(raw),
+                context_window_tokens=context_window_tokens,
             )
             try:
                 run_tools = tools.open_run(

@@ -112,6 +112,15 @@ class CompactionReport:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedRequest:
+    request: ModelRequest
+    budget: PromptBudget
+    compaction: CompactionReport | None = None
+    can_continue: bool = True
+    detail: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class MemoryReport:
     status: str
     user_preferences_added: int = 0
@@ -190,6 +199,17 @@ class Session(Protocol):
 
     def dispatch_run(self, lease: RunLease) -> DispatchedRun: ...
 
+    async def prepare_next_request(
+        self,
+        lease: RunLease,
+        request: ModelRequest,
+        tools: ToolRun,
+        *,
+        model: Model,
+        usage: Usage | None = None,
+        trigger: CompactionTrigger = CompactionTrigger.AUTOMATIC,
+    ) -> PreparedRequest: ...
+
     def finish_run(
         self,
         lease: RunLease,
@@ -225,6 +245,7 @@ __all__ = [
     "CompactionTrigger",
     "DispatchedRun",
     "MemoryReport",
+    "PreparedRequest",
     "PromptBudget",
     "RunCompletion",
     "RunContribution",

@@ -99,7 +99,6 @@ class DerivedStateStore:
                 os.fsync(handle.fileno())
             os.replace(temporary, self.path)
             temporary = None
-            os.chmod(self.path, 0o600)
         finally:
             if temporary is not None:
                 Path(temporary).unlink(missing_ok=True)

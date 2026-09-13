@@ -200,6 +200,10 @@ class Tool(Protocol):
 
     def activate_mcp(self, name: str) -> bool: ...
 
+    def known_tool_names(self) -> frozenset[str]:
+        """Return registered names, including discovered but inactive MCP tools."""
+        ...
+
     def open_run(
         self,
         workspace: Workspace,
@@ -208,6 +212,10 @@ class Tool(Protocol):
         source: ToolSource = ToolSource.MAIN,
         allowed_tools: frozenset[str] | None = None,
     ) -> ToolRun: ...
+
+    def refresh_run(self, run: ToolRun) -> ToolRun:
+        """Merge newly active tools without widening the Run's frozen constraints."""
+        ...
 
     async def execute_batch(
         self,

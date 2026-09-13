@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import json
 from pathlib import Path
 import uuid
@@ -29,6 +30,7 @@ from artcode.core.tool import (
 from .batch import execute_ordered_batches
 from .builtin import BuiltinTools, Prepared
 from .mcp import McpAdapter
+from .mcp_search import DESCRIPTOR as MCP_SEARCH_DESCRIPTOR, prepare_search
 from .permissions import PermissionStore
 from .policy import DangerousCommands, explicit_rule, mode_action
 from .results import failure
@@ -93,6 +95,8 @@ class LocalTools:
         self._descriptors.update(
             (item.name, item) for item in self._mcp.all_descriptors
         )
+        if loading is McpLoading.LAZY and self._mcp.all_descriptors:
+            self._descriptors[MCP_SEARCH_DESCRIPTOR.name] = MCP_SEARCH_DESCRIPTOR
         return report
 
     def search_mcp(self, query: str, *, limit: int = 5) -> tuple[McpToolHit, ...]:
@@ -102,6 +106,10 @@ class LocalTools:
     def activate_mcp(self, name: str) -> bool:
         self._ensure_open()
         return False if self._mcp is None else self._mcp.activate(name)
+
+    def known_tool_names(self) -> frozenset[str]:
+        self._ensure_open()
+        return frozenset(self._descriptors)
 
     def open_run(
         self,
@@ -133,6 +141,13 @@ class LocalTools:
                 if allowed_tools is not None and descriptor.name not in allowed_tools:
                     continue
                 descriptors.append(descriptor)
+        if (
+            MCP_SEARCH_DESCRIPTOR.name in self._descriptors
+            and mode is not RunMode.PLAN
+            and source is not ToolSource.SUBAGENT
+            and (allowed_tools is None or MCP_SEARCH_DESCRIPTOR.name in allowed_tools)
+        ):
+            descriptors.append(MCP_SEARCH_DESCRIPTOR)
         if self._control is not None and mode is not RunMode.PLAN and source is ToolSource.MAIN:
             for descriptor in self._control.descriptors:
                 if allowed_tools is not None and descriptor.name not in allowed_tools:
@@ -147,6 +162,21 @@ class LocalTools:
             self._id,
             allowed_tools,
         )
+
+    def refresh_run(self, run: ToolRun) -> ToolRun:
+        self._ensure_open()
+        if not isinstance(run, ToolRun) or run.catalog_id != self._id:
+            raise ValueError("Tool Run 快照不属于当前 Tool 模块。")
+        if self._mcp is None or run.mode is RunMode.PLAN:
+            return run
+        visible = {item.name for item in run.descriptors}
+        additions = tuple(
+            item for item in self._mcp.active_descriptors
+            if item.name not in visible
+            and (run.source is not ToolSource.SUBAGENT or item.subagent_allowed)
+            and (run.allowed_tools is None or item.name in run.allowed_tools)
+        )
+        return replace(run, descriptors=run.descriptors + additions) if additions else run
 
     async def execute_batch(
         self,
@@ -207,13 +237,16 @@ class LocalTools:
             return failure(call, "invalid_arguments", f"工具参数不是合法 JSON：{exc}")
         if not isinstance(arguments, dict):
             return failure(call, "invalid_arguments", "工具参数 JSON 必须是对象。")
-        prepared = (
-            self._mcp.prepare(call, arguments, run)
-            if descriptor.origin is ToolOrigin.MCP and self._mcp is not None
-            else self._control.prepare(call, arguments, run)
-            if descriptor.origin is ToolOrigin.SYSTEM and self._control is not None
-            else self._builtin.prepare(call, arguments, run)
-        )
+        if descriptor.origin is ToolOrigin.BUILTIN:
+            prepared = self._builtin.prepare(call, arguments, run)
+        elif descriptor.origin is ToolOrigin.MCP and self._mcp is not None:
+            prepared = self._mcp.prepare(call, arguments, run)
+        elif call.name == MCP_SEARCH_DESCRIPTOR.name and self._mcp is not None:
+            prepared = prepare_search(self._mcp, call, arguments, run)
+        elif self._control is not None and self._control.descriptor(call.name) is not None:
+            prepared = self._control.prepare(call, arguments, run)
+        else:
+            return failure(call, "tool_not_found", f"未知工具：{call.name}")
         if isinstance(prepared, ToolResult):
             return prepared
 
@@ -265,6 +298,8 @@ class LocalTools:
                 if choice in {ApprovalChoice.DENY_ONCE, ApprovalChoice.DENY_ALWAYS}:
                     return failure(call, "permission_denied", "用户拒绝了本次调用。")
         try:
+            if prepared.manages_timeout:
+                return await prepared.execute()
             return await asyncio.wait_for(
                 prepared.execute(), timeout=self._tool_timeout_seconds
             )

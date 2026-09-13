@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from artcode.core.agent import RunError, RunFinished, TextEvent, ToolBatchEvent, UsageEvent
+from artcode.core.agent import CompactionEvent, RunError, RunFinished, TextEvent, ToolBatchEvent, UsageEvent
 from artcode.core.application import ErrorOutput, RunStopped, StateOutput, TextOutput
 
 
@@ -9,6 +9,8 @@ def application_event(event):
         return TextOutput(event.text, streaming=True)
     if isinstance(event, UsageEvent):
         return StateOutput("usage", event.usage)
+    if isinstance(event, CompactionEvent):
+        return StateOutput("compaction", event.report)
     if isinstance(event, ToolBatchEvent):
         return StateOutput("tool_batch", event)
     if isinstance(event, RunError):

@@ -137,6 +137,8 @@
 
 **验证：** 运行 `pytest tests/contracts/test_tool_mcp_interface.py tests/property/test_core_mcp_isolation.py tests/fault/test_core_mcp_failures.py tests/integration/test_core_mcp_stdio.py tests/integration/test_core_mcp_http.py -q`；集成测试使用真实本地 stdio 与 Streamable HTTP 测试 Server。
 
+**2026-09-05 获批修复补充：** 新增 `artcode/_tool/mcp_search.py` 并调整 Tool Interface 与目录刷新；模型通过 `mcp_search_tools` 搜索已发现目录，命中项在下一请求与执行快照同步生效。白名单筛选先于结果截断，权限和运行作用域保持冻结，Plan/Subagent 不新增搜索能力。新增 `tests/contracts/test_mcp_activation_flow.py`，补充真实 HTTP 搜索调用验证；依赖仍为 T4、T5，参考 Spec F47～F48、AC9 与 ADR 0004。
+
 ## T7：实现 Session 的 Transcript、持久化与恢复
 
 **影响文件：** `artcode/core/session.py`、`artcode/_session/__init__.py`、`artcode/_session/transcript.py`、`artcode/_session/storage.py`、`artcode/_session/locking.py`、`artcode/_session/recovery.py`、`artcode/_session/paths.py`、`tests/contracts/test_session_interface.py`、`tests/property/test_core_transcript.py`、`tests/fault/test_core_session_storage.py`、`tests/integration/test_core_session_recovery.py`、`tests/behavior/ch14_matrix.yml`，以及矩阵分配给本任务替换的旧 Session 持久化与恢复私有 seam 测试
@@ -175,6 +177,8 @@
 
 **验证：** 运行 `pytest tests/contracts/test_session_prompt_interface.py tests/property/test_core_user_retention.py tests/fault/test_core_context_governance.py tests/fault/test_core_memory.py tests/integration/test_core_session_prompt_flow.py -q`；覆盖重复压缩、usage 缺失、大结果引用、Notice 时机、指令循环、记忆故障和逐字 User 保留。
 
+**2026-09-05 获批修复补充：** 新增 `artcode/_session/continuation.py` 并调整 Session Interface、Prompt、Notice 与预算估算。保持 Run 身份，从已提交事实及冻结来源准备下一请求；构造候选时保留 User 原文、完整 Tool 协议及冻结 contribution/Notice/model，校验完整请求收益后再保存 Summary。失败回滚、同一历史去重、连续失败上限与可取消摘要由 `tests/contracts/test_session_continuation.py`、`tests/fault/test_session_continuation_failures.py` 验证；依赖仍为 T2、T4、T5、T7，参考 Spec F10、F51、F54～F56、AC11～AC12 与 ADR 0004。
+
 ## T9：实现唯一 Agent Run 状态机
 
 **影响文件：** `artcode/core/agent.py`、`artcode/_agent/__init__.py`、`artcode/_agent/runner.py`、`artcode/_agent/events.py`、`artcode/_agent/usage.py`、`tests/contracts/test_agent_interface.py`、`tests/property/test_core_agent_protocol.py`、`tests/fault/test_core_agent_failures.py`、`tests/integration/test_core_agent_run.py`、`tests/behavior/ch14_matrix.yml`，以及矩阵分配给本任务替换的旧 Agent 私有 seam 测试
@@ -193,6 +197,8 @@
 4. Agent 的 Run usage 只聚合 Model 报告的真实字段；Session 的确定性估算只服务上下文预算并保留来源，不得混入 Run usage。取消在可提交协议点停止并交还资源。
 
 **验证：** 运行 `pytest tests/contracts/test_agent_interface.py tests/property/test_core_agent_protocol.py tests/fault/test_core_agent_failures.py tests/integration/test_core_agent_run.py -q`；覆盖长工具链、显式上限、多 Tool、局部失败、长度结束、流错误、取消和协议闭合。
+
+**2026-09-05 获批修复补充：** 调整 `artcode/_agent/runner.py` 与 `artcode/core/agent.py`，在完整 Tool 批次提交后刷新 Tool 快照并准备下一请求，输出类型化压缩事件。只有明确上下文超限可进行一次有界恢复，不重新执行已完成 Tool；`tests/integration/test_agent_request_continuation.py` 验证二次失败、网络失败、轮次上限及摘要中取消。依赖 T6、T8 的修复，参考 Spec F19、F24、F48、F54～F56 与 ADR 0004。
 
 ## T10：实现 Skill 深模块
 
@@ -289,6 +295,8 @@
 
 **验证：** 运行全部非 live 测试、`python tests/tools/verify_ch14_matrix.py`、`python tests/tools/verify_core_imports.py`、`python -m compileall -q artcode tests` 和项目构建；分别从源码入口与临时 wheel 安装入口执行等价启动、Run、Session 与退出路径。
 
+**2026-09-05 获批修复接入：** 调整 `artcode/_application/lifecycle.py`、`artcode/_application/events.py`、`artcode/_skill/catalog.py`、`artcode/_skill/execution.py`、`artcode/_subagent/catalog.py`、`artcode/_subagent/execution.py` 与 terminal Adapter，使普通 Run、Shared Skill、Isolated Skill、definition/fork Subagent 共用请求准备流程；子执行继承上下文窗口，Skill 可校验已发现的未激活 MCP 名称，压缩事件从主入口可观察。依赖 T6、T8、T9 修复，参考 Spec F47～F48、F54～F56、AC9、AC12 与 ADR 0004。由 `tests/application/test_request_continuation_paths.py`、`tests/application/test_lazy_mcp_skill_catalog.py` 验证五条主路径及 MCP 与压缩组合。
+
 ## T15：端到端验证
 
 **影响文件：** `tests/manual/ch14_acceptance.md`、`tests/manual/ch14_results.md`、`checklist.md`、`README.md`、`CONTEXT.md`、`docs/adr/0003-core-contract-freeze.md`
@@ -307,6 +315,8 @@
 4. 确认代码、README、CONTEXT、Spec、Tasks、Checklist 和公开 Interface 一致后记录核心冻结 ADR。
 
 **验证：** 运行 `pytest -q`，复跑 `tests/live/test_core_deepseek.py`、`tests/integration/test_core_mcp_stdio.py`、`tests/integration/test_core_mcp_http.py`、`tests/integration/test_core_seatbelt.py`、`tests/integration/test_core_parallel_worktrees.py`，再执行 `python -m compileall -q artcode tests`、项目构建和临时安装验证；按 `tests/manual/ch14_acceptance.md` 完成人工验收，确保 `checklist.md` 每一项都有可观测证据。
+
+**2026-09-05 获批修复验收：** 依赖 T14 修复接入，执行新增 Session/MCP 契约、候选失败与回滚、Agent 紧急恢复、Application 五路径及 MCP 激活与压缩组合测试，并复跑受影响回归和可运行的真实 MCP/Provider 验证。同步 `spec.md`、`tasks.md`、`README.md`、`checklist.md`、`docs/adr/0003-core-contract-freeze.md`、`docs/adr/0004-run-continuation-and-mcp-activation.md` 与 `tests/behavior/ch14_matrix.yml`；实际命令、结果及阻塞记录到 `tests/manual/ch14_results.md`，以 Checklist I01～I15 收口，不将未执行测试记为成功。
 
 ## 执行顺序
 

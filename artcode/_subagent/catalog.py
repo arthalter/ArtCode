@@ -42,6 +42,7 @@ class LocalSubagents:
         background_tools: frozenset[str] | None = None,
         max_concurrency: int = 4,
         foreground_timeout_seconds: float = 120.0,
+        context_window_tokens: int = 1_000_000,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if foreground_timeout_seconds <= 0:
@@ -62,6 +63,7 @@ class LocalSubagents:
         self.background_tools = background_tools if background_tools is not None else frozenset(base_names)
         self.scheduler = Scheduler(max_concurrency)
         self.foreground_timeout_seconds = foreground_timeout_seconds
+        self.context_window_tokens = context_window_tokens
         self.clock = clock
         self._roles: dict[str, Role] = {}
         self._role_snapshot = RoleCatalogSnapshot((), ())
@@ -253,6 +255,7 @@ class LocalSubagents:
                     permission_mode=permission_mode,
                     max_rounds=max_rounds,
                     model_name=model_name,
+                    context_window_tokens=self.context_window_tokens,
                 )
         except asyncio.CancelledError:
             record.state = TaskState.CANCELLED

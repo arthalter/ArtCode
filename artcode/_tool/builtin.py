@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import json
+import re
 from typing import Any, Awaitable, Callable
 
 from artcode.core.tool import ToolCall, ToolDescriptor, ToolEffect, ToolOrigin, ToolResult, ToolRun
@@ -18,6 +19,7 @@ class Prepared:
     target: str
     execute: Callable[[], Awaitable[ToolResult]]
     command: str | None = None
+    manages_timeout: bool = False
 
 
 def _schema(properties: dict[str, Any], required: list[str]) -> str:
@@ -36,7 +38,7 @@ def _schema(properties: dict[str, Any], required: list[str]) -> str:
 
 DESCRIPTORS = (
     ToolDescriptor(
-        "read_file", "按范围读取 Workspace 内 UTF-8 文本文件。",
+        "read_file", "按范围读取 Workspace 内 UTF-8 文本文件或 result: 完整结果引用。",
         _schema({"path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}, ["path"]),
         ToolEffect.OBSERVE,
     ),
@@ -107,13 +109,21 @@ class BuiltinTools:
         end = _positive_int(raw, "end_line")
         if start is not None and end is not None and end < start:
             raise ValueError("end_line 不能小于 start_line。")
-        target = run.workspace.prepare_target(path, must_exist=True)
+        is_result = re.fullmatch(r"result:[0-9a-f]{32}:[0-9a-f]{32}", path) is not None
+        if is_result and (start is None or end is None):
+            raise ValueError("大型结果回读必须提供完整行范围。")
+        target = None if is_result else run.workspace.prepare_target(path, must_exist=True)
 
         async def execute() -> ToolResult:
             try:
-                result = await asyncio.to_thread(
-                    run.workspace.read_text, target, start_line=start, end_line=end
-                )
+                if is_result:
+                    result = await asyncio.to_thread(
+                        run.workspace.read_result, path, start_line=start, end_line=end
+                    )
+                else:
+                    result = await asyncio.to_thread(
+                        run.workspace.read_text, target, start_line=start, end_line=end
+                    )
                 content = result.text
                 if result.truncated:
                     content += f"\n[内容已截断；next_line={result.next_line}]"
@@ -121,7 +131,7 @@ class BuiltinTools:
             except Exception as exc:
                 return exception_failure(call, exc)
 
-        return Prepared(call, descriptor, _file_target(run, target.path), execute)
+        return Prepared(call, descriptor, path if is_result else _file_target(run, target.path), execute)
 
     def _find(self, call: ToolCall, descriptor: ToolDescriptor, raw: dict[str, Any], run: ToolRun) -> Prepared:
         _keys(raw, {"pattern", "limit"}, {"pattern"})
@@ -237,6 +247,17 @@ class BuiltinTools:
                     f"exit_code: {outcome.returncode}\nstdout:\n{outcome.stdout}\n"
                     f"stderr:\n{outcome.stderr}"
                 )
+                for stream, truncated, reference in (
+                    ("stdout", outcome.stdout_truncated, outcome.stdout_reference),
+                    ("stderr", outcome.stderr_truncated, outcome.stderr_reference),
+                ):
+                    if truncated:
+                        content += f"\n[{stream} 已截断]"
+                        if reference is not None:
+                            content += (
+                                f"\n完整 {stream}：{reference}；使用 read_file，"
+                                "path 为该引用，start_line/end_line 为要读取的行范围。"
+                            )
                 if outcome.start_error:
                     return failure(call, "command_error", outcome.start_error)
                 if outcome.timed_out:

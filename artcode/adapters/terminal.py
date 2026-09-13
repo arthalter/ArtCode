@@ -38,14 +38,33 @@ class TerminalAdapter:
 
     def render(self, event) -> None:
         if isinstance(event, TextOutput):
-            self.console.print(event.text, end="" if event.streaming else "\n")
+            self.console.print(
+                event.text,
+                end="" if event.streaming else "\n",
+                markup=False,
+                emoji=False,
+                highlight=False,
+            )
         elif isinstance(event, ErrorOutput):
-            self.console.print(f"[red]{event.message}[/red]")
+            self.console.print(
+                event.message, style="red", markup=False, emoji=False, highlight=False
+            )
         elif isinstance(event, StateOutput):
             value = asdict(event.value) if is_dataclass(event.value) else event.value
-            self.console.print(json.dumps(value, ensure_ascii=False, default=str, indent=2))
+            self.console.print(
+                json.dumps(value, ensure_ascii=False, default=str, indent=2),
+                markup=False,
+                emoji=False,
+                highlight=False,
+            )
         elif isinstance(event, RunStopped):
-            self.console.print(f"\n[dim]stopped: {event.reason} ({event.rounds} rounds)[/dim]")
+            self.console.print(
+                f"\nstopped: {event.reason} ({event.rounds} rounds)",
+                style="dim",
+                markup=False,
+                emoji=False,
+                highlight=False,
+            )
         elif isinstance(event, ClearDisplay):
             self.console.clear()
 

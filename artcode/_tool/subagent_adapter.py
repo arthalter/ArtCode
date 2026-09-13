@@ -87,7 +87,10 @@ class SubagentToolAdapter:
                     return success(call, _task_json(task))
                 return success(call, json.dumps({"task_id": task.id, "state": task.state.value}, ensure_ascii=False))
 
-            return Prepared(call, descriptor, request.task, execute)
+            # Foreground waiting has its own deadline and returns the same Task
+            # after moving it to the background. An outer Tool deadline would
+            # cancel that handoff and discard its Task id.
+            return Prepared(call, descriptor, request.task, execute, manages_timeout=True)
         if call.name == "task_list":
             if arguments:
                 return failure(call, "invalid_arguments", "task_list 不接受参数。")

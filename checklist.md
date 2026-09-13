@@ -108,3 +108,23 @@
 - [x] E2E-01：真实 Session→Agent→Model→Tool→Workspace 两轮 Tool 协议完成并提交。（验证：`test_core_agent_run.py`。）
 - [x] E2E-02：两个写 Subagent 基于同一冻结提交修改各自 Worktree 同名文件，主文件字节保持不变。（验证：`test_core_parallel_worktrees.py`。）
 - [x] E2E-03：源码入口、console script 与全新 wheel 安装入口均创建新格式 Session 并正常 `/exit`。（验证：入口黑盒与临时安装记录。）
+
+## I. 2026-09-05 请求续接与 MCP 激活修订
+
+本节单独追踪 [ADR 0004](docs/adr/0004-run-continuation-and-mcp-activation.md) 的新增验收，前述勾选保留原 ch14 验收事实。本轮 265 项测试、矩阵与构建结果见 [验收记录](tests/manual/ch14_results.md)。
+
+- [x] I01：同一 Run 在完整 Tool 批次提交后重建下一份 Prompt；Run ID 不变，当前 User 目标仅提交一次，已完成 Tool 的事实及文件效果不重复。（验证：`test_session_continuation.py`、`test_agent_request_continuation.py`。）
+- [x] I02：下一请求预算计入 Tool Schema、Tool 参数与 Protocol Metadata；最近请求真实 input usage 只校准对应请求及其后续增量，旧 Run 累计 usage 不使新请求错误超限，成功压缩后旧校准失效。（验证：`test_session_continuation.py`、`test_mcp_schema_budget.py`。）
+- [x] I03：自动压缩阈值为配置窗口的 83.5%；候选必须缩短最终完整请求；无可压缩历史且预算达到窗口时，PreparedRequest.can_continue 为 false。（验证：`test_session_continuation.py`、`test_session_continuation_failures.py`、`test_mcp_schema_budget.py`；阈值核对 Session 实现。）
+- [x] I04：续接从已提交事实及冻结来源重建，全部 User 原文逐条逐字有序保留，最近完整 Tool exchange 的请求、结果、调用前文本和 Protocol Metadata 保持一致。（验证：`test_session_continuation.py`、`test_session_continuation_failures.py`。）
+- [x] I05：本 Run 已冻结的指令、记忆、Skill SOP、模型选择与已投递 Notice 在压缩后保持；运行中改写来源文件或追加其他用户输入，不改变本 Run 冻结输入。（验证：`test_session_continuation.py`。）
+- [x] I06：自动及紧急摘要生成失败、候选更长、保存失败和取消均不安装新 Summary；未提交或不完整的续接事实被拒绝；旧请求、已有 Summary 与 Transcript 保持可用。（验证：`test_session_continuation_failures.py`。）
+- [x] I07：同一历史前缀的自动或紧急摘要请求至多一次；本 Run 连续 3 次摘要未成功后，即使新增事实也停止自动重试；取消可中断正在进行的摘要。（验证：`test_session_continuation_failures.py`、`test_agent_request_continuation.py`。）
+- [x] I08：同一失败请求至多进行一次上下文超限恢复；恢复仍失败或轮次额度不足时停止，网络及认证失败不进入摘要恢复，已成功 Tool 不再次执行。（验证：`test_agent_request_continuation.py`。）
+- [x] I09：lazy MCP 初始不暴露远程 Schema，模型可调用 `mcp_search_tools`；`query` 必须非空，`limit` 默认 5、范围 1～50，额外字段及布尔 limit 被拒绝，无匹配返回空结果。（验证：`test_mcp_activation_flow.py`。）
+- [x] I10：MCP 搜索先按 Run 白名单筛选再截取 limit；仅命中且可用的 Server 工具标记激活，不执行远程工具；激活项在下一次 Prompt 和执行快照同时出现，当前批次猜测调用仍被拒绝，后续 Run 保留激活。（验证：`test_mcp_activation_flow.py`、真实 `test_core_mcp_http.py`。）
+- [x] I11：刷新 MCP 目录不改变权限快照、Workspace、Run Mode、来源、Skill 白名单和执行上下文；Plan、Subagent、未授权 Skill 的伪造搜索或 MCP 调用仍被拒绝，默认权限流程下实际 MCP 调用仍需审批。（验证：`test_mcp_activation_flow.py`、`test_tool_mcp_interface.py`。）
+- [x] I12：Skill 声明已发现但未激活的 MCP 名称可通过校验；受限 Skill 同时允许搜索入口及所需 MCP 名称后，搜索不会暴露白名单外的命中项。（验证：`test_lazy_mcp_skill_catalog.py`、`test_mcp_activation_flow.py`、`test_request_continuation_paths.py`。）
+- [x] I13：从 Application 入口分别运行 normal、shared、isolated、definition、fork 五条长 Tool 路径，均在同一 Run 中观察到压缩并自然完成；子 Run 使用配置窗口，Fork 的父 Prompt 前缀保持逐项相同，过大父前缀明确停止。（验证：`test_long_tool_run_compacts_through_every_execution_path`、`test_session_continuation.py`。）
+- [x] I14：从普通 Run 和受限 Shared Skill 组合执行 MCP 搜索激活与长 Tool 历史压缩，下一次模型请求同时包含新工具、有效 Summary 和完整最近 Tool exchange，且真实 MCP 调用成功。（验证：`test_mcp_activation_and_compaction_share_the_next_request`。）
+- [x] I15：本轮 Spec、Tasks、README、ADR、Checklist 与行为矩阵引用均可定位；矩阵仍精确覆盖 139 项，新增自动化、真实 MCP 与 Provider 验证的实际结果分别记录。（验证：矩阵 T15 校验与 `ch14_results.md`。）

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from artcode.core.agent import RunControl
 from artcode.core.model import Model
 from artcode.core.session import RunContribution, Session
 from artcode.core.skill import (
@@ -31,6 +32,7 @@ class LocalSkills:
         extension_roots: tuple[Path, ...] = (),
         known_tools: Callable[[], set[str] | frozenset[str]],
         available_models: Callable[[], set[str] | frozenset[str]] | None = None,
+        context_window_tokens: int = 1_000_000,
     ) -> None:
         self.project_root = project_root
         self.user_root = user_root
@@ -38,6 +40,7 @@ class LocalSkills:
         self.extension_roots = extension_roots
         self.known_tools = known_tools
         self.available_models = available_models
+        self.context_window_tokens = context_window_tokens
         self._discovery = Discovery((), (), ())
         self._active: dict[str, LoadedSkill] = {}
         self._diagnostics: tuple[SkillDiagnostic, ...] = ()
@@ -121,6 +124,7 @@ class LocalSkills:
         contributions = tuple(
             RunContribution(item.name, item.sop, item.candidate.metadata.model)
             for item in active
+            if item.candidate.metadata.mode is SkillMode.SHARED
         )
         return FrozenSkills(tuple(item.name for item in active), contributions, allowed)
 
@@ -133,6 +137,7 @@ class LocalSkills:
         workspace: Workspace,
         model: Model,
         tools: Tool,
+        control: RunControl | None = None,
     ) -> IsolatedSkillResult:
         frozen = self.freeze()
         definition = self._active.get(name)
@@ -148,6 +153,8 @@ class LocalSkills:
             model=model,
             tools=tools,
             allowed_tools=frozen.allowed_tools or frozenset(),
+            control=control,
+            context_window_tokens=self.context_window_tokens,
         )
 
     def _load_valid(self, candidate: SkillCandidate) -> LoadedSkill:

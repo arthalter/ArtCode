@@ -108,6 +108,7 @@ class LocalApplication:
                 model_factory=lambda _: selected_model,
                 model_tiers=config.model_tiers,
                 background_tools=config.background_tools,
+                context_window_tokens=config.context_window_tokens,
             )
             tools.register_subagents(subagents)
             skills = LocalSkills(
@@ -119,13 +120,12 @@ class LocalApplication:
                     for path in sorted((options.artcode_home / "plugins").glob("*"))
                     if path.is_dir() and not path.is_symlink()
                 ),
-                known_tools=lambda: {
-                    item.name for item in tools.open_run(workspace, RunMode.CHAT).descriptors
-                },
+                known_tools=tools.known_tool_names,
                 available_models=lambda: {
                     config.model.model,
                     *config.model_tiers.values(),
                 },
+                context_window_tokens=config.context_window_tokens,
             )
             skills.refresh()
             subagents.refresh_roles()
@@ -180,6 +180,11 @@ class LocalApplication:
                     yield event
                 return
         if text.startswith("/"):
+            command, rest = split_command(text)
+            if command == "/skill":
+                async for event in self._skill_stream(rest):
+                    yield event
+                return
             for event in await self._command(text):
                 yield event
             return
@@ -230,27 +235,17 @@ class LocalApplication:
     async def _run_goal(self, goal: str, mode: RunMode) -> tuple[ApplicationEvent, ...]:
         return tuple([event async for event in self._run_goal_stream(goal, mode)])
 
-    async def _run_goal_stream(self, goal: str, mode: RunMode):
+    async def _run_goal_stream(
+        self, goal: str, mode: RunMode, *, select_skill: bool = True
+    ):
         if not goal.strip():
             yield ErrorOutput("Run 目标不能为空。")
             return
         self._inject_task_notifications()
-        selected = self.skills.select(goal)
-        if selected.ok and selected.mode is SkillMode.ISOLATED:
-            try:
-                result = await self.skills.run_isolated(
-                    selected.name,
-                    goal,
-                    parent=self.session,
-                    workspace=self.workspace,
-                    model=self.model,
-                    tools=self.tools,
-                )
-            except Exception as exc:
-                yield ErrorOutput(str(exc))
-                return
-            yield TextOutput(result.summary)
-            yield StateOutput("isolated_skill", result)
+        selected = self.skills.select(goal) if select_skill else None
+        if selected is not None and selected.ok and selected.mode is SkillMode.ISOLATED:
+            async for event in self._run_isolated_stream(selected.name, goal):
+                yield event
             return
         frozen = self.skills.freeze()
         run_tools = self.tools.open_run(
@@ -285,6 +280,49 @@ class LocalApplication:
         finally:
             self._running = False
             self._control = None
+
+    async def _skill_stream(self, rest: str):
+        name, _, skill_input = rest.partition(" ")
+        activation = self.skills.activate(name)
+        if not activation.ok:
+            yield ErrorOutput(activation.message)
+            return
+        if not skill_input:
+            yield StateOutput("skill", activation)
+            return
+        if activation.mode is SkillMode.ISOLATED:
+            async for event in self._run_isolated_stream(activation.name, skill_input):
+                yield event
+            return
+        async for event in self._run_goal_stream(
+            skill_input, RunMode.CHAT, select_skill=False
+        ):
+            yield event
+
+    async def _run_isolated_stream(self, name: str, goal: str):
+        self._control = RunControl()
+        self._running = True
+        error = None
+        try:
+            result = await self.skills.run_isolated(
+                name,
+                goal,
+                parent=self.session,
+                workspace=self.workspace,
+                model=self.model,
+                tools=self.tools,
+                control=self._control,
+            )
+        except Exception as exc:
+            error = ErrorOutput(str(exc))
+        finally:
+            self._running = False
+            self._control = None
+        if error is not None:
+            yield error
+            return
+        yield TextOutput(result.summary)
+        yield StateOutput("isolated_skill", result)
 
     async def _command(self, text: str) -> tuple[ApplicationEvent, ...]:
         command, rest = split_command(text)
@@ -350,23 +388,7 @@ class LocalApplication:
             self.skills.clear()
             return (ClearDisplay(),)
         if command == "/skill":
-            name, _, skill_input = rest.partition(" ")
-            activation = self.skills.activate(name)
-            if not activation.ok:
-                return (ErrorOutput(activation.message),)
-            if not skill_input:
-                return (StateOutput("skill", activation),)
-            if activation.mode is SkillMode.ISOLATED:
-                result = await self.skills.run_isolated(
-                    activation.name,
-                    skill_input,
-                    parent=self.session,
-                    workspace=self.workspace,
-                    model=self.model,
-                    tools=self.tools,
-                )
-                return (TextOutput(result.summary), StateOutput("isolated_skill", result))
-            return await self._run_goal(skill_input, RunMode.CHAT)
+            return tuple([event async for event in self._skill_stream(rest)])
         if command == "/tasks":
             return (StateOutput("tasks", self.subagents.list()),)
         if command == "/task":

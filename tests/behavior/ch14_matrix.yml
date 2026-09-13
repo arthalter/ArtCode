@@ -21,6 +21,8 @@ task_graph:
 # its observable acceptance evidence, verification kind, and what happens to
 # any old private-seam tests.  "planned" evidence may name a not-yet-created
 # file only when its implementation task is later than the verifier stage.
+# 2026-09-05: ADR 0004 continuation/MCP revisions passed the 265-test run.
+# Evidence and build results are recorded in tests/manual/ch14_results.md.
 requirements:
   - id: N14
     owner: Application
@@ -175,7 +177,9 @@ requirements:
     status: verified
     acceptance:
       - {path: tests/contracts/test_subagent_interface.py, kind: automated, status: verified}
-    verification_types: [contract]
+      - {path: tests/contracts/test_session_continuation.py, kind: automated, status: verified}
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [contract, application]
     legacy_tests: [tests/unit/test_subagent_fork_freeze.py]
     legacy_disposition: {action: replace, task: T11}
 
@@ -197,7 +201,8 @@ requirements:
     acceptance:
       - {path: tests/contracts/test_subagent_interface.py, kind: automated, status: verified}
       - {path: tests/integration/test_core_subagent_flow.py, kind: automated, status: verified}
-    verification_types: [contract, integration]
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [contract, integration, application]
     legacy_tests: [tests/unit/test_subagent_state_isolation.py]
     legacy_disposition: {action: replace, task: T11}
 
@@ -207,7 +212,8 @@ requirements:
     status: verified
     acceptance:
       - {path: tests/property/test_core_subagent_capabilities.py, kind: automated, status: verified}
-    verification_types: [property]
+      - {path: tests/contracts/test_mcp_activation_flow.py, kind: automated, status: verified}
+    verification_types: [property, contract]
     legacy_tests: [tests/property/test_subagent_capabilities.py]
     legacy_disposition: {action: replace, task: T11}
 
@@ -218,6 +224,7 @@ requirements:
     acceptance:
       - {path: tests/property/test_core_subagent_capabilities.py, kind: automated, status: verified}
       - {path: tests/contracts/test_subagent_interface.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_mcp_activation_flow.py, kind: automated, status: verified}
     verification_types: [property, contract]
     legacy_tests: [tests/unit/test_subagent_policy_permissions.py]
     legacy_disposition: {action: replace, task: T11}
@@ -264,7 +271,9 @@ requirements:
     acceptance:
       - {path: tests/contracts/test_subagent_interface.py, kind: automated, status: verified}
       - {path: tests/property/test_core_subagent_capabilities.py, kind: automated, status: verified}
-    verification_types: [contract, property]
+      - {path: tests/contracts/test_session_continuation.py, kind: automated, status: verified}
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [contract, property, application]
     legacy_tests: [tests/integration/test_subagent_main_flow.py]
     legacy_disposition: {action: replace, task: T11}
 
@@ -336,7 +345,10 @@ requirements:
     acceptance:
       - {path: tests/property/test_core_skill_capabilities.py, kind: automated, status: verified}
       - {path: tests/integration/test_core_skill_flow.py, kind: automated, status: verified}
-    verification_types: [property, integration]
+      - {path: tests/contracts/test_mcp_activation_flow.py, kind: automated, status: verified}
+      - {path: tests/application/test_lazy_mcp_skill_catalog.py, kind: automated, status: verified}
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [property, integration, contract, application]
     legacy_tests: [tests/unit/test_skill_checklist_boundaries.py]
     legacy_disposition: {action: replace, task: T10}
 
@@ -356,7 +368,8 @@ requirements:
     status: verified
     acceptance:
       - {path: tests/integration/test_core_skill_flow.py, kind: automated, status: verified}
-    verification_types: [integration]
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [integration, application]
     legacy_tests: [tests/unit/test_skill_execution.py]
     legacy_disposition: {action: replace, task: T10}
 
@@ -388,7 +401,10 @@ requirements:
       - {path: tests/contracts/test_skill_interface.py, kind: automated, status: verified}
       - {path: tests/property/test_core_skill_capabilities.py, kind: automated, status: verified}
       - {path: tests/fault/test_core_skill_refresh.py, kind: automated, status: verified}
-    verification_types: [contract, property, fault]
+      - {path: tests/application/test_lazy_mcp_skill_catalog.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_mcp_activation_flow.py, kind: automated, status: verified}
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [contract, property, fault, application]
     legacy_tests: [tests/integration/test_skill_flow.py]
     legacy_disposition: {action: replace, task: T10}
 
@@ -398,7 +414,8 @@ requirements:
     status: verified
     acceptance:
       - {path: tests/integration/test_core_skill_flow.py, kind: automated, status: verified}
-    verification_types: [integration]
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [integration, application]
     legacy_tests: [tests/unit/test_skill_execution.py]
     legacy_disposition: {action: replace, task: T10}
   - id: F16
@@ -439,7 +456,8 @@ requirements:
     acceptance:
       - {path: tests/contracts/test_agent_interface.py, kind: automated, status: verified}
       - {path: tests/fault/test_core_agent_failures.py, kind: automated, status: verified}
-    verification_types: [contract, fault]
+      - {path: tests/integration/test_agent_request_continuation.py, kind: automated, status: verified}
+    verification_types: [contract, fault, integration]
     legacy_tests: [tests/unit/test_agent_events.py]
     legacy_disposition: {action: replace, task: T9}
   - id: F11
@@ -449,6 +467,7 @@ requirements:
     acceptance:
       - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: verified}
       - {path: tests/integration/test_core_session_prompt_flow.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_session_continuation.py, kind: automated, status: verified}
     verification_types: [contract, integration]
     legacy_tests: [tests/unit/test_prompt_assembler.py, tests/unit/test_prompt_sections.py]
     legacy_disposition: {action: replace, task: T8}
@@ -460,6 +479,7 @@ requirements:
     acceptance:
       - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: verified}
       - {path: tests/integration/test_core_session_prompt_flow.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_session_continuation.py, kind: automated, status: verified}
     verification_types: [contract, integration]
     legacy_tests: [tests/unit/test_system_reminder.py]
     legacy_disposition: {action: replace, task: T8}
@@ -471,6 +491,7 @@ requirements:
     acceptance:
       - {path: tests/property/test_core_user_retention.py, kind: automated, status: verified}
       - {path: tests/fault/test_core_context_governance.py, kind: automated, status: verified}
+      - {path: tests/fault/test_session_continuation_failures.py, kind: automated, status: verified}
     verification_types: [property, fault]
     legacy_tests: [tests/unit/test_context_summarizer.py]
     legacy_disposition: {action: replace, task: T8}
@@ -481,7 +502,9 @@ requirements:
     status: verified
     acceptance:
       - {path: tests/property/test_core_user_retention.py, kind: automated, status: verified}
-    verification_types: [property]
+      - {path: tests/contracts/test_session_continuation.py, kind: automated, status: verified}
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [property, contract, application]
     legacy_tests: [tests/unit/test_context_user_retention.py]
     legacy_disposition: {action: replace, task: T8}
 
@@ -492,7 +515,10 @@ requirements:
     acceptance:
       - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
       - {path: tests/fault/test_core_context_governance.py, kind: automated, status: verified}
-    verification_types: [contract, fault]
+      - {path: tests/contracts/test_session_continuation.py, kind: automated, status: verified}
+      - {path: tests/fault/test_session_continuation_failures.py, kind: automated, status: verified}
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [contract, fault, application]
     legacy_tests: [tests/property/test_conversation_protocol_properties.py]
     legacy_disposition: {action: replace, task: T8}
 
@@ -502,7 +528,10 @@ requirements:
     status: verified
     acceptance:
       - {path: tests/fault/test_core_context_governance.py, kind: automated, status: verified}
-    verification_types: [fault]
+      - {path: tests/fault/test_session_continuation_failures.py, kind: automated, status: verified}
+      - {path: tests/integration/test_agent_request_continuation.py, kind: automated, status: verified}
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [fault, integration, application]
     legacy_tests: [tests/soak/test_repeated_context_compaction.py]
     legacy_disposition: {action: replace, task: T8}
 
@@ -555,7 +584,11 @@ requirements:
     acceptance:
       - {path: tests/property/test_core_user_retention.py, kind: automated, status: verified}
       - {path: tests/fault/test_core_context_governance.py, kind: automated, status: verified}
-    verification_types: [property, fault]
+      - {path: tests/contracts/test_session_continuation.py, kind: automated, status: verified}
+      - {path: tests/fault/test_session_continuation_failures.py, kind: automated, status: verified}
+      - {path: tests/integration/test_agent_request_continuation.py, kind: automated, status: verified}
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [property, fault, contract, integration, application]
     legacy_tests: [tests/soak/test_repeated_context_compaction.py]
     legacy_disposition: {action: replace, task: T8}
 
@@ -608,7 +641,9 @@ requirements:
     acceptance:
       - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
       - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: planned}
-    verification_types: [contract]
+      - {path: tests/contracts/test_session_continuation.py, kind: automated, status: verified}
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [contract, application]
     legacy_tests: [tests/unit/test_prompt_assembler.py]
     legacy_disposition: {action: replace, task: T8}
 
@@ -619,7 +654,9 @@ requirements:
     acceptance:
       - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
       - {path: tests/integration/test_core_session_recovery.py, kind: automated, status: verified}
-    verification_types: [contract, integration]
+      - {path: tests/contracts/test_session_continuation.py, kind: automated, status: verified}
+      - {path: tests/fault/test_session_continuation_failures.py, kind: automated, status: verified}
+    verification_types: [contract, integration, fault]
     legacy_tests: [tests/unit/test_ch10_5_conversation_protocol.py]
     legacy_disposition: {action: replace, task: T7}
 
@@ -749,7 +786,9 @@ requirements:
     status: verified
     acceptance:
       - {path: tests/contracts/test_tool_mcp_interface.py, kind: automated, status: verified}
-    verification_types: [contract]
+      - {path: tests/contracts/test_mcp_activation_flow.py, kind: automated, status: verified}
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [contract, application]
     legacy_tests: [tests/unit/test_mcp_lazy_catalog.py]
     legacy_disposition: {action: replace, task: T6}
 
@@ -760,7 +799,10 @@ requirements:
     acceptance:
       - {path: tests/contracts/test_tool_mcp_interface.py, kind: automated, status: verified}
       - {path: tests/integration/test_core_mcp_stdio.py, kind: automated, status: verified}
-    verification_types: [contract, integration]
+      - {path: tests/contracts/test_mcp_activation_flow.py, kind: automated, status: verified}
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+      - {path: tests/integration/test_core_mcp_http.py, kind: automated, status: verified}
+    verification_types: [contract, integration, application]
     legacy_tests: [tests/integration/test_mcp_agent_flow.py]
     legacy_disposition: {action: replace, task: T9}
 
@@ -795,7 +837,9 @@ requirements:
       - {path: tests/contracts/test_tool_mcp_interface.py, kind: automated, status: verified}
       - {path: tests/integration/test_core_mcp_stdio.py, kind: automated, status: verified}
       - {path: tests/integration/test_core_mcp_http.py, kind: automated, status: verified}
-    verification_types: [contract, integration]
+      - {path: tests/contracts/test_mcp_activation_flow.py, kind: automated, status: verified}
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [contract, integration, application]
     legacy_tests: [tests/integration/test_mcp_stdio_live.py, tests/integration/test_mcp_http_live.py]
     legacy_disposition: {action: replace, task: T6}
 
@@ -921,6 +965,7 @@ requirements:
     acceptance:
       - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
       - {path: tests/property/test_core_tool_policy.py, kind: automated, status: verified}
+      - {path: tests/contracts/test_mcp_activation_flow.py, kind: automated, status: verified}
     verification_types: [contract, property]
     legacy_tests: [tests/unit/test_runtime_state.py, tests/unit/test_tool_policy.py]
     legacy_disposition: {action: replace, task: T5}
@@ -944,7 +989,7 @@ requirements:
     acceptance:
       - {path: tests/contracts/test_model_interface.py, kind: automated, status: verified}
       - {path: tests/integration/test_core_model_flow.py, kind: automated, status: verified}
-      - {path: tests/live/test_core_deepseek.py, kind: automated, status: active}
+      - {path: tests/live/test_core_deepseek.py, kind: automated, status: verified}
     verification_types: [contract, integration, live]
     legacy_tests: [tests/unit/test_provider_events.py, tests/integration/test_provider_flow.py]
     legacy_disposition: {action: replace, task: T4}
@@ -988,7 +1033,8 @@ requirements:
     acceptance:
       - {path: tests/fault/test_core_model_failures.py, kind: automated, status: verified}
       - {path: tests/contracts/test_agent_interface.py, kind: automated, status: planned}
-    verification_types: [fault, contract]
+      - {path: tests/integration/test_agent_request_continuation.py, kind: automated, status: verified}
+    verification_types: [fault, contract, integration]
     legacy_tests: [tests/fault/test_request_preparation_faults.py]
     legacy_disposition: {action: replace, task: T9}
 
@@ -999,7 +1045,9 @@ requirements:
     acceptance:
       - {path: tests/contracts/test_model_interface.py, kind: automated, status: verified}
       - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: planned}
-    verification_types: [contract]
+      - {path: tests/contracts/test_session_continuation.py, kind: automated, status: verified}
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [contract, application]
     legacy_tests: [tests/unit/test_context_estimator.py]
     legacy_disposition: {action: replace, task: T8}
 
@@ -1235,7 +1283,9 @@ requirements:
       - {path: tests/integration/test_core_workspace_file_flow.py, kind: automated, status: verified}
       - {path: tests/contracts/test_model_interface.py, kind: automated, status: verified}
       - {path: tests/contracts/test_session_prompt_interface.py, kind: automated, status: verified}
-    verification_types: [contract, integration]
+      - {path: tests/contracts/test_session_continuation.py, kind: automated, status: verified}
+      - {path: tests/application/test_request_continuation_paths.py, kind: automated, status: verified}
+    verification_types: [contract, integration, application]
     legacy_tests: [tests/unit/test_context_artifacts.py]
     legacy_disposition: {action: replace, task: T8}
 
@@ -1355,7 +1405,7 @@ requirements:
     implementation_task: T13
     status: verified
     acceptance:
-      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: verified}
       - {path: tests/manual/ch14_cutover_gate.md, kind: manual, status: planned}
     verification_types: [architecture, manual]
     legacy_tests: []
@@ -1366,7 +1416,7 @@ requirements:
     implementation_task: T13
     status: verified
     acceptance:
-      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: verified}
       - {path: tests/manual/ch14_cutover_gate.md, kind: manual, status: planned}
     verification_types: [architecture, manual]
     legacy_tests: []
@@ -1397,7 +1447,7 @@ requirements:
     implementation_task: T14
     status: verified
     acceptance:
-      - {path: tests/behavior/ch14_matrix.yml, kind: matrix, status: active}
+      - {path: tests/behavior/ch14_matrix.yml, kind: matrix, status: verified}
       - {path: tests/manual/ch14_results.md, kind: manual, status: planned}
     verification_types: [behavior, manual]
     legacy_tests: []
@@ -1429,7 +1479,7 @@ requirements:
     implementation_task: T13
     status: verified
     acceptance:
-      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: verified}
       - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
       - {path: tests/contracts/test_session_interface.py, kind: automated, status: verified}
       - {path: tests/contracts/test_skill_interface.py, kind: automated, status: verified}
@@ -1442,7 +1492,7 @@ requirements:
     implementation_task: T13
     status: verified
     acceptance:
-      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: verified}
       - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
     verification_types: [architecture, contract]
     legacy_tests: []
@@ -1453,7 +1503,7 @@ requirements:
     implementation_task: T13
     status: verified
     acceptance:
-      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: verified}
       - {path: tests/contracts/test_tool_mcp_interface.py, kind: automated, status: verified}
     verification_types: [architecture]
     legacy_tests: []
@@ -1483,7 +1533,7 @@ requirements:
     implementation_task: T12
     status: verified
     acceptance:
-      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: verified}
       - {path: tests/contracts/test_tool_interface.py, kind: automated, status: verified}
       - {path: tests/contracts/test_skill_interface.py, kind: automated, status: verified}
       - {path: tests/application/test_run_flow.py, kind: automated, status: planned}
@@ -1496,7 +1546,7 @@ requirements:
     implementation_task: T13
     status: verified
     acceptance:
-      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: verified}
     verification_types: [architecture, review]
     legacy_tests: []
     legacy_disposition: {action: replace, task: T13}
@@ -1516,7 +1566,7 @@ requirements:
     implementation_task: T13
     status: verified
     acceptance:
-      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: active}
+      - {path: tests/architecture/test_core_dependencies.py, kind: automated, status: verified}
       - {path: tests/manual/ch14_cutover_gate.md, kind: manual, status: planned}
     verification_types: [architecture, manual]
     legacy_tests: []
@@ -1549,6 +1599,7 @@ requirements:
     acceptance:
       - {path: docs/adr/0003-core-contract-freeze.md, kind: manual, status: planned}
       - {path: tests/manual/ch14_results.md, kind: manual, status: planned}
+      - {path: docs/adr/0004-run-continuation-and-mcp-activation.md, kind: manual, status: verified}
     verification_types: [documentation, manual]
     legacy_tests: []
     legacy_disposition: {action: none, task: T15}

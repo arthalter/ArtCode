@@ -40,7 +40,7 @@ ArtCode 仍是单机、单用户、纯本地的 Python 学习项目。本章不�
 
 - F8：Session 拥有 Transcript 的提交、持久化和恢复，其他模块不能维护第二份权威对话历史。
 - F9：Transcript 只记录已经提交的对话事实，并以追加方式保持原始顺序。
-- F10：每次 Run 使用的 Prompt 都是由 Session 基于确定输入生成的不可变投影，不反向成为 Session 历史。
+- F10：每次模型请求使用的 Prompt 都是由 Session 基于确定输入生成的不可变投影，不反向成为 Session 历史；同一 Run 可以在已提交事实的边界生成下一份 Prompt。
 - F11：指令、Notice、Summary、长期记忆、可用 Tool 和 Transcript 以明确边界进入 Prompt，来源之间不得相互伪装。
 - F12：Notice 只在下一次适用 Prompt 中投递一次，只读查询不会提前消费它。
 - F13：Summary 是可重建的派生表示，生成失败或损坏时不得替换或破坏权威 Transcript。
@@ -89,19 +89,19 @@ ArtCode 仍是单机、单用户、纯本地的 Python 学习项目。本章不�
 - F44：用户可以配置用户级与项目级 MCP Server，项目级定义按确定规则覆盖同名用户级定义。
 - F45：MCP 支持本地进程与远程流式连接方式，并完成初始化、分页发现、会话复用和有序关闭。
 - F46：项目级 MCP Server 在产生外部效果前需要确认，每次 MCP Tool 调用都作为潜在副作用单独进入权限流程。
-- F47：MCP Tool 目录既可以完整暴露，也可以按需检索激活；已经激活的 Tool 在当前 Session 后续 Run 中保持可用。
-- F48：内置 Tool 与 MCP Tool 通过同一 Tool 语义参与 Prompt、策略判断、批次执行和结构化结果回传。
+- F47：MCP Tool 目录既可以完整暴露，也可以由模型搜索已发现目录并激活命中项；新工具从同一 Run 的下一次模型请求起可用，并在当前进程内 Session 的后续 Run 中保持激活。
+- F48：内置 Tool 与 MCP Tool 通过同一 Tool 语义参与 Prompt、策略判断、批次执行和结构化结果回传；模型可见目录与执行目录同步更新，当前批次及原有能力限制保持不变。
 - F49：单个 MCP Server 或 Tool 的配置、连接、协议、超时、取消与关闭失败不得破坏其他 Server、内置 Tool 或主 Run。
 - F50：MCP 文本与结构化内容可以进入模型上下文，二进制内容只以受限元数据表示，不被隐式展开进 Prompt。
 
 ### 上下文治理、持久化与记忆
 
-- F51：上下文预算优先使用 Provider 返回的真实 usage，并在真实值不可用时采用可解释的确定性估算。
+- F51：上下文预算覆盖最终完整模型请求，包括当前可见工具和续接所需数据；优先使用适用的最近请求真实 usage 校准，并在真实值不可用时采用可解释的确定性估算，不能将 Run 累计 usage 当作当前请求大小。
 - F52：大型 Tool Result 完整存入当前 Workspace 的内部临时区域，Transcript 与 Prompt 只保留可定位预览。
 - F53：Agent 可以对已存盘结果进行受范围限制的分段回读，回读不得隐式把完整原文重新注入上下文。
-- F54：上下文接近窗口边界时可以压缩较早的 Assistant、Tool 与内部 System 历史，但全部 User 原文始终逐条、逐字、按顺序保留。
-- F55：压缩不得破坏 Assistant Tool Request 与 Tool Result 的协议边界，也不得把 Protocol Metadata 改写为自然语言事实。
-- F56：自动、强制、紧急与手动压缩均有界且可观察；压缩失败保留旧历史，并通过有限重试或明确停止避免循环。
+- F54：同一 Run 在完整 Tool 批次提交后检查上下文预算，接近窗口边界时可以压缩较早的非 User 历史，但全部 User 原文始终逐条、逐字、按顺序保留。
+- F55：压缩保留最近完整 Tool 交换及其 Protocol Metadata，并保持当前 Run 冻结的指令、Skill、模型选择与已投递 Notice；不能重复记录用户目标或重新执行已经完成的 Tool。
+- F56：自动、强制、紧急与手动压缩均有界且可观察；自动及紧急压缩只在候选请求确实缩短后保存摘要，失败、无收益或取消保留旧状态，同一历史前缀不反复尝试；只有明确的上下文超限允许有界恢复，网络与认证失败不进入该恢复流程。
 - F57：项目级与用户级持久指令按确定优先级加载，引用内容受到来源、路径、循环和规模边界约束。
 - F58：每条已提交 Transcript 事实同步追加到人类可检查的本地存档，进程异常不能留下被当作完整事实的半条记录。
 - F59：Session 恢复可以隔离独立坏记录、修复不完整尾部，并在 Tool 协议不完整时回退到最近安全前缀。
@@ -128,16 +128,16 @@ ArtCode 仍是单机、单用户、纯本地的 Python 学习项目。本章不�
 - F74：Skill 可以通过自然语言选择或明确命令激活，并在当前 Session 中持续生效直到被清除或替换。
 - F75：多个已激活 Skill 对普通 Tool 的允许范围取交集，且任何 Skill 只能收窄而不能绕过 Run Mode、权限、路径、危险命令、隔离或 MCP 确认。
 - F76：Skill 文件热更新对新执行生效；更新无效时保留当前执行已经冻结的快照并提供诊断。
-- F77：共享 Skill 在主 Run 与主 Transcript 中执行；Isolated Skill 使用临时 Transcript，只向主 Run 返回最终总结。
+- F77：共享 Skill 在主 Run 与主 Transcript 中执行；Isolated Skill 使用临时 Transcript，只向主 Run 返回最终总结，并继承配置中的上下文窗口和统一请求续接行为。
 - F78：Isolated Skill 不创建 Task、不进入后台队列、不获得 Worktree，也不成为 Subagent。
 - F79：Skill 指定的模型选择只影响该次适用执行，目标模型不可用时明确失败，不静默切换。
 
 ### Subagent、Task 与 Worktree
 
 - F80：主 Agent 通过一个稳定入口创建定义式或 Fork 式 Subagent，两种形式共享 Task 调度与执行语义。
-- F81：定义式 Subagent 从干净 Transcript 和指定 Role 开始；Fork 式 Subagent 使用创建时冻结的父 Prompt 与 Tool 快照。
+- F81：定义式 Subagent 从干净 Transcript 和指定 Role 开始；Fork 式 Subagent 使用创建时冻结的父 Prompt 与 Tool 快照，续接和压缩后仍保留父 Prompt 前缀。
 - F82：Role 从项目、用户、内置和已提供的扩展来源确定性覆盖，无效高优先级同名 Role 不得静默回退。
-- F83：每个 Subagent 独立维护消息、权限事件、文件缓存、上下文状态、轮次和 usage，并复用同一套 Agent、Model 与 Tool Interface。
+- F83：每个 Subagent 独立维护消息、权限事件、文件缓存、上下文状态、轮次和 usage，继承配置中的上下文窗口，并复用同一套 Agent、Model、Tool 和请求续接流程。
 - F84：Subagent 的有效能力只能由父能力上限、Role 和后台策略继续收窄，不能复用父 Run 的临时批准。
 - F85：Subagent 以非交互方式运行，不能再次委派、询问用户或自行绕过需要人工确认的操作。
 - F86：Task 支持排队、受控并发、前台等待后转后台、列表、详情、取消与完成顺序通知。
@@ -192,7 +192,8 @@ ArtCode 仍是单机、单用户、纯本地的 Python 学习项目。本章不�
 核心协作关系如下：
 
 - Application 创建并持有模块生命周期，但业务状态留在各自所有者中。
-- Session 在 Run 开始前生成不可变 Prompt 与执行快照，Agent 不直接修改 Transcript。
+- Session 在 Run 开始及已提交事实的安全边界生成不可变 Prompt，保留同一 Run 的身份和冻结输入，Agent 不直接修改 Transcript。
+- Agent 在完整 Tool 批次提交后统一准备下一请求，使更新后的模型工具描述与实际执行目录成对切换，随后检查包含新工具的预算。
 - Agent 只通过 Model Interface 获取流事件，只通过 Tool Interface 请求效果；完成后由 Session 决定哪些事实可以提交。
 - Tool 根据不可变运行上下文统一规划和执行内置 Tool 与 MCP Adapter，并把全部本地效果委托给 Workspace。
 - Skill 通过投影和能力收窄参与主 Run，不直接拥有主 Transcript 或绕过 Tool 策略。
@@ -226,10 +227,10 @@ ArtCode 仍是单机、单用户、纯本地的 Python 学习项目。本章不�
 - AC6：针对相对路径、绝对路径、父级跳转、敏感路径、符号链接和审批后目标变化执行黑盒测试，任何效果都不能逃离当前 Workspace。（覆盖 F36–F37、F43）
 - AC7：分别触发命令完成、超时、取消和关闭，确认整个进程树被回收；对四类用户权限决定和各层冲突逐项验证，硬约束始终优先。（覆盖 F38–F41）
 - AC8：在支持的平台验证 Shell 强制隔离与网络阻断，在隔离不可用和用户明确脱离隔离两条路径中均得到可观察且不静默降级的结果。（覆盖 F42）
-- AC9：使用真实本地进程与远程流式 MCP Server 完成初始化、分页发现、完整暴露、按需激活、调用和关闭，内置 Tool 与 MCP Tool 通过同一策略执行。（覆盖 F44–F48）
+- AC9：使用真实本地进程与远程流式 MCP Server 完成初始化、分页发现、完整暴露、模型搜索激活、调用和关闭；搜索命中项在同一 Run 的下一次 Prompt 与执行目录同步可用，当前批次、权限和能力上限保持不变。（覆盖 F44–F48）
 - AC10：分别注入单个 MCP Server 的配置、连接、协议、超时、取消和关闭故障，其他 Server、内置 Tool 与主 Run 仍可继续，二进制结果不进入 Prompt 正文。（覆盖 F49–F50）
 - AC11：构造真实 usage、usage 缺失、大型 Tool Result 和分段回读场景，确认预算来源可解释、完整结果可定位且 Prompt 只承载受控内容。（覆盖 F51–F53）
-- AC12：在长 Session 中反复触发各类压缩，逐字比较所有 User 消息并检查 Tool 协议；失败后旧历史可继续使用，且不会进入无界重试。（覆盖 F54–F56）
+- AC12：分别从普通 Run、Shared Skill、Isolated Skill、定义式与 Fork 式 Subagent 触发工具循环中的压缩，逐字比较 User 原文、最近完整 Tool 交换及冻结输入；再组合按需 MCP 激活验证更新后的完整请求预算。失败、无收益、保存失败与取消均保留旧状态，上下文超限恢复不重放已完成 Tool，也不进入无界重试。（覆盖 F54–F56）
 - AC13：验证多来源指令、同步追加、坏记录、坏尾部、不完整 Tool 协议、并发锁、计划恢复和长间隔 Notice，任何恢复路径都不伪造或静默删除已提交事实。（覆盖 F57–F61）
 - AC14：分别完成自然结束、取消、失败和达到限制的 Run，只有自然结束快照进入对应作用域的长期记忆；记忆故障不影响当前与后续 Run。（覆盖 F62–F64）
 - AC15：逐项操作本地命令与 TUI，确认未知命令不调用 Model、不写 Transcript，状态查询只读且脱敏，清屏仅影响显示和 Skill 激活。（覆盖 F65–F70）

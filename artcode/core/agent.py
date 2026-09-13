@@ -9,7 +9,7 @@ from enum import StrEnum
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from .model import Model, ToolRequest, Usage
-from .session import DispatchedRun, Session
+from .session import CompactionReport, DispatchedRun, Session
 from .tool import Approver, Tool, ToolResult
 
 
@@ -63,6 +63,11 @@ class UsageEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class CompactionEvent:
+    report: CompactionReport
+
+
+@dataclass(frozen=True, slots=True)
 class ToolBatchEvent:
     requests: tuple[ToolRequest, ...]
     results: tuple[ToolResult, ...]
@@ -79,7 +84,7 @@ class RunFinished:
     outcome: RunOutcome
 
 
-RunEvent: TypeAlias = RunStarted | TextEvent | UsageEvent | ToolBatchEvent | RunError | RunFinished
+RunEvent: TypeAlias = RunStarted | TextEvent | UsageEvent | ToolBatchEvent | CompactionEvent | RunError | RunFinished
 
 
 @runtime_checkable
@@ -95,6 +100,7 @@ class Agent(Protocol):
 
 __all__ = [
     "Agent",
+    "CompactionEvent",
     "RunControl",
     "RunError",
     "RunEvent",

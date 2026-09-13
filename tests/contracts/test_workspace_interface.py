@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import stat
 
 import pytest
 
@@ -70,6 +71,41 @@ def test_read_text_reports_bounded_preview_for_large_file(tmp_path: Path) -> Non
     assert result.next_line == 1
 
 
+def test_read_text_stops_before_partial_line_and_reports_returned_range(tmp_path: Path) -> None:
+    scope = workspace(tmp_path / "workspace", read_char_limit=12)
+    content = "before\none\ntwo-value\nlast\n"
+    (scope.root / "notes.txt").write_text(content, encoding="utf-8")
+    target = scope.prepare_target("notes.txt", must_exist=True)
+
+    result = scope.read_text(target, start_line=2, end_line=3)
+
+    assert result.text == "one\n"
+    assert result.start_line == result.end_line == 2
+    assert result.total_lines == 4
+    assert result.truncated is True
+    assert result.next_line == 3
+    remainder = scope.read_text(target, start_line=result.next_line, end_line=3)
+    assert remainder.text == "two-value\n"
+    assert remainder.end_line == 3
+    assert remainder.next_line == 4
+
+
+def test_read_text_accepts_empty_file_but_still_validates_explicit_range(tmp_path: Path) -> None:
+    scope = workspace(tmp_path / "workspace")
+    (scope.root / "__init__.py").touch()
+    target = scope.prepare_target("__init__.py", must_exist=True)
+
+    result = scope.read_text(target)
+
+    assert result.text == ""
+    assert result.start_line == 1
+    assert result.end_line == result.total_lines == 0
+    assert result.truncated is False
+    assert result.next_line is None
+    with pytest.raises(ValueError, match="end_line 不能小于 start_line"):
+        scope.read_text(target, start_line=2, end_line=1)
+
+
 def test_create_builds_missing_parents_and_overwrite_requires_intent(tmp_path: Path) -> None:
     scope = workspace(tmp_path / "workspace")
     target = scope.prepare_target("nested/deep/note.txt", must_exist=False)
@@ -101,6 +137,26 @@ def test_edit_requires_exactly_one_match_and_never_partially_changes(tmp_path: P
     target = scope.prepare_target("note.txt", must_exist=True)
     scope.edit_text(target, "world", "ArtCode")
     assert target_path.read_text(encoding="utf-8") == "hello ArtCode"
+
+
+@pytest.mark.parametrize("mode", [0o644, 0o755])
+@pytest.mark.parametrize("operation", ["edit", "overwrite"])
+def test_replacing_existing_file_preserves_permissions(
+    tmp_path: Path, mode: int, operation: str
+) -> None:
+    scope = workspace(tmp_path / "workspace")
+    path = scope.root / "script.sh"
+    path.write_text("before", encoding="utf-8")
+    path.chmod(mode)
+    target = scope.prepare_target("script.sh", must_exist=True)
+
+    if operation == "edit":
+        scope.edit_text(target, "before", "after")
+    else:
+        scope.write_text(target, "after", overwrite=True)
+
+    assert path.read_text(encoding="utf-8") == "after"
+    assert stat.S_IMODE(path.stat().st_mode) == mode
 
 
 def test_prepared_target_is_rechecked_before_effect(tmp_path: Path) -> None:

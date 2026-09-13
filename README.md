@@ -1,5 +1,7 @@
 # ArtCode
 
+桌面首版已接入：使用方式和打包命令见 [desktop/README.md](desktop/README.md)。桌面复用现有 Python Application，保留原 CLI 入口。
+
 ArtCode 是一个单机、单用户、纯本地的 Python CLI Coding Agent 学习项目。ch14 版本使用统一领域语言与八个深模块，支持流式模型交互、Plan/Act、文件与 Shell Tool、权限审批、macOS Seatbelt、MCP、Session 恢复、上下文治理、长期记忆、Skill、Subagent Task 和隔离 Worktree。
 
 ## 安装与启动
@@ -36,6 +38,8 @@ thinking:
 
 用户配置与 `<workspace>/.artcode/config.yml` 项目配置会在产生外部效果前分别严格校验并确定性合成。项目级 MCP Server 整体覆盖同名用户定义，并在启动前请求确认。MCP 支持 `stdio` 与 `streamable_http`，加载策略为 `eager` 或 `lazy`。
 
+`lazy` 完成工具发现后，模型通过 `mcp_search_tools` 搜索并激活工具。命中项从同一 Run 的下一次模型请求起可用，并在当前进程后续 Run 中保持激活；当前 Tool 批次仍使用原目录。搜索只检查已有目录，实际 MCP 调用仍单独审批。Plan 和 Subagent 不提供这个搜索入口。
+
 ## 使用方式
 
 普通输入启动 `chat` Run。常用命令：
@@ -55,15 +59,19 @@ thinking:
 
 ## Session、Prompt 与记忆
 
-Transcript 是追加式权威历史，只保存已提交事实。Prompt 是每次 Run 的不可变投影；指令、Notice、Summary、记忆、Skill 和 Transcript 使用明确来源标签。Notice 只在请求真正 dispatch 时消费。
+Transcript 是追加式权威历史，只保存已提交事实。Prompt 是每次模型请求的不可变投影；指令、Notice、Summary、记忆、Skill 和 Transcript 使用明确来源标签。Notice 只在请求真正 dispatch 时消费。
 
 新格式位于 `<workspace>/.artcode/ch14/sessions/`。记录使用带校验和的 JSONL：独立坏记录可隔离，不完整尾部可修复，不完整 Tool exchange 回退到最近安全前缀。ch14 不读取或迁移旧格式。
 
 Summary 只替代较早的 Assistant/Tool 派生视图，所有 User 原文始终逐条、逐字、按顺序保留。只有自然完成 Run 的不可变快照会异步、串行更新用户偏好和项目事实；Markdown 来源可人工编辑，索引可重建。
 
+长任务在完整 Tool 批次提交后准备下一次模型请求，更新工具目录并重新计算包含工具定义的上下文预算。自动压缩与上下文超限恢复只接受确实缩短请求的候选摘要，保留本 Run 已冻结的指令、Skill、模型选择和已投递 Notice。摘要失败或没有缩短请求时保留旧状态，并限制重试；网络或认证错误不会触发压缩重试。
+
 ## Skill、Subagent 与 Worktree
 
 Skill 来源优先级为项目、用户、内置、扩展。同名高优先级定义无效时不会静默回退。启动目录只加载选择信息，激活时才加载 SOP。多个 Skill 的 Tool 范围取交集。Shared Skill 使用主 Session；Isolated Skill 使用临时 Transcript，只返回最终总结，不创建 Task 或 Worktree。
+
+Skill 可以声明已发现但尚未激活的 MCP 名称，名称有效不代表工具已经可见。受限 Skill 使用 lazy MCP 时，应同时声明 `mcp_search_tools` 与所需 MCP 名称；搜索先按原 Skill 允许范围筛选，再取结果上限。
 
 Subagent 通过统一 `agent` Tool 创建：
 
@@ -71,6 +79,8 @@ Subagent 通过统一 `agent` Tool 创建：
 - `fork`：冻结父 Prompt 与 ToolSnapshot，可叠加 Role，始终后台运行。
 
 Role 位于 `.artcode/agents/*.md` 或用户 `agents/*.md`，其能力只能继续收窄父能力。可能写盘的 Task 在首次 Model 请求前取得基于入队提交的独立 Worktree；主 Workspace 的未提交内容不会复制。无变化 Worktree 可自动清理，含未提交修改或本地新增提交的成果会保留。ArtCode 不自动 merge、rebase、push 或创建 PR。
+
+Isolated Skill 与两种 Subagent 都继承配置中的上下文窗口，使用同一请求准备与压缩流程。Fork 的父 Prompt 前缀在续接和压缩后保持不变；无法缩短到窗口内时明确停止。
 
 ## 八个核心模块
 
@@ -84,6 +94,8 @@ Tool → Workspace + MCP Adapter + Subagent control Adapter
 ```
 
 公开 Interface 位于 `artcode/core/`，具体实现位于对应的 `artcode/_*/` 私有包。Application 是唯一组装和生命周期协调者；Transcript、Run、Provider、Tool、Workspace、Skill 与 Task 状态分别只有一个权威所有者。
+
+2026-09-05 经项目所有者批准修订请求续接与 MCP 激活契约，决策见 [ADR 0004](docs/adr/0004-run-continuation-and-mcp-activation.md)，验证进展与结果见 [ch14 验收记录](tests/manual/ch14_results.md) 和 [Checklist](checklist.md)。
 
 ## 验证
 
