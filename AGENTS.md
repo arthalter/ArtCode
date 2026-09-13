@@ -4,6 +4,20 @@
 
 - 默认使用简体中文回复用户；除非用户明确要求其他语言。
 
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues 是本仓库的需求、Spec、Wayfinder 地图和工作票据的权威来源。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+本仓库使用 Matt skills 的默认五类 triage 标签。见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+本仓库使用单一 Context；探索或设计前按需读取根目录 `CONTEXT.md` 与 `docs/adr/`。见 `docs/agents/domain.md`。
+
 
 ## 项目代码修改协作规则
 

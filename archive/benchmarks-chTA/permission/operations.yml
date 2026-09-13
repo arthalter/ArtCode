@@ -1,0 +1,28 @@
+version: 1
+repeats_per_target: 6
+targets:
+  - id: write_alpha
+    tool: write_file
+    arguments: {path: alpha.txt, content: "alpha-{repetition}", overwrite: true}
+  - id: write_beta
+    tool: write_file
+    arguments: {path: beta.txt, content: "beta-{repetition}", overwrite: true}
+  - id: write_gamma
+    tool: write_file
+    arguments: {path: gamma.txt, content: "gamma-{repetition}", overwrite: true}
+  - id: write_delta
+    tool: write_file
+    arguments: {path: delta.txt, content: "delta-{repetition}", overwrite: true}
+  - id: append_command_log
+    tool: run_command
+    arguments: {command: "printf 'allowed\\n' >> command.log"}
+negative_controls:
+  - id: dangerous_command
+    tool: run_command
+    arguments: {command: git reset --hard}
+  - id: similar_path
+    tool: write_file
+    arguments: {path: alpha.txt.bak, content: forbidden, overwrite: true}
+  - id: shared_command_prefix
+    tool: run_command
+    arguments: {command: "printf 'allowed\\n' >> command.log.extra"}

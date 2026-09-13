@@ -1,0 +1,14 @@
+(version 1)
+(deny default)
+(import "system.sb")
+
+(allow process*)
+(allow signal (target self))
+(allow file-read*)
+(allow file-write*
+  (subpath {{WORKSPACE}})
+  (subpath {{TEMP_DIR}}))
+(deny file-read* file-write*
+{{SENSITIVE_RULES}})
+{{ISOLATION_RULE}}
+(deny network*)

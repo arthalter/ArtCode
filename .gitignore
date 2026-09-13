@@ -10,3 +10,17 @@ venv/
 dist/
 build/
 .DS_Store
+.artcode/context/
+.artcode/sessions/
+.artcode/memory/
+.artcode/instructions.md
+.artcode/worktrees/
+permissions.local.yml
+artcode-eval-runs/
+artcode-eval-compare/
+outputs/
+tmp/
+.tmp/
+实验场/
+coverage.json
+.coverage

@@ -1,0 +1,36 @@
+version: 1
+namespace: starryzhang
+sample_size: 6
+gold_repetitions: 3
+seed: 20260813
+candidates:
+  - matplotlib__matplotlib-28577
+  - bridgecrewio__checkov-6630
+  - jupyterlab__jupyter-ai-879
+  - keras-team__keras-19973
+  - keras-team__keras-20079
+  - pylint-dev__pylint-9772
+  - python-babel__babel-1104
+  - sphinx-doc__sphinx-12615
+  - falconry__falcon-2248
+  - pylint-dev__pylint-9785
+  - aws-cloudformation__cfn-lint-3563
+  - patroni__patroni-3112
+  - falconry__falcon-2254
+  - bridgecrewio__checkov-6612
+  - sphinx-doc__sphinx-12647
+  - aws-cloudformation__cfn-lint-3501
+  - python-attrs__attrs-1320
+  - instructlab__instructlab-1762
+  - matplotlib__matplotlib-28584
+  - python-attrs__attrs-1321
+  - aws-cloudformation__cfn-lint-3475
+  - shapely__shapely-2094
+  - pylint-dev__pylint-9771
+  - pylint-dev__pylint-9838
+  - pylint-dev__pylint-9844
+  - aws-cloudformation__cfn-lint-3498
+  - python-attrs__attrs-1319
+  - aws-cloudformation__cfn-lint-3557
+  - aws-cloudformation__cfn-lint-3528
+  - sphinx-doc__sphinx-12598

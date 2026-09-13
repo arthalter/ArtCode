@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "artcode"
-version = "0.2.0"
+version = "0.3.0"
 description = "A local CLI coding agent learning project."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,12 +13,14 @@ dependencies = [
   "httpx>=0.27.0",
   "prompt_toolkit>=3.0.43",
   "rich>=13.7.0",
+  "mcp>=1.28,<2",
 ]
 
 [project.optional-dependencies]
 test = [
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
+  "hypothesis>=6.0",
 ]
 
 [project.scripts]
@@ -26,8 +28,25 @@ artcode = "artcode.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["artcode*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"artcode._tool" = ["*.yml"]
+"artcode._workspace" = ["*.sb"]
+"artcode._skill" = ["builtin/.gitkeep"]
+"artcode._subagent" = ["builtin/.gitkeep"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+  "architecture: dependency and ownership checks for the ch14 core",
+  "behavior: executable behavior-matrix checks",
+  "contract: tests through one public module Interface",
+  "fault: deterministic failure-injection scenarios",
+  "live: requires a real configured model API and may consume tokens",
+  "property: generative invariant checks",
+  "soak: long-running lifecycle or stress scenarios",
+  "slow: deliberately slow tests excluded from quick runs",
+]
